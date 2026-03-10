@@ -1,0 +1,66 @@
+use crate::{
+    provider::model::{ContentBlock, Message},
+    tool::ToolCall,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum AgentStatus {
+    #[default]
+    Idle,
+    AwaitingModel,
+    Streaming,
+    ExecutingTool {
+        id: String,
+        name: String,
+    },
+    Finished,
+    Failed(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingToolUseSummary {
+    pub id: String,
+    pub name: String,
+    pub input_json: String,
+    pub complete: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AgentSnapshot {
+    pub status: AgentStatus,
+    pub history_len: usize,
+    pub current_text: String,
+    pub pending_tool_uses: Vec<PendingToolUseSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentEvent {
+    RunStarted,
+    TextDelta {
+        delta: String,
+        full_text: String,
+    },
+    ToolUseUpdated {
+        index: usize,
+        id: String,
+        name: String,
+        input_json: String,
+    },
+    ToolUseReady {
+        index: usize,
+        call: ToolCall,
+    },
+    ToolExecutionStarted {
+        call: ToolCall,
+    },
+    ToolExecutionFinished {
+        result: ContentBlock,
+    },
+    AssistantMessageCommitted {
+        message: Message,
+    },
+    RunFinished,
+    RunFailed {
+        error: String,
+    },
+}

@@ -1,0 +1,3 @@
+[workspace]
+members = ["mentra", "examples"]
+resolver = "2"
