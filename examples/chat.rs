@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::{io::Write, path::PathBuf};
 
 use dotenvy::dotenv;
 use mentra::{
@@ -21,6 +21,10 @@ async fn main() {
     if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
         runtime.register_provider(ModelProviderKind::Anthropic, api_key);
     }
+
+    runtime
+        .register_skills_dir(example_skills_dir())
+        .expect("Failed to register example skills");
 
     assert!(
         !runtime.providers().is_empty(),
@@ -279,6 +283,12 @@ fn describe_tool_call(call: &ToolCall) -> String {
         return format!("task \"{prompt}\"");
     }
 
+    if call.name == "load_skill"
+        && let Some(name) = call.input.get("name").and_then(|value| value.as_str())
+    {
+        return format!("load_skill {name}");
+    }
+
     format!("{} {}", call.name, call.input)
 }
 
@@ -315,4 +325,24 @@ fn render_todos(todos: &[TodoItem]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn example_skills_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skills")
+}
+
+#[cfg(test)]
+mod tests {
+    use mentra::skill::SkillLoader;
+
+    use super::example_skills_dir;
+
+    #[test]
+    fn checked_in_example_skills_are_loadable() {
+        let loader = SkillLoader::from_dir(example_skills_dir()).expect("load example skills");
+        let descriptions = loader.get_descriptions();
+
+        assert!(descriptions.contains("  - git: Git workflow helpers"));
+        assert!(descriptions.contains("  - test: Testing best practices"));
+    }
 }

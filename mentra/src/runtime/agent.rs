@@ -167,7 +167,9 @@ impl Agent {
         hidden_tools.insert(TASK_TOOL_NAME.to_string());
 
         let mut config = self.config.clone();
-        config.system = Some(build_subagent_system_prompt(self.effective_system_prompt()));
+        config.system = Some(build_subagent_system_prompt(
+            self.config.system.as_deref().map(Cow::Borrowed),
+        ));
 
         Self::new(
             self.runtime.clone(),
@@ -290,14 +292,25 @@ impl Agent {
     }
 
     pub(crate) fn effective_system_prompt(&self) -> Option<Cow<'_, str>> {
-        if self.rounds_since_todo < TODO_REMINDER_THRESHOLD || !has_unfinished_todos(&self.todos) {
-            return self.config.system.as_deref().map(Cow::Borrowed);
+        let mut sections = Vec::new();
+
+        if self.rounds_since_todo >= TODO_REMINDER_THRESHOLD && has_unfinished_todos(&self.todos) {
+            sections.push(TODO_REMINDER_TEXT.to_string());
         }
 
-        Some(match &self.config.system {
-            Some(system) => Cow::Owned(format!("{TODO_REMINDER_TEXT}\n\n{system}")),
-            None => Cow::Borrowed(TODO_REMINDER_TEXT),
-        })
+        if let Some(system) = &self.config.system {
+            sections.push(system.clone());
+        }
+
+        if let Some(skills) = self.runtime.skill_descriptions() {
+            sections.push(skills);
+        }
+
+        if sections.is_empty() {
+            None
+        } else {
+            Some(Cow::Owned(sections.join("\n\n")))
+        }
     }
 
     pub(crate) fn apply_todo_items(&mut self, items: Vec<TodoItem>) {

@@ -6,6 +6,7 @@ mod todo;
 
 use std::{
     collections::HashSet,
+    path::Path,
     sync::{Arc, RwLock},
 };
 
@@ -15,6 +16,7 @@ use crate::{
         model::{ModelInfo, ModelProviderKind},
     },
     runtime::{error::RuntimeError, handle::RuntimeHandle},
+    skill::{SkillLoadError, SkillLoader},
     tool::{ToolHandler, ToolRegistry},
 };
 
@@ -26,9 +28,9 @@ pub(crate) use task::TASK_TOOL_NAME;
 pub(crate) use todo::TODO_TOOL_NAME;
 pub use todo::{TodoItem, TodoStatus};
 
-#[derive(Default)]
 pub struct Runtime {
     tool_registry: Arc<RwLock<ToolRegistry>>,
+    skill_loader: Arc<RwLock<Option<SkillLoader>>>,
     provider_registry: ProviderRegistry,
 }
 
@@ -36,6 +38,17 @@ impl From<&Runtime> for RuntimeHandle {
     fn from(runtime: &Runtime) -> Self {
         Self {
             tool_registry: Arc::clone(&runtime.tool_registry),
+            skill_loader: Arc::clone(&runtime.skill_loader),
+        }
+    }
+}
+
+impl Default for Runtime {
+    fn default() -> Self {
+        Self {
+            tool_registry: Arc::new(RwLock::new(ToolRegistry::default())),
+            skill_loader: Arc::new(RwLock::new(None)),
+            provider_registry: ProviderRegistry::default(),
         }
     }
 }
@@ -48,6 +61,7 @@ impl Runtime {
     pub fn new_empty() -> Self {
         Self {
             tool_registry: Arc::new(RwLock::new(ToolRegistry::new_empty())),
+            skill_loader: Arc::new(RwLock::new(None)),
             provider_registry: ProviderRegistry::default(),
         }
     }
@@ -60,6 +74,21 @@ impl Runtime {
             .write()
             .expect("tool registry poisoned")
             .register_tool(tool);
+    }
+
+    pub fn register_skill_loader(&self, loader: SkillLoader) {
+        *self.skill_loader.write().expect("skill loader poisoned") = Some(loader);
+        self.tool_registry
+            .write()
+            .expect("tool registry poisoned")
+            .register_tool(crate::tool::builtin::LoadSkillTool::new(Arc::clone(
+                &self.skill_loader,
+            )));
+    }
+
+    pub fn register_skills_dir(&self, path: impl AsRef<Path>) -> Result<(), SkillLoadError> {
+        self.register_skill_loader(SkillLoader::from_dir(path)?);
+        Ok(())
     }
 
     pub fn spawn(&self, name: impl Into<String>, model: ModelInfo) -> Result<Agent, RuntimeError> {

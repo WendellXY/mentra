@@ -2,12 +2,14 @@ use std::{collections::HashSet, sync::Arc, sync::RwLock};
 
 use crate::{
     provider::model::ContentBlock,
+    skill::SkillLoader,
     tool::{ToolCall, ToolContext, ToolRegistry, ToolSpec},
 };
 
 #[derive(Clone)]
 pub struct RuntimeHandle {
     pub(crate) tool_registry: Arc<RwLock<ToolRegistry>>,
+    pub(crate) skill_loader: Arc<RwLock<Option<SkillLoader>>>,
 }
 
 impl RuntimeHandle {
@@ -32,6 +34,15 @@ impl RuntimeHandle {
             .cloned()
             .collect::<Vec<_>>()
             .into()
+    }
+
+    pub fn skill_descriptions(&self) -> Option<String> {
+        self.skill_loader
+            .read()
+            .expect("skill loader poisoned")
+            .as_ref()
+            .map(SkillLoader::get_descriptions)
+            .filter(|descriptions| !descriptions.is_empty())
     }
 
     pub async fn execute_tool(&self, tool_call: ToolCall) -> ContentBlock {

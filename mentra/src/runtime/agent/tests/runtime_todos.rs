@@ -1,3 +1,10 @@
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 use crate::{
     provider::model::{
         ContentBlock, ContentBlockDelta, ContentBlockStart, Message, ModelProviderKind,
@@ -245,6 +252,82 @@ async fn reminder_is_injected_after_three_rounds_without_todo() {
 }
 
 #[tokio::test]
+async fn reminder_composes_with_skills_catalog() {
+    let model = model_info("model", ModelProviderKind::Anthropic);
+    let provider = ScriptedProvider::new(
+        ModelProviderKind::Anthropic,
+        vec![model.clone()],
+        vec![
+            todo_stream(
+                "tool-1",
+                r#"{"items":[{"id":"task-a","text":"Plan work","status":"pending"}]}"#,
+            ),
+            text_stream("todo saved"),
+            text_stream("round 1"),
+            text_stream("round 2"),
+            text_stream("round 3"),
+            text_stream("round 4"),
+        ],
+    );
+    let provider_handle = provider.clone();
+
+    let mut runtime = Runtime::new_empty();
+    runtime.register_provider_instance(provider);
+    let skills_dir = temp_skills_dir("todo-skills");
+    write_skill(
+        &skills_dir,
+        "test",
+        "---\nname: test\ndescription: Testing best practices\n---\nWrite focused assertions.\n",
+    );
+    runtime
+        .register_skills_dir(&skills_dir)
+        .expect("register skills");
+    let mut agent = runtime
+        .spawn_with_config(
+            "agent",
+            model,
+            AgentConfig {
+                system: Some("Base system prompt".to_string()),
+                ..AgentConfig::default()
+            },
+        )
+        .unwrap();
+
+    agent
+        .send(vec![ContentBlock::Text {
+            text: "set todos".to_string(),
+        }])
+        .await
+        .unwrap();
+
+    for round in 1..=4 {
+        agent
+            .send(vec![ContentBlock::Text {
+                text: format!("round {round}"),
+            }])
+            .await
+            .unwrap();
+    }
+
+    let requests = provider_handle.recorded_requests().await;
+    assert_eq!(requests.len(), 6);
+    let skill_block = "Skills available:\n  - test: Testing best practices\nUse the load_skill tool only when one of these skills is relevant to the task.";
+    assert_eq!(
+        requests[0].system.as_deref(),
+        Some(format!("Base system prompt\n\n{skill_block}").as_str())
+    );
+    let expected_system = format!("{TODO_REMINDER_TEXT}\n\nBase system prompt\n\n{skill_block}");
+    assert_eq!(
+        requests[4].system.as_deref(),
+        Some(expected_system.as_str())
+    );
+    assert_eq!(
+        requests[5].system.as_deref(),
+        Some(expected_system.as_str())
+    );
+}
+
+#[tokio::test]
 async fn completed_todos_do_not_trigger_reminders() {
     let model = model_info("model", ModelProviderKind::Anthropic);
     let provider = ScriptedProvider::new(
@@ -367,4 +450,24 @@ fn text_stream(text: &str) -> super::support::StreamScript {
         ProviderEvent::ContentBlockStopped { index: 0 },
         ProviderEvent::MessageStopped,
     ])
+}
+
+static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(1);
+
+fn temp_skills_dir(label: &str) -> PathBuf {
+    let unique = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let path =
+        std::env::temp_dir().join(format!("mentra-todo-skills-{label}-{timestamp}-{unique}"));
+    fs::create_dir_all(&path).expect("create temp dir");
+    path
+}
+
+fn write_skill(root: &Path, name: &str, content: &str) {
+    let skill_dir = root.join(name);
+    fs::create_dir_all(&skill_dir).expect("create skill dir");
+    fs::write(skill_dir.join("SKILL.md"), content).expect("write skill");
 }
