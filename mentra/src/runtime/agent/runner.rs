@@ -1,12 +1,10 @@
 use std::borrow::Cow;
 
 use crate::{
-    provider::Request,
     ContentBlock, Message, Role,
+    provider::Request,
     runtime::{
-        background::BackgroundNotification,
-        error::RuntimeError,
-        intrinsic,
+        background::BackgroundNotification, error::RuntimeError, intrinsic, team::format_inbox,
     },
 };
 
@@ -82,6 +80,7 @@ impl<'a> TurnRunner<'a> {
     }
 
     async fn stream_turn(&mut self) -> Result<PendingAssistantTurn, RuntimeError> {
+        self.agent.inject_team_inbox()?;
         self.agent.inject_background_notifications();
         self.agent.set_status(AgentStatus::AwaitingModel);
         self.agent.refresh_tasks_from_disk()?;
@@ -137,10 +136,7 @@ impl<'a> TurnRunner<'a> {
         Ok(())
     }
 
-    fn unavailable_tool_result(
-        &self,
-        call: crate::tool::ToolCall,
-    ) -> ContentBlock {
+    fn unavailable_tool_result(&self, call: crate::tool::ToolCall) -> ContentBlock {
         ContentBlock::ToolResult {
             tool_use_id: call.id,
             content: format!("Tool '{}' is not available for this agent", call.name),
@@ -150,6 +146,37 @@ impl<'a> TurnRunner<'a> {
 }
 
 impl Agent {
+    pub(super) fn inject_team_inbox(&mut self) -> Result<(), RuntimeError> {
+        let messages = self
+            .runtime
+            .read_team_inbox(self.config.team.team_dir.as_path(), &self.name)?;
+        if messages.is_empty() {
+            return Ok(());
+        }
+
+        self.inflight_team_messages.extend(messages.iter().cloned());
+        self.push_history(Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text {
+                text: format_inbox(&messages),
+            }],
+        });
+        Ok(())
+    }
+
+    pub(super) fn clear_inflight_team_messages(&mut self) {
+        self.inflight_team_messages.clear();
+    }
+
+    pub(super) fn requeue_inflight_team_messages(&mut self) -> Result<(), RuntimeError> {
+        let messages = std::mem::take(&mut self.inflight_team_messages);
+        self.runtime.requeue_team_messages(
+            self.config.team.team_dir.as_path(),
+            &self.name,
+            messages,
+        )
+    }
+
     pub(super) fn inject_background_notifications(&mut self) {
         let notifications = self.runtime.drain_background_notifications(&self.id);
         if notifications.is_empty() {

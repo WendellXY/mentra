@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::{
     ContentBlock, Message,
-    runtime::{BackgroundTaskSummary, TaskItem},
+    runtime::{BackgroundTaskSummary, TaskItem, TeamMemberSummary, TeamProtocolRequestSummary},
     tool::ToolCall,
 };
 
@@ -64,8 +64,11 @@ pub struct AgentSnapshot {
     pub history_len: usize,
     pub current_text: String,
     pub pending_tool_uses: Vec<PendingToolUseSummary>,
+    pub pending_team_messages: usize,
     pub tasks: Vec<TaskItem>,
     pub subagents: Vec<SpawnedAgentSummary>,
+    pub teammates: Vec<TeamMemberSummary>,
+    pub protocol_requests: Vec<TeamProtocolRequestSummary>,
     pub background_tasks: Vec<BackgroundTaskSummary>,
 }
 
@@ -80,6 +83,21 @@ pub enum AgentEvent {
     },
     SubagentFinished {
         agent: SpawnedAgentSummary,
+    },
+    TeammateSpawned {
+        teammate: TeamMemberSummary,
+    },
+    TeammateUpdated {
+        teammate: TeamMemberSummary,
+    },
+    TeamProtocolRequested {
+        request: TeamProtocolRequestSummary,
+    },
+    TeamProtocolResolved {
+        request: TeamProtocolRequestSummary,
+    },
+    TeamInboxUpdated {
+        unread_count: usize,
     },
     BackgroundTaskStarted {
         task: BackgroundTaskSummary,

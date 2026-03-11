@@ -37,7 +37,10 @@ async fn main() {
             "Foo",
             pick_model(&runtime).await,
             AgentConfig {
-                system: Some("You are a helpful CLI agent.".to_string()),
+                system: Some(
+                    "You are a helpful CLI agent. When the user asks to spawn, manage, monitor, or keep working with a named persistent teammate across turns, you must use `team_spawn` and the team protocol tools rather than the disposable `task` tool or the task graph. Do not satisfy teammate-management requests by creating project tasks. For plan review workflows, send the teammate a normal message asking for the proposal, let the teammate submit a `plan_approval` request back to you, then use `team_respond` on that inbound request. Do not open a `plan_approval` request to the teammate yourself. Use `task` only for short-lived disposable delegation that does not need mailbox coordination, protocol review, or ongoing status tracking."
+                        .to_string(),
+                ),
                 context_compaction: example_compaction_config(),
                 ..AgentConfig::default()
             },
@@ -214,6 +217,11 @@ fn subscribe_events(agent: &Agent) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut assistant_line_open = false;
         let mut last_rendered_tasks = render_tasks(&snapshot.borrow().tasks);
+        let mut last_rendered_team_inbox =
+            render_team_inbox(snapshot.borrow().pending_team_messages);
+        let mut last_rendered_teammates = render_teammates(&snapshot.borrow().teammates);
+        let mut last_rendered_protocols =
+            render_protocol_requests(&snapshot.borrow().protocol_requests);
 
         loop {
             tokio::select! {
@@ -241,6 +249,20 @@ fn subscribe_events(agent: &Agent) -> tokio::task::JoinHandle<()> {
                             agent.name, agent.status
                         );
                     }
+                    Ok(AgentEvent::TeammateSpawned { teammate }) => {
+                        end_assistant_line(&mut assistant_line_open);
+                        println!(
+                            "\x1b[32mspawned teammate\x1b[0m {} ({}, {:?})",
+                            teammate.name, teammate.role, teammate.status
+                        );
+                    }
+                    Ok(AgentEvent::TeammateUpdated { teammate }) => {
+                        end_assistant_line(&mut assistant_line_open);
+                        println!(
+                            "\x1b[32mteammate updated\x1b[0m {} ({:?})",
+                            teammate.name, teammate.status
+                        );
+                    }
                     Ok(AgentEvent::BackgroundTaskStarted { task }) => {
                         end_assistant_line(&mut assistant_line_open);
                         println!(
@@ -265,6 +287,27 @@ fn subscribe_events(agent: &Agent) -> tokio::task::JoinHandle<()> {
                             details.transcript_path.display()
                         );
                     }
+                    Ok(AgentEvent::TeamProtocolRequested { request }) => {
+                        end_assistant_line(&mut assistant_line_open);
+                        println!(
+                            "\x1b[32mteam request\x1b[0m {} {} -> {} ({})",
+                            request.request_id, request.from, request.to, request.protocol
+                        );
+                    }
+                    Ok(AgentEvent::TeamProtocolResolved { request }) => {
+                        end_assistant_line(&mut assistant_line_open);
+                        println!(
+                            "\x1b[32mteam response\x1b[0m {} {} ({:?})",
+                            request.request_id, request.protocol, request.status
+                        );
+                    }
+                    Ok(AgentEvent::TeamInboxUpdated { unread_count }) => {
+                        end_assistant_line(&mut assistant_line_open);
+                        println!(
+                            "\x1b[32mteam inbox updated\x1b[0m {} unread",
+                            unread_count
+                        );
+                    }
                     Ok(AgentEvent::RunFinished) => {
                         end_assistant_line(&mut assistant_line_open);
                     }
@@ -285,6 +328,28 @@ fn subscribe_events(agent: &Agent) -> tokio::task::JoinHandle<()> {
                         end_assistant_line(&mut assistant_line_open);
                         print_tasks(&rendered_tasks);
                         last_rendered_tasks = rendered_tasks;
+                    }
+
+                    let rendered_team_inbox =
+                        render_team_inbox(snapshot.borrow().pending_team_messages);
+                    if rendered_team_inbox != last_rendered_team_inbox {
+                        end_assistant_line(&mut assistant_line_open);
+                        print_team_inbox(&rendered_team_inbox);
+                        last_rendered_team_inbox = rendered_team_inbox;
+                    }
+
+                    let rendered_teammates = render_teammates(&snapshot.borrow().teammates);
+                    if rendered_teammates != last_rendered_teammates {
+                        end_assistant_line(&mut assistant_line_open);
+                        print_teammates(&rendered_teammates);
+                        last_rendered_teammates = rendered_teammates;
+                    }
+
+                    let rendered_protocols = render_protocol_requests(&snapshot.borrow().protocol_requests);
+                    if rendered_protocols != last_rendered_protocols {
+                        end_assistant_line(&mut assistant_line_open);
+                        print_protocol_requests(&rendered_protocols);
+                        last_rendered_protocols = rendered_protocols;
                     }
                 }
             }
@@ -327,6 +392,56 @@ fn describe_tool_call(call: &ToolCall) -> String {
         && let Some(prompt) = call.input.get("prompt").and_then(|value| value.as_str())
     {
         return format!("task \"{prompt}\"");
+    }
+
+    if call.name == "team_spawn" {
+        let name = call
+            .input
+            .get("name")
+            .and_then(|value| value.as_str())
+            .unwrap_or("?");
+        let role = call
+            .input
+            .get("role")
+            .and_then(|value| value.as_str())
+            .unwrap_or("?");
+        return format!("team_spawn {} ({})", name, role);
+    }
+
+    if call.name == "team_send"
+        && let Some(to) = call.input.get("to").and_then(|value| value.as_str())
+    {
+        return format!("team_send {}", to);
+    }
+
+    if call.name == "team_request"
+        && let Some(to) = call.input.get("to").and_then(|value| value.as_str())
+        && let Some(protocol) = call.input.get("protocol").and_then(|value| value.as_str())
+    {
+        return format!("team_request {} ({})", to, protocol);
+    }
+
+    if call.name == "team_respond"
+        && let Some(request_id) = call
+            .input
+            .get("request_id")
+            .and_then(|value| value.as_str())
+    {
+        return format!("team_respond {}", request_id);
+    }
+
+    if call.name == "team_list_requests" {
+        return "team_list_requests".to_string();
+    }
+
+    if call.name == "team_read_inbox" {
+        return "team_read_inbox".to_string();
+    }
+
+    if call.name == "broadcast"
+        && let Some(content) = call.input.get("content").and_then(|value| value.as_str())
+    {
+        return format!("broadcast \"{content}\"");
     }
 
     if call.name == "task_create"
@@ -374,6 +489,41 @@ fn print_tasks(rendered_tasks: &str) {
 
     println!("\x1b[36mTasks\x1b[0m");
     println!("{rendered_tasks}");
+}
+
+fn print_team_inbox(rendered_team_inbox: &str) {
+    if rendered_team_inbox.is_empty() {
+        return;
+    }
+
+    println!("\x1b[32mTeam Inbox\x1b[0m");
+    println!("{rendered_team_inbox}");
+}
+
+fn print_teammates(rendered_teammates: &str) {
+    if rendered_teammates.is_empty() {
+        return;
+    }
+
+    println!("\x1b[32mTeammates\x1b[0m");
+    println!("{rendered_teammates}");
+}
+
+fn print_protocol_requests(rendered_protocols: &str) {
+    if rendered_protocols.is_empty() {
+        return;
+    }
+
+    println!("\x1b[32mTeam Protocols\x1b[0m");
+    println!("{rendered_protocols}");
+}
+
+fn render_team_inbox(pending_team_messages: usize) -> String {
+    if pending_team_messages == 0 {
+        return String::new();
+    }
+
+    format!("{pending_team_messages} unread teammate message(s)")
 }
 
 fn render_tasks(tasks: &[TaskItem]) -> String {
@@ -431,4 +581,46 @@ fn render_tasks(tasks: &[TaskItem]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+fn render_teammates(teammates: &[mentra::runtime::TeamMemberSummary]) -> String {
+    if teammates.is_empty() {
+        return String::new();
+    }
+
+    teammates
+        .iter()
+        .map(|teammate| {
+            format!("{} ({}, {})", teammate.name, teammate.role, teammate.model)
+                + &format!(" - {:?}", teammate.status)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn render_protocol_requests(requests: &[mentra::runtime::TeamProtocolRequestSummary]) -> String {
+    if requests.is_empty() {
+        return String::new();
+    }
+
+    requests
+        .iter()
+        .map(|request| {
+            let resolution = request
+                .resolution_reason
+                .as_deref()
+                .map(|reason| format!(" - {reason}"))
+                .unwrap_or_default();
+            format!(
+                "[{:?}] {} {} -> {} ({}){}",
+                request.status,
+                request.request_id,
+                request.from,
+                request.to,
+                request.protocol,
+                resolution
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
