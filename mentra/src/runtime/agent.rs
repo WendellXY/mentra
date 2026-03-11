@@ -111,6 +111,7 @@ impl Agent {
             &agent.id,
             &agent.name,
             agent.config.team.team_dir.as_path(),
+            agent.config.task.tasks_dir.as_path(),
             agent.event_tx.clone(),
             agent.snapshot_tx.clone(),
             Arc::clone(&agent.snapshot),
@@ -186,9 +187,7 @@ impl Agent {
 
     pub(crate) fn tool_choice(&self) -> Option<ToolChoice> {
         match self.config.tool_choice.clone() {
-            Some(ToolChoice::Tool { name }) if !self.can_use_tool(&name) => {
-                Some(ToolChoice::Auto)
-            }
+            Some(ToolChoice::Tool { name }) if !self.can_use_tool(&name) => Some(ToolChoice::Auto),
             other => other,
         }
     }

@@ -147,9 +147,16 @@ async fn idle_poll(
             guard.try_claim_ready_task()?
         };
         if let Some(task) = claimed {
+            let task_body = if task.description.trim().is_empty() {
+                format!("Task #{}: {}", task.id, task.subject)
+            } else {
+                format!(
+                    "Task #{}: {}\nDescription: {}",
+                    task.id, task.subject, task.description
+                )
+            };
             return Ok(Some(format!(
-                "<auto-claimed>Task #{}: {}</auto-claimed>",
-                task.id, task.subject
+                "<auto-claimed>{task_body}</auto-claimed>\n<reminder>Update your task status. Mark it in_progress when you start and completed when you finish.</reminder>"
             )));
         }
     }

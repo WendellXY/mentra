@@ -106,6 +106,7 @@ impl RuntimeHandle {
         agent_id: &str,
         agent_name: &str,
         team_dir: &Path,
+        tasks_dir: &Path,
         events: broadcast::Sender<AgentEvent>,
         snapshot_tx: watch::Sender<AgentSnapshot>,
         snapshot: Arc<Mutex<AgentSnapshot>>,
@@ -116,8 +117,14 @@ impl RuntimeHandle {
             snapshot_tx.clone(),
             Arc::clone(&snapshot),
         );
-        self.team
-            .register_agent(agent_name, team_dir, events, snapshot_tx, snapshot)?;
+        self.team.register_agent(
+            agent_name,
+            team_dir,
+            tasks_dir,
+            events,
+            snapshot_tx,
+            snapshot,
+        )?;
         Ok(())
     }
 

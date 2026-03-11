@@ -65,6 +65,11 @@ impl Agent {
     pub(crate) fn try_claim_ready_task(
         &mut self,
     ) -> Result<Option<crate::runtime::TaskItem>, RuntimeError> {
+        self.refresh_tasks_from_disk()?;
+        if self.owns_unfinished_tasks() {
+            return Ok(None);
+        }
+
         match self.execute_task_mutation(TASK_CLAIM_TOOL_NAME, serde_json::json!({})) {
             Ok(content) => {
                 self.refresh_tasks_from_disk()?;
@@ -94,6 +99,12 @@ impl Agent {
         TaskStore::new(self.config.task.tasks_dir.clone())
             .capture_disk_state()
             .map_err(map_task_error_for_load)
+    }
+
+    fn owns_unfinished_tasks(&self) -> bool {
+        self.tasks.iter().any(|task| {
+            task.owner == self.name && !matches!(task.status, crate::runtime::TaskStatus::Completed)
+        })
     }
 
     pub(super) fn restore_task_state(

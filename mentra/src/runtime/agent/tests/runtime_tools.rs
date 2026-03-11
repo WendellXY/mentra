@@ -1973,9 +1973,7 @@ async fn failed_teammate_can_recover_on_next_wake() {
         .expect("spawn teammate");
     wait_for_teammate_status(
         &lead,
-        TeamMemberStatus::Failed(
-            "FailedToStreamResponse(InvalidResponse(\"boom\"))".to_string(),
-        ),
+        TeamMemberStatus::Failed("FailedToStreamResponse(InvalidResponse(\"boom\"))".to_string()),
     )
     .await;
 
@@ -2191,14 +2189,20 @@ async fn autonomous_teammate_auto_claims_ready_task_after_spawn() {
 
     wait_for_recorded_requests(&provider_handle, 1).await;
     wait_for_teammate_status(&lead, TeamMemberStatus::Idle).await;
+    wait_for_snapshot_task_owner(&lead, 1, "alice").await;
 
     let task = load_task(&tasks_dir, 1);
     assert_eq!(task["owner"].as_str(), Some("alice"));
+    assert_eq!(lead.watch_snapshot().borrow().tasks[0].owner, "alice");
 
     let requests = provider_handle.recorded_requests().await;
     let auto_claim = latest_auto_claim_text(&requests[0]).expect("auto-claim text");
     assert!(auto_claim.contains("Task #1"));
     assert!(auto_claim.contains("Implement feature"));
+    assert!(request_contains_text(
+        &requests[0],
+        "<reminder>Update your task status."
+    ));
 }
 
 #[tokio::test]
@@ -2255,6 +2259,57 @@ async fn autonomous_teammates_do_not_double_claim_same_task() {
 }
 
 #[tokio::test]
+async fn autonomous_teammate_does_not_claim_more_work_while_owning_unfinished_task() {
+    let model = model_info("model", ModelProviderKind::Anthropic);
+    let provider = ScriptedProvider::new(
+        ModelProviderKind::Anthropic,
+        vec![model.clone()],
+        vec![text_stream(&model.id, "looking into task 1")],
+    );
+    let provider_handle = provider.clone();
+
+    let team_dir = temp_team_dir("claim-owned-work-team");
+    let tasks_dir = temp_team_dir("claim-owned-work-tasks");
+    create_task(&tasks_dir, "Task one", "", vec![]);
+    create_task(&tasks_dir, "Task two", "", vec![]);
+
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut lead = runtime
+        .spawn_with_config(
+            "lead",
+            model,
+            AgentConfig {
+                team: autonomous_team_config(
+                    team_dir,
+                    Duration::from_millis(10),
+                    Duration::from_millis(80),
+                ),
+                task: TaskConfig {
+                    tasks_dir: tasks_dir.clone(),
+                    reminder_threshold: 3,
+                },
+                ..AgentConfig::default()
+            },
+        )
+        .unwrap();
+
+    lead.spawn_teammate("alice", "coder", None)
+        .await
+        .expect("spawn teammate");
+
+    wait_for_recorded_requests(&provider_handle, 1).await;
+    wait_for_snapshot_task_owner(&lead, 1, "alice").await;
+    sleep(Duration::from_millis(120)).await;
+
+    assert_eq!(load_task(&tasks_dir, 1)["owner"].as_str(), Some("alice"));
+    assert_eq!(load_task(&tasks_dir, 2)["owner"].as_str(), Some(""));
+    assert_eq!(provider_handle.recorded_requests().await.len(), 1);
+}
+
+#[tokio::test]
 async fn autonomous_teammate_claims_task_after_dependency_unblocks() {
     let model = model_info("model", ModelProviderKind::Anthropic);
     let provider = ScriptedProvider::new(
@@ -2280,7 +2335,7 @@ async fn autonomous_teammate_claims_task_after_dependency_unblocks() {
                 team: autonomous_team_config(
                     team_dir,
                     Duration::from_millis(10),
-                    Duration::from_millis(150),
+                    Duration::from_millis(300),
                 ),
                 task: TaskConfig {
                     tasks_dir: tasks_dir.clone(),
@@ -2848,4 +2903,21 @@ async fn wait_for_task_owner(tasks_dir: &Path, task_id: u64, owner: &str) {
     }
 
     panic!("timed out waiting for task {task_id} owner {owner}");
+}
+
+async fn wait_for_snapshot_task_owner(agent: &Agent, task_id: u64, owner: &str) {
+    for _ in 0..200 {
+        let tasks = agent.watch_snapshot().borrow().tasks.clone();
+        if tasks
+            .iter()
+            .find(|task| task.id == task_id)
+            .map(|task| task.owner.as_str())
+            == Some(owner)
+        {
+            return;
+        }
+        sleep(Duration::from_millis(10)).await;
+    }
+
+    panic!("timed out waiting for snapshot task {task_id} owner {owner}");
 }
