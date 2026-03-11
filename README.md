@@ -13,6 +13,7 @@ The repository is organized as a small workspace:
 - tool execution through an async `ToolHandler` API
 - builtin `bash` and `read_file` tools
 - builtin `task` subagents with isolated child context and parent-side tracking
+- three-layer context compaction with silent tool-result shrinking, auto-summary compaction, and a builtin `compact` tool
 - agent events and snapshots for CLI or UI watchers
 - Anthropic provider support
 - OpenAI provider support via the Responses API
@@ -45,6 +46,28 @@ use mentra::{provider::model::ModelProviderKind, runtime::Runtime};
 let runtime = Runtime::builder()
     .with_provider(ModelProviderKind::OpenAI, std::env::var("OPENAI_API_KEY")?)
     .build()?;
+```
+
+## Context Compaction
+
+Agents compact context by default:
+
+- old tool results are micro-compacted in outbound requests
+- when estimated request context exceeds roughly 50k tokens, Mentra writes the full transcript to `.transcripts/` and replaces older history with a model-generated summary
+- the model can also call the builtin `compact` tool explicitly
+
+You can tune or disable this per-agent with `ContextCompactionConfig`:
+
+```rust
+use mentra::runtime::{AgentConfig, ContextCompactionConfig};
+
+let config = AgentConfig {
+    context_compaction: ContextCompactionConfig {
+        auto_compact_threshold_tokens: Some(75_000),
+        ..ContextCompactionConfig::default()
+    },
+    ..AgentConfig::default()
+};
 ```
 
 ## Run The Example

@@ -226,6 +226,7 @@ async fn default_runtime_exposes_task_and_new_empty_does_not() {
     let default_requests = default_handle.recorded_requests().await;
     let default_tools = tool_names(&default_requests[0]);
     assert!(default_tools.contains("bash"));
+    assert!(default_tools.contains("compact"));
     assert!(default_tools.contains("read_file"));
     assert!(default_tools.contains("task"));
     assert!(!default_tools.contains("load_skill"));
@@ -250,6 +251,7 @@ async fn default_runtime_exposes_task_and_new_empty_does_not() {
 
     let empty_requests = empty_handle.recorded_requests().await;
     let empty_tools = tool_names(&empty_requests[0]);
+    assert!(!empty_tools.contains("compact"));
     assert!(!empty_tools.contains("task"));
     assert!(!empty_tools.contains("load_skill"));
 }

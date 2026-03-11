@@ -3,7 +3,9 @@ use std::{io::Write, path::PathBuf};
 use dotenvy::dotenv;
 use mentra::{
     provider::model::{ContentBlock, ModelInfo, ModelProviderKind},
-    runtime::{Agent, AgentConfig, AgentEvent, Runtime, TodoItem, TodoStatus},
+    runtime::{
+        Agent, AgentConfig, AgentEvent, ContextCompactionConfig, Runtime, TodoItem, TodoStatus,
+    },
     tool::ToolCall,
 };
 use time::format_description::well_known::Rfc3339;
@@ -32,6 +34,7 @@ async fn main() {
             pick_model(&runtime).await,
             AgentConfig {
                 system: Some("You are a helpful CLI agent.".to_string()),
+                context_compaction: example_compaction_config(),
                 ..AgentConfig::default()
             },
         )
@@ -55,6 +58,18 @@ async fn main() {
             }])
             .await
             .expect("Failed to send message");
+    }
+}
+
+fn example_compaction_config() -> ContextCompactionConfig {
+    let threshold = std::env::var("MENTRA_CHAT_AUTO_COMPACT_TOKENS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(3_000);
+
+    ContextCompactionConfig {
+        auto_compact_threshold_tokens: (threshold > 0).then_some(threshold),
+        ..ContextCompactionConfig::default()
     }
 }
 
@@ -220,6 +235,14 @@ fn subscribe_events(agent: &Agent) -> tokio::task::JoinHandle<()> {
                         println!(
                             "\x1b[35mfinished subagent\x1b[0m {} ({:?})",
                             agent.name, agent.status
+                        );
+                    }
+                    Ok(AgentEvent::ContextCompacted { details }) => {
+                        end_assistant_line(&mut assistant_line_open);
+                        println!(
+                            "\x1b[36mcontext compacted\x1b[0m {:?} -> {}",
+                            details.trigger,
+                            details.transcript_path.display()
                         );
                     }
                     Ok(AgentEvent::RunFinished) => {

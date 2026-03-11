@@ -3,6 +3,7 @@ mod stream;
 
 use std::{borrow::Cow, collections::BTreeMap, fmt::Display};
 
+use serde::Serialize;
 use serde_json::Value;
 use time::OffsetDateTime;
 
@@ -87,20 +88,20 @@ pub struct Response {
     pub stop_reason: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum Role {
     User,
     Assistant,
     Unknown(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Message {
     pub role: Role,
     pub content: Vec<ContentBlock>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum ContentBlock {
     Text {
         text: String,
@@ -138,7 +139,7 @@ impl ContentBlock {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum ImageSource {
     Bytes { media_type: String, data: Vec<u8> },
     Url { url: String },

@@ -1,3 +1,5 @@
+mod compact;
+mod config;
 mod events;
 mod pending;
 mod pending_block;
@@ -7,7 +9,7 @@ mod tests;
 
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, HashSet},
+    collections::HashSet,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -30,35 +32,15 @@ use crate::{
     },
 };
 
+pub use config::{AgentConfig, ContextCompactionConfig};
 pub use events::{
-    AgentEvent, AgentSnapshot, AgentStatus, PendingToolUseSummary, SpawnedAgentStatus,
-    SpawnedAgentSummary,
+    AgentEvent, AgentSnapshot, AgentStatus, ContextCompactionDetails, ContextCompactionTrigger,
+    PendingToolUseSummary, SpawnedAgentStatus, SpawnedAgentSummary,
 };
 pub use pending::PendingAssistantTurn;
 use runner::TurnRunner;
 
 static NEXT_AGENT_ID: AtomicU64 = AtomicU64::new(1);
-
-#[derive(Debug, Clone)]
-pub struct AgentConfig {
-    pub system: Option<String>,
-    pub tool_choice: Option<ToolChoice>,
-    pub temperature: Option<f32>,
-    pub max_output_tokens: Option<u32>,
-    pub metadata: BTreeMap<String, String>,
-}
-
-impl Default for AgentConfig {
-    fn default() -> Self {
-        Self {
-            system: None,
-            tool_choice: Some(ToolChoice::default()),
-            temperature: None,
-            max_output_tokens: Some(8192),
-            metadata: BTreeMap::new(),
-        }
-    }
-}
 
 pub struct Agent {
     id: String,
@@ -241,7 +223,7 @@ impl Agent {
         &mut self,
         content: impl Into<Vec<ContentBlock>>,
     ) -> Result<(), RuntimeError> {
-        let history_len_before_run = self.history.len();
+        let history_before_run = self.history.clone();
         let todos_before_run = self.todos.clone();
         let rounds_before_run = self.rounds_since_todo;
         self.push_history(Message {
@@ -258,7 +240,7 @@ impl Agent {
                 Ok(())
             }
             Err(error) => {
-                self.rollback_history(history_len_before_run);
+                self.restore_history(history_before_run);
                 self.restore_todo_state(todos_before_run, rounds_before_run);
                 self.clear_pending_turn();
                 let message = format!("{error:?}");
@@ -274,6 +256,11 @@ impl Agent {
         self.sync_history_len();
     }
 
+    pub(crate) fn replace_history(&mut self, history: Vec<Message>) {
+        self.history = history;
+        self.sync_history_len();
+    }
+
     pub(crate) fn clear_pending_turn(&mut self) {
         self.snapshot.current_text.clear();
         self.snapshot.pending_tool_uses.clear();
@@ -286,8 +273,8 @@ impl Agent {
         self.publish_snapshot();
     }
 
-    fn rollback_history(&mut self, history_len: usize) {
-        self.history.truncate(history_len);
+    fn restore_history(&mut self, history: Vec<Message>) {
+        self.history = history;
         self.sync_history_len();
     }
 

@@ -7,6 +7,7 @@ use crate::runtime::TODO_TOOL_NAME;
 use crate::tool::{ToolContext, ToolHandler, ToolResult, ToolSpec};
 
 pub struct BashTool;
+pub struct CompactTool;
 pub struct LoadSkillTool;
 pub struct ReadFileTool;
 pub struct TaskTool;
@@ -55,6 +56,24 @@ impl ToolHandler for BashTool {
             };
             Err(message)
         }
+    }
+}
+
+#[async_trait]
+impl ToolHandler for CompactTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "compact".to_string(),
+            description: Some("Compress older conversation context into a summary.".into()),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        }
+    }
+
+    async fn invoke(&self, _ctx: ToolContext, _input: Value) -> ToolResult {
+        Err("compact is handled directly by the agent runtime".to_string())
     }
 }
 

@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use crate::{
     provider::model::{Message, Request, Role},
-    runtime::{self, TASK_TOOL_NAME, TODO_TOOL_NAME, error::RuntimeError},
+    runtime::{self, COMPACT_TOOL_NAME, TASK_TOOL_NAME, TODO_TOOL_NAME, error::RuntimeError},
 };
 
 use super::{Agent, AgentEvent, AgentStatus, PendingAssistantTurn, SpawnedAgentStatus};
@@ -50,6 +50,8 @@ impl<'a> TurnRunner<'a> {
                     (self.unavailable_tool_result(call), false)
                 } else if call.name == TODO_TOOL_NAME {
                     (self.execute_todo(call), true)
+                } else if call.name == COMPACT_TOOL_NAME {
+                    (self.execute_compact(call).await, false)
                 } else if call.name == TASK_TOOL_NAME {
                     (self.execute_task(call).await, false)
                 } else {
@@ -75,13 +77,15 @@ impl<'a> TurnRunner<'a> {
 
     async fn stream_turn(&mut self) -> Result<PendingAssistantTurn, RuntimeError> {
         self.agent.set_status(AgentStatus::AwaitingModel);
+        self.agent.auto_compact_if_needed().await?;
         let provider = self.agent.provider.clone();
         let tools = self.agent.tools();
+        let request_history = self.agent.micro_compacted_history();
         let mut stream = {
             let request = Request {
                 model: self.agent.model.as_str().into(),
                 system: self.agent.effective_system_prompt(),
-                messages: self.agent.history.as_slice().into(),
+                messages: request_history.into(),
                 tools: tools.as_ref().into(),
                 tool_choice: self.agent.tool_choice(),
                 temperature: self.agent.config.temperature,
@@ -142,6 +146,41 @@ impl<'a> TurnRunner<'a> {
             Err(content) => crate::provider::model::ContentBlock::ToolResult {
                 tool_use_id: call.id,
                 content,
+                is_error: true,
+            },
+        }
+    }
+
+    async fn execute_compact(
+        &mut self,
+        call: crate::tool::ToolCall,
+    ) -> crate::provider::model::ContentBlock {
+        match self
+            .agent
+            .compact_history(
+                self.agent.history.len().saturating_sub(1),
+                super::ContextCompactionTrigger::Manual,
+            )
+            .await
+        {
+            Ok(Some(details)) => crate::provider::model::ContentBlock::ToolResult {
+                tool_use_id: call.id,
+                content: format!(
+                    "Context compacted. Transcript saved to {}",
+                    details.transcript_path.display()
+                ),
+                is_error: false,
+            },
+            Ok(None) => crate::provider::model::ContentBlock::ToolResult {
+                tool_use_id: call.id,
+                content:
+                    "Context compaction skipped because there was no older history to summarize."
+                        .to_string(),
+                is_error: false,
+            },
+            Err(error) => crate::provider::model::ContentBlock::ToolResult {
+                tool_use_id: call.id,
+                content: format!("Context compaction failed: {error:?}"),
                 is_error: true,
             },
         }

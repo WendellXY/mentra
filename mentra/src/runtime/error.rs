@@ -6,6 +6,9 @@ pub enum RuntimeError {
     FailedToSendRequest(ProviderError),
     FailedToListModels(ProviderError),
     FailedToStreamResponse(ProviderError),
+    FailedToCompactHistory(ProviderError),
+    FailedToPersistTranscript(std::io::Error),
+    FailedToSerializeTranscript(serde_json::Error),
     MaxRoundsExceeded(usize),
     InvalidToolUseInput {
         id: String,

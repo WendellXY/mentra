@@ -18,10 +18,12 @@ use crate::{
 };
 
 pub use agent::{
-    Agent, AgentConfig, AgentEvent, AgentSnapshot, AgentStatus, PendingAssistantTurn,
+    Agent, AgentConfig, AgentEvent, AgentSnapshot, AgentStatus, ContextCompactionConfig,
+    ContextCompactionDetails, ContextCompactionTrigger, PendingAssistantTurn,
     PendingToolUseSummary, SpawnedAgentStatus, SpawnedAgentSummary,
 };
 pub(crate) use handle::RuntimeHandle;
+pub(crate) const COMPACT_TOOL_NAME: &str = "compact";
 pub(crate) use task::TASK_TOOL_NAME;
 pub(crate) use todo::TODO_TOOL_NAME;
 pub use todo::{TodoItem, TodoStatus};

@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::{
     provider::model::{ContentBlock, Message},
     runtime::TodoItem,
@@ -41,6 +43,21 @@ pub struct SpawnedAgentSummary {
     pub status: SpawnedAgentStatus,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContextCompactionTrigger {
+    Auto,
+    Manual,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextCompactionDetails {
+    pub trigger: ContextCompactionTrigger,
+    pub transcript_path: PathBuf,
+    pub replaced_messages: usize,
+    pub preserved_messages: usize,
+    pub resulting_history_len: usize,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct AgentSnapshot {
     pub status: AgentStatus,
@@ -54,6 +71,9 @@ pub struct AgentSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentEvent {
     RunStarted,
+    ContextCompacted {
+        details: ContextCompactionDetails,
+    },
     SubagentSpawned {
         agent: SpawnedAgentSummary,
     },
