@@ -5,6 +5,7 @@ use mentra::{
     ContentBlock, ModelInfo, ModelProviderKind,
     runtime::{
         Agent, AgentConfig, AgentEvent, ContextCompactionConfig, Runtime, TaskItem, TaskStatus,
+        TeamAutonomyConfig,
     },
     tool::ToolCall,
 };
@@ -38,10 +39,17 @@ async fn main() {
             pick_model(&runtime).await,
             AgentConfig {
                 system: Some(
-                    "You are a helpful CLI agent. When the user asks to spawn, manage, monitor, or keep working with a named persistent teammate across turns, you must use `team_spawn` and the team protocol tools rather than the disposable `task` tool or the task graph. Do not satisfy teammate-management requests by creating project tasks. For plan review workflows, send the teammate a normal message asking for the proposal, let the teammate submit a `plan_approval` request back to you, then use `team_respond` on that inbound request. Do not open a `plan_approval` request to the teammate yourself. Use `task` only for short-lived disposable delegation that does not need mailbox coordination, protocol review, or ongoing status tracking."
+                    "You are a helpful CLI agent. When the user asks to spawn, manage, monitor, or keep working with a named persistent teammate across turns, you must use `team_spawn` and the team protocol tools rather than the disposable `task` tool or persisted task tools. Autonomous teammates can scan persisted tasks, claim ready unowned work themselves, and continue from the task board without manual assignment when team autonomy is enabled. Do not satisfy teammate-management requests by creating project tasks. For plan review workflows, send the teammate a normal message asking for the proposal, let the teammate submit a `plan_approval` request back to you, then use `team_respond` on that inbound request. Do not open a `plan_approval` request to the teammate yourself. Use `task` only for short-lived disposable delegation that does not need mailbox coordination, protocol review, or ongoing status tracking."
                         .to_string(),
                 ),
                 context_compaction: example_compaction_config(),
+                team: mentra::runtime::TeamConfig {
+                    autonomy: TeamAutonomyConfig {
+                        enabled: true,
+                        ..TeamAutonomyConfig::default()
+                    },
+                    ..mentra::runtime::TeamConfig::default()
+                },
                 ..AgentConfig::default()
             },
         )
@@ -456,6 +464,14 @@ fn describe_tool_call(call: &ToolCall) -> String {
         return format!("task_update {task_id}");
     }
 
+    if call.name == "task_claim" {
+        if let Some(task_id) = call.input.get("taskId").and_then(|value| value.as_u64()) {
+            return format!("task_claim {task_id}");
+        }
+
+        return "task_claim".to_string();
+    }
+
     if call.name == "task_get"
         && let Some(task_id) = call.input.get("taskId").and_then(|value| value.as_u64())
     {
@@ -537,22 +553,28 @@ fn render_tasks(tasks: &[TaskItem]) -> String {
     let mut completed = Vec::new();
 
     for task in tasks {
+        let owner_suffix = if task.owner.trim().is_empty() {
+            String::new()
+        } else {
+            format!(" @{}", task.owner)
+        };
         let line = match task.status {
             TaskStatus::Pending if task.blocked_by.is_empty() => {
-                format!("[ ] {}: {}", task.id, task.subject)
+                format!("[ ] {}: {}{}", task.id, task.subject, owner_suffix)
             }
             TaskStatus::Pending => format!(
-                "[-] {}: {} (blocked by {})",
+                "[-] {}: {}{} (blocked by {})",
                 task.id,
                 task.subject,
+                owner_suffix,
                 task.blocked_by
                     .iter()
                     .map(u64::to_string)
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-            TaskStatus::InProgress => format!("[>] {}: {}", task.id, task.subject),
-            TaskStatus::Completed => format!("[x] {}: {}", task.id, task.subject),
+            TaskStatus::InProgress => format!("[>] {}: {}{}", task.id, task.subject, owner_suffix),
+            TaskStatus::Completed => format!("[x] {}: {}{}", task.id, task.subject, owner_suffix),
         };
 
         match task.status {

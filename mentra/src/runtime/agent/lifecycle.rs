@@ -7,10 +7,11 @@ impl Agent {
         &mut self,
         content: impl Into<Vec<ContentBlock>>,
     ) -> Result<(), RuntimeError> {
+        self.idle_requested = false;
         self.refresh_tasks_from_disk()?;
         let history_before_run = self.history.clone();
         let tasks_before_run = self.tasks.clone();
-        let rounds_before_run = self.rounds_since_task_graph;
+        let rounds_before_run = self.rounds_since_task;
         let task_disk_state = self.capture_task_disk_state()?;
         self.push_history(Message {
             role: Role::User,
@@ -28,6 +29,7 @@ impl Agent {
                 Ok(())
             }
             Err(error) => {
+                self.idle_requested = false;
                 self.requeue_inflight_team_messages()?;
                 self.requeue_inflight_background_notifications();
                 self.restore_history(history_before_run);
@@ -39,5 +41,13 @@ impl Agent {
                 Err(error)
             }
         }
+    }
+
+    pub(crate) fn request_idle(&mut self) {
+        self.idle_requested = true;
+    }
+
+    pub(crate) fn take_idle_requested(&mut self) -> bool {
+        std::mem::take(&mut self.idle_requested)
     }
 }

@@ -1,6 +1,6 @@
 use std::{
     path::Path,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
 };
 
 use crate::{
@@ -9,6 +9,7 @@ use crate::{
         AgentEvent, AgentSnapshot,
         background::{BackgroundNotification, BackgroundTaskManager, BackgroundTaskSummary},
         error::RuntimeError,
+        task::{self, TaskAccess},
         team::{
             TeamDispatch, TeamManager, TeamMemberSummary, TeamMessage, TeamProtocolRequestSummary,
             TeamRequestFilter,
@@ -16,7 +17,6 @@ use crate::{
     },
     tool::{ToolCall, ToolContext, ToolHandler, ToolRegistry, ToolSpec},
 };
-use std::sync::Mutex;
 use tokio::sync::{broadcast, watch};
 
 use super::skill::SkillLoader;
@@ -28,6 +28,7 @@ pub struct RuntimeHandle {
     pub(crate) background_tasks: BackgroundTaskManager,
     pub(crate) team: TeamManager,
     pub(crate) runtime_intrinsics_enabled: bool,
+    pub(crate) task_lock: Arc<Mutex<()>>,
 }
 
 impl RuntimeHandle {
@@ -38,6 +39,7 @@ impl RuntimeHandle {
             background_tasks: BackgroundTaskManager::default(),
             team: TeamManager::default(),
             runtime_intrinsics_enabled: true,
+            task_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -48,6 +50,7 @@ impl RuntimeHandle {
             background_tasks: BackgroundTaskManager::default(),
             team: TeamManager::default(),
             runtime_intrinsics_enabled: false,
+            task_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -157,6 +160,10 @@ impl RuntimeHandle {
         self.team.spawn_teammate(team_dir, summary, wake_tx, task)
     }
 
+    pub fn wake_teammate(&self, team_dir: &Path, teammate_name: &str) -> Result<(), RuntimeError> {
+        self.team.wake_teammate(team_dir, teammate_name)
+    }
+
     pub fn send_team_message(
         &self,
         team_dir: &Path,
@@ -224,6 +231,17 @@ impl RuntimeHandle {
         filter: TeamRequestFilter,
     ) -> Result<Vec<TeamProtocolRequestSummary>, RuntimeError> {
         self.team.list_requests(team_dir, agent_name, filter)
+    }
+
+    pub fn execute_task_mutation(
+        &self,
+        tool_name: &str,
+        input: serde_json::Value,
+        dir: &Path,
+        access: TaskAccess<'_>,
+    ) -> Result<String, String> {
+        let _guard = self.task_lock.lock().expect("task lock poisoned");
+        task::execute(tool_name, input, dir, access)
     }
 
     pub async fn execute_tool(&self, agent_id: &str, tool_call: ToolCall) -> ContentBlock {

@@ -156,6 +156,28 @@ impl TeamManager {
         Ok(summary)
     }
 
+    pub(crate) fn wake_teammate(
+        &self,
+        team_dir: &Path,
+        teammate_name: &str,
+    ) -> Result<(), RuntimeError> {
+        let wake_tx = {
+            let mut state = self.inner.state.lock().expect("team manager poisoned");
+            let team = ensure_team_state(&mut state, team_dir)?;
+            team.actors
+                .get(teammate_name)
+                .map(|actor| actor.wake_tx.clone())
+                .ok_or_else(|| {
+                    RuntimeError::InvalidTeam(format!(
+                        "No live teammate actor exists for '{teammate_name}'"
+                    ))
+                })?
+        };
+
+        let _ = wake_tx.send(());
+        Ok(())
+    }
+
     pub(crate) fn update_member_status(
         &self,
         team_dir: &Path,
@@ -508,6 +530,17 @@ impl TeamManager {
         let mut state = self.inner.state.lock().expect("team manager poisoned");
         let team = ensure_team_state(&mut state, team_dir)?;
         Ok(team.pending_shutdowns.remove(teammate_name))
+    }
+
+    pub(crate) fn unregister_teammate_actor(
+        &self,
+        team_dir: &Path,
+        teammate_name: &str,
+    ) -> Result<(), RuntimeError> {
+        let mut state = self.inner.state.lock().expect("team manager poisoned");
+        let team = ensure_team_state(&mut state, team_dir)?;
+        team.actors.remove(teammate_name);
+        Ok(())
     }
 
     fn publish_to_observers(

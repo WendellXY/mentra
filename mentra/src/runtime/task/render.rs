@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use super::TaskGraphError;
+use super::TaskError;
 use super::types::TaskItem;
 
 #[derive(Debug, Serialize)]
@@ -21,9 +21,9 @@ pub(super) struct TaskListOutput {
     pub(super) completed: Vec<TaskItem>,
 }
 
-pub(super) fn serialize_pretty<T>(value: &T) -> Result<String, TaskGraphError>
+pub(super) fn serialize_pretty<T>(value: &T) -> Result<String, TaskError>
 where
     T: Serialize,
 {
-    serde_json::to_string_pretty(value).map_err(TaskGraphError::Serde)
+    serde_json::to_string_pretty(value).map_err(TaskError::Serde)
 }

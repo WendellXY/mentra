@@ -35,12 +35,13 @@ impl<'a> TurnRunner<'a> {
 
             let tool_calls = pending.ready_tool_calls()?;
             if tool_calls.is_empty() {
-                self.agent.note_round_without_task_graph();
+                self.agent.note_round_without_task();
                 return Ok(());
             }
 
             let mut tool_results = Vec::new();
-            let mut successful_task_graph = false;
+            let mut successful_task = false;
+            let mut end_turn = false;
             for call in tool_calls {
                 self.agent.set_status(AgentStatus::ExecutingTool {
                     id: call.id.clone(),
@@ -49,20 +50,24 @@ impl<'a> TurnRunner<'a> {
                 self.agent
                     .emit_event(AgentEvent::ToolExecutionStarted { call: call.clone() });
 
-                let (result, task_graph_succeeded) = if !self.agent.can_use_tool(&call.name) {
-                    (self.unavailable_tool_result(call), false)
-                } else if let Some(outcome) = intrinsic::execute(self.agent, call.clone()).await {
-                    (outcome.result, outcome.touched_task_graph)
-                } else {
-                    (
-                        self.agent.runtime.execute_tool(self.agent.id(), call).await,
-                        false,
-                    )
-                };
+                let (result, task_succeeded, should_end_turn) =
+                    if !self.agent.can_use_tool(&call.name) {
+                        (self.unavailable_tool_result(call), false, false)
+                    } else if let Some(outcome) = intrinsic::execute(self.agent, call.clone()).await
+                    {
+                        (outcome.result, outcome.touched_task, outcome.end_turn)
+                    } else {
+                        (
+                            self.agent.runtime.execute_tool(self.agent.id(), call).await,
+                            false,
+                            false,
+                        )
+                    };
                 self.agent.emit_event(AgentEvent::ToolExecutionFinished {
                     result: result.clone(),
                 });
-                successful_task_graph |= task_graph_succeeded;
+                successful_task |= task_succeeded;
+                end_turn |= should_end_turn;
                 tool_results.push(result);
             }
 
@@ -70,12 +75,15 @@ impl<'a> TurnRunner<'a> {
                 role: Role::User,
                 content: tool_results,
             });
-            if successful_task_graph {
-                self.agent.record_task_graph_activity();
+            if successful_task {
+                self.agent.record_task_activity();
             } else {
-                self.agent.note_round_without_task_graph();
+                self.agent.note_round_without_task();
             }
             self.agent.clear_pending_turn();
+            if end_turn {
+                return Ok(());
+            }
         }
     }
 
@@ -87,7 +95,8 @@ impl<'a> TurnRunner<'a> {
         self.agent.auto_compact_if_needed().await?;
         let provider = self.agent.provider.clone();
         let tools = self.agent.tools();
-        let request_history = self.agent.micro_compacted_history();
+        let mut request_history = self.agent.micro_compacted_history();
+        self.agent.inject_teammate_identity(&mut request_history);
         let mut stream = {
             let request = Request {
                 model: self.agent.model.as_str().into(),

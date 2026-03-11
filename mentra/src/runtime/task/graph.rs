@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use super::{
-    TaskGraphError,
+    TaskError,
     types::{TaskItem, TaskStatus},
 };
 
@@ -18,7 +18,7 @@ pub(super) fn apply_status_change(
     next_status: TaskStatus,
     unblocked: &mut Vec<TaskItem>,
     reblocked: &mut Vec<TaskItem>,
-) -> Result<(), TaskGraphError> {
+) -> Result<(), TaskError> {
     if original_status == next_status {
         validate_unblocked_status(find_task(tasks, task_id)?)?;
         return Ok(());
@@ -75,9 +75,9 @@ pub(super) fn add_dependency(
     tasks: &mut [TaskItem],
     blocker_id: u64,
     dependent_id: u64,
-) -> Result<(), TaskGraphError> {
+) -> Result<(), TaskError> {
     if blocker_id == dependent_id {
-        return Err(TaskGraphError::Validation(
+        return Err(TaskError::Validation(
             "Tasks cannot depend on themselves".to_string(),
         ));
     }
@@ -87,7 +87,7 @@ pub(super) fn add_dependency(
 
     let edge_exists = find_task(tasks, blocker_id)?.blocks.contains(&dependent_id);
     if !edge_exists && path_exists(tasks, dependent_id, blocker_id) {
-        return Err(TaskGraphError::Validation(format!(
+        return Err(TaskError::Validation(format!(
             "Adding dependency {blocker_id} -> {dependent_id} would create a cycle"
         )));
     }
@@ -96,7 +96,7 @@ pub(super) fn add_dependency(
 
     if blocker_status != TaskStatus::Completed {
         if dependent_status != TaskStatus::Pending {
-            return Err(TaskGraphError::Validation(format!(
+            return Err(TaskError::Validation(format!(
                 "Task {dependent_id} cannot have unresolved blockers while {:?}",
                 dependent_status
             )));
@@ -115,7 +115,7 @@ pub(super) fn remove_dependency(
     tasks: &mut [TaskItem],
     blocker_id: u64,
     dependent_id: u64,
-) -> Result<(), TaskGraphError> {
+) -> Result<(), TaskError> {
     find_task(tasks, blocker_id)?;
     find_task(tasks, dependent_id)?;
 
@@ -127,7 +127,7 @@ pub(super) fn remove_dependency(
     Ok(())
 }
 
-pub(super) fn validate_loaded_tasks(tasks: &[TaskItem]) -> Result<(), TaskGraphError> {
+pub(super) fn validate_loaded_tasks(tasks: &[TaskItem]) -> Result<(), TaskError> {
     let mut seen = HashSet::new();
     let task_ids = tasks.iter().map(|task| task.id).collect::<HashSet<_>>();
     let tasks_by_id = tasks
@@ -137,7 +137,7 @@ pub(super) fn validate_loaded_tasks(tasks: &[TaskItem]) -> Result<(), TaskGraphE
 
     for task in tasks {
         if !seen.insert(task.id) {
-            return Err(TaskGraphError::Validation(format!(
+            return Err(TaskError::Validation(format!(
                 "Duplicate task id {} on disk",
                 task.id
             )));
@@ -147,13 +147,13 @@ pub(super) fn validate_loaded_tasks(tasks: &[TaskItem]) -> Result<(), TaskGraphE
 
         for blocker_id in &task.blocked_by {
             if !task_ids.contains(blocker_id) {
-                return Err(TaskGraphError::Validation(format!(
+                return Err(TaskError::Validation(format!(
                     "Task {} references missing blocker {}",
                     task.id, blocker_id
                 )));
             }
             if *blocker_id == task.id {
-                return Err(TaskGraphError::Validation(format!(
+                return Err(TaskError::Validation(format!(
                     "Task {} cannot block itself",
                     task.id
                 )));
@@ -161,13 +161,13 @@ pub(super) fn validate_loaded_tasks(tasks: &[TaskItem]) -> Result<(), TaskGraphE
 
             let blocker = tasks_by_id[blocker_id];
             if blocker.status == TaskStatus::Completed {
-                return Err(TaskGraphError::Validation(format!(
+                return Err(TaskError::Validation(format!(
                     "Task {} is still blocked by completed task {}",
                     task.id, blocker_id
                 )));
             }
             if !blocker.blocks.contains(&task.id) {
-                return Err(TaskGraphError::Validation(format!(
+                return Err(TaskError::Validation(format!(
                     "Task {} is blocked by {} but the reciprocal edge is missing",
                     task.id, blocker_id
                 )));
@@ -176,13 +176,13 @@ pub(super) fn validate_loaded_tasks(tasks: &[TaskItem]) -> Result<(), TaskGraphE
 
         for dependent_id in &task.blocks {
             if !task_ids.contains(dependent_id) {
-                return Err(TaskGraphError::Validation(format!(
+                return Err(TaskError::Validation(format!(
                     "Task {} references missing dependent {}",
                     task.id, dependent_id
                 )));
             }
             if *dependent_id == task.id {
-                return Err(TaskGraphError::Validation(format!(
+                return Err(TaskError::Validation(format!(
                     "Task {} cannot depend on itself",
                     task.id
                 )));
@@ -190,7 +190,7 @@ pub(super) fn validate_loaded_tasks(tasks: &[TaskItem]) -> Result<(), TaskGraphE
 
             let dependent = tasks_by_id[dependent_id];
             if task.status != TaskStatus::Completed && !dependent.blocked_by.contains(&task.id) {
-                return Err(TaskGraphError::Validation(format!(
+                return Err(TaskError::Validation(format!(
                     "Task {} blocks {} but the unresolved blocker is missing",
                     task.id, dependent_id
                 )));
@@ -199,19 +199,19 @@ pub(super) fn validate_loaded_tasks(tasks: &[TaskItem]) -> Result<(), TaskGraphE
     }
 
     if has_cycle(tasks) {
-        return Err(TaskGraphError::Validation(
-            "Task graph contains a cycle".to_string(),
+        return Err(TaskError::Validation(
+            "Task dependencies contain a cycle".to_string(),
         ));
     }
 
     Ok(())
 }
 
-pub(super) fn find_task(tasks: &[TaskItem], task_id: u64) -> Result<&TaskItem, TaskGraphError> {
+pub(super) fn find_task(tasks: &[TaskItem], task_id: u64) -> Result<&TaskItem, TaskError> {
     tasks
         .iter()
         .find(|task| task.id == task_id)
-        .ok_or_else(|| TaskGraphError::Validation(format!("Task {task_id} does not exist")))
+        .ok_or_else(|| TaskError::Validation(format!("Task {task_id} does not exist")))
 }
 
 pub(super) fn sort_and_dedup_ids(ids: &mut Vec<u64>) {
@@ -224,11 +224,11 @@ pub(super) fn sort_tasks(tasks: &mut [TaskItem]) {
     tasks.sort_by_key(|task| task.id);
 }
 
-fn validate_unblocked_status(task: &TaskItem) -> Result<(), TaskGraphError> {
+fn validate_unblocked_status(task: &TaskItem) -> Result<(), TaskError> {
     if matches!(task.status, TaskStatus::InProgress | TaskStatus::Completed)
         && !task.blocked_by.is_empty()
     {
-        return Err(TaskGraphError::Validation(format!(
+        return Err(TaskError::Validation(format!(
             "Task {} cannot be {:?} while blocked by {:?}",
             task.id, task.status, task.blocked_by
         )));
@@ -237,11 +237,11 @@ fn validate_unblocked_status(task: &TaskItem) -> Result<(), TaskGraphError> {
     Ok(())
 }
 
-fn find_task_mut(tasks: &mut [TaskItem], task_id: u64) -> Result<&mut TaskItem, TaskGraphError> {
+fn find_task_mut(tasks: &mut [TaskItem], task_id: u64) -> Result<&mut TaskItem, TaskError> {
     tasks
         .iter_mut()
         .find(|task| task.id == task_id)
-        .ok_or_else(|| TaskGraphError::Validation(format!("Task {task_id} does not exist")))
+        .ok_or_else(|| TaskError::Validation(format!("Task {task_id} does not exist")))
 }
 
 fn insert_id(ids: &mut Vec<u64>, id: u64) -> bool {

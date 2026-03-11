@@ -31,13 +31,16 @@ use crate::{
     },
 };
 
-pub use config::{AgentConfig, ContextCompactionConfig, TaskGraphConfig, TeamConfig};
+pub use config::{
+    AgentConfig, ContextCompactionConfig, TaskConfig, TeamAutonomyConfig, TeamConfig,
+};
 pub use events::{
     AgentEvent, AgentSnapshot, AgentStatus, ContextCompactionDetails, ContextCompactionTrigger,
     PendingToolUseSummary, SpawnedAgentStatus, SpawnedAgentSummary,
 };
 pub use pending::PendingAssistantTurn;
 use runner::TurnRunner;
+pub(crate) use team::parse_task_input;
 
 static NEXT_AGENT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -49,7 +52,7 @@ pub struct Agent {
     config: AgentConfig,
     history: Vec<Message>,
     tasks: Vec<TaskItem>,
-    rounds_since_task_graph: usize,
+    rounds_since_task: usize,
     event_tx: broadcast::Sender<AgentEvent>,
     snapshot: Arc<Mutex<AgentSnapshot>>,
     snapshot_tx: watch::Sender<AgentSnapshot>,
@@ -58,6 +61,14 @@ pub struct Agent {
     max_rounds: Option<usize>,
     inflight_background_notifications: Vec<BackgroundNotification>,
     inflight_team_messages: Vec<TeamMessage>,
+    teammate_identity: Option<TeammateIdentity>,
+    idle_requested: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TeammateIdentity {
+    pub(crate) role: String,
+    pub(crate) lead: String,
 }
 
 impl Agent {
@@ -69,6 +80,7 @@ impl Agent {
         provider: Arc<dyn Provider>,
         hidden_tools: HashSet<String>,
         max_rounds: Option<usize>,
+        teammate_identity: Option<TeammateIdentity>,
     ) -> Result<Self, RuntimeError> {
         let (event_tx, _) = broadcast::channel(256);
         let snapshot = AgentSnapshot::default();
@@ -83,7 +95,7 @@ impl Agent {
             config,
             history: Vec::new(),
             tasks: Vec::new(),
-            rounds_since_task_graph: 0,
+            rounds_since_task: 0,
             event_tx,
             snapshot,
             snapshot_tx,
@@ -92,6 +104,8 @@ impl Agent {
             max_rounds,
             inflight_background_notifications: Vec::new(),
             inflight_team_messages: Vec::new(),
+            teammate_identity,
+            idle_requested: false,
         };
         agent.runtime.register_agent(
             &agent.id,
@@ -147,15 +161,23 @@ impl Agent {
             self.runtime
                 .tools()
                 .iter()
-                .filter(|tool| !self.hidden_tools.contains(&tool.name))
+                .filter(|tool| self.can_use_tool(&tool.name))
                 .cloned(),
         );
-        tools.retain(|tool| !self.hidden_tools.contains(&tool.name));
+        tools.retain(|tool| self.can_use_tool(&tool.name));
         tools.into()
     }
 
     pub(crate) fn can_use_tool(&self, name: &str) -> bool {
-        !self.hidden_tools.contains(name)
+        if self.hidden_tools.contains(name) {
+            return false;
+        }
+
+        if name == crate::runtime::intrinsic::IDLE_TOOL_NAME {
+            return self.teammate_identity.is_some();
+        }
+
+        true
     }
 
     pub(crate) fn max_rounds(&self) -> Option<usize> {
@@ -164,7 +186,7 @@ impl Agent {
 
     pub(crate) fn tool_choice(&self) -> Option<ToolChoice> {
         match self.config.tool_choice.clone() {
-            Some(ToolChoice::Tool { name }) if self.hidden_tools.contains(&name) => {
+            Some(ToolChoice::Tool { name }) if !self.can_use_tool(&name) => {
                 Some(ToolChoice::Auto)
             }
             other => other,

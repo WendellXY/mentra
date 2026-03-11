@@ -1,10 +1,12 @@
 use std::{borrow::Cow, sync::Arc};
 
+use serde::Deserialize;
+use serde_json::Value;
 use tokio::sync::{Mutex as AsyncMutex, mpsc};
 
 use crate::runtime::{
-    TASK_CREATE_TOOL_NAME, TASK_UPDATE_TOOL_NAME, TeamDispatch, TeamMemberStatus,
-    TeamMemberSummary, TeamProtocolRequestSummary, TeamProtocolStatus,
+    TASK_CREATE_TOOL_NAME, TeamDispatch, TeamMemberStatus, TeamMemberSummary,
+    TeamProtocolRequestSummary, TeamProtocolStatus,
     error::RuntimeError,
     team::{
         TEAM_BROADCAST_TOOL_NAME, TEAM_SPAWN_TOOL_NAME, TEAMMATE_MAX_ROUNDS, TeamMessage,
@@ -12,7 +14,10 @@ use crate::runtime::{
     },
 };
 
-use super::Agent;
+use super::{Agent, TeammateIdentity};
+
+const SUBAGENT_MAX_ROUNDS: usize = 30;
+const SUBAGENT_SYSTEM_PROMPT: &str = "You are a subagent working for another agent. Solve the delegated task, use tools when helpful, and finish with a concise final answer for the parent agent.";
 
 impl Agent {
     pub async fn spawn_teammate(
@@ -58,6 +63,10 @@ impl Agent {
             Arc::clone(&self.provider),
             hidden_tools,
             Some(TEAMMATE_MAX_ROUNDS),
+            Some(TeammateIdentity {
+                role: role.clone(),
+                lead: self.name.clone(),
+            }),
         )?;
 
         let summary = TeamMemberSummary {
@@ -91,6 +100,10 @@ impl Agent {
         let summary = self
             .runtime
             .register_teammate(&team_dir, summary, wake_tx, task)?;
+
+        if self.config.team.autonomy.enabled {
+            let _ = self.runtime.wake_teammate(&team_dir, &name);
+        }
 
         if let Some(prompt) = prompt.filter(|prompt| !prompt.trim().is_empty()) {
             self.send_team_message(&name, prompt)?;
@@ -182,7 +195,7 @@ impl Agent {
         hidden_tools.insert(crate::runtime::TASK_TOOL_NAME.to_string());
 
         let mut config = self.config.clone();
-        config.system = Some(crate::runtime::task::build_subagent_system_prompt(
+        config.system = Some(build_subagent_system_prompt(
             self.config.system.as_deref().map(Cow::Borrowed),
         ));
 
@@ -193,16 +206,39 @@ impl Agent {
             config,
             Arc::clone(&self.provider),
             hidden_tools,
-            Some(crate::runtime::task::SUBAGENT_MAX_ROUNDS),
+            Some(SUBAGENT_MAX_ROUNDS),
+            self.teammate_identity.clone(),
         )
     }
 }
 
-fn teammate_hidden_tools() -> [String; 4] {
+#[derive(Debug, Deserialize)]
+struct TaskInput {
+    prompt: String,
+}
+
+fn teammate_hidden_tools() -> [String; 3] {
     [
         TEAM_SPAWN_TOOL_NAME.to_string(),
         TEAM_BROADCAST_TOOL_NAME.to_string(),
         TASK_CREATE_TOOL_NAME.to_string(),
-        TASK_UPDATE_TOOL_NAME.to_string(),
     ]
+}
+
+pub(crate) fn parse_task_input(input: Value) -> Result<String, String> {
+    let parsed = serde_json::from_value::<TaskInput>(input)
+        .map_err(|error| format!("Invalid task input: {error}"))?;
+
+    if parsed.prompt.trim().is_empty() {
+        return Err("Task prompt must not be empty".to_string());
+    }
+
+    Ok(parsed.prompt)
+}
+
+fn build_subagent_system_prompt(base: Option<Cow<'_, str>>) -> String {
+    match base {
+        Some(system) => format!("{system}\n\n{SUBAGENT_SYSTEM_PROMPT}"),
+        None => SUBAGENT_SYSTEM_PROMPT.to_string(),
+    }
 }

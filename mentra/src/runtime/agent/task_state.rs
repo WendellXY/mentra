@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use crate::runtime::{
     TaskDiskState,
     error::RuntimeError,
-    task_graph::{TASK_REMINDER_TEXT, TaskStore, has_unfinished_tasks},
+    task::{TASK_CLAIM_TOOL_NAME, TASK_REMINDER_TEXT, TaskAccess, TaskStore, has_unfinished_tasks},
 };
 
 use super::Agent;
@@ -12,7 +12,7 @@ impl Agent {
     pub(crate) fn effective_system_prompt(&self) -> Option<Cow<'_, str>> {
         let mut sections = Vec::new();
 
-        if self.rounds_since_task_graph >= self.config.task_graph.reminder_threshold
+        if self.rounds_since_task >= self.config.task.reminder_threshold
             && has_unfinished_tasks(&self.tasks)
         {
             sections.push(TASK_REMINDER_TEXT.to_string());
@@ -33,20 +33,20 @@ impl Agent {
         }
     }
 
-    pub(crate) fn note_round_without_task_graph(&mut self) {
+    pub(crate) fn note_round_without_task(&mut self) {
         if has_unfinished_tasks(&self.tasks) {
-            self.rounds_since_task_graph += 1;
+            self.rounds_since_task += 1;
         }
     }
 
-    pub(crate) fn record_task_graph_activity(&mut self) {
-        self.rounds_since_task_graph = 0;
+    pub(crate) fn record_task_activity(&mut self) {
+        self.rounds_since_task = 0;
     }
 
     pub(crate) fn refresh_tasks_from_disk(&mut self) -> Result<(), RuntimeError> {
-        let tasks = TaskStore::new(self.config.task_graph.tasks_dir.clone())
+        let tasks = TaskStore::new(self.config.task.tasks_dir.clone())
             .load_all()
-            .map_err(map_task_graph_error_for_load)?;
+            .map_err(map_task_error_for_load)?;
         self.tasks = tasks;
         let tasks = self.tasks.clone();
         self.mutate_snapshot(|snapshot| {
@@ -55,23 +55,58 @@ impl Agent {
         Ok(())
     }
 
+    pub(crate) fn task_access(&self) -> TaskAccess<'_> {
+        match &self.teammate_identity {
+            Some(_) => TaskAccess::Teammate(self.name.as_str()),
+            None => TaskAccess::Lead,
+        }
+    }
+
+    pub(crate) fn try_claim_ready_task(
+        &mut self,
+    ) -> Result<Option<crate::runtime::TaskItem>, RuntimeError> {
+        match self.execute_task_mutation(TASK_CLAIM_TOOL_NAME, serde_json::json!({})) {
+            Ok(content) => {
+                self.refresh_tasks_from_disk()?;
+                serde_json::from_str::<crate::runtime::TaskItem>(&content)
+                    .map(Some)
+                    .map_err(RuntimeError::FailedToSerializeTasks)
+            }
+            Err(error) if error == "No ready unowned tasks are available to claim" => Ok(None),
+            Err(error) => Err(RuntimeError::InvalidTask(error)),
+        }
+    }
+
+    pub(crate) fn execute_task_mutation(
+        &self,
+        tool_name: &str,
+        input: serde_json::Value,
+    ) -> Result<String, String> {
+        self.runtime.execute_task_mutation(
+            tool_name,
+            input,
+            self.config.task.tasks_dir.as_path(),
+            self.task_access(),
+        )
+    }
+
     pub(super) fn capture_task_disk_state(&self) -> Result<TaskDiskState, RuntimeError> {
-        TaskStore::new(self.config.task_graph.tasks_dir.clone())
+        TaskStore::new(self.config.task.tasks_dir.clone())
             .capture_disk_state()
-            .map_err(map_task_graph_error_for_load)
+            .map_err(map_task_error_for_load)
     }
 
     pub(super) fn restore_task_state(
         &mut self,
         tasks: Vec<crate::runtime::TaskItem>,
-        rounds_since_task_graph: usize,
+        rounds_since_task: usize,
         disk_state: &TaskDiskState,
     ) -> Result<(), RuntimeError> {
-        TaskStore::new(self.config.task_graph.tasks_dir.clone())
+        TaskStore::new(self.config.task.tasks_dir.clone())
             .restore_disk_state(disk_state)
-            .map_err(map_task_graph_error_for_restore)?;
+            .map_err(map_task_error_for_restore)?;
         self.tasks = tasks;
-        self.rounds_since_task_graph = rounds_since_task_graph;
+        self.rounds_since_task = rounds_since_task;
         let tasks = self.tasks.clone();
         self.mutate_snapshot(|snapshot| {
             snapshot.tasks = tasks;
@@ -80,22 +115,18 @@ impl Agent {
     }
 }
 
-fn map_task_graph_error_for_load(error: crate::runtime::TaskGraphError) -> RuntimeError {
+fn map_task_error_for_load(error: crate::runtime::TaskError) -> RuntimeError {
     match error {
-        crate::runtime::TaskGraphError::Io(error) => RuntimeError::FailedToLoadTasks(error),
-        crate::runtime::TaskGraphError::Serde(error) => RuntimeError::FailedToSerializeTasks(error),
-        crate::runtime::TaskGraphError::Validation(message) => {
-            RuntimeError::InvalidTaskGraph(message)
-        }
+        crate::runtime::TaskError::Io(error) => RuntimeError::FailedToLoadTasks(error),
+        crate::runtime::TaskError::Serde(error) => RuntimeError::FailedToSerializeTasks(error),
+        crate::runtime::TaskError::Validation(message) => RuntimeError::InvalidTask(message),
     }
 }
 
-fn map_task_graph_error_for_restore(error: crate::runtime::TaskGraphError) -> RuntimeError {
+fn map_task_error_for_restore(error: crate::runtime::TaskError) -> RuntimeError {
     match error {
-        crate::runtime::TaskGraphError::Io(error) => RuntimeError::FailedToRestoreTasks(error),
-        crate::runtime::TaskGraphError::Serde(error) => RuntimeError::FailedToSerializeTasks(error),
-        crate::runtime::TaskGraphError::Validation(message) => {
-            RuntimeError::InvalidTaskGraph(message)
-        }
+        crate::runtime::TaskError::Io(error) => RuntimeError::FailedToRestoreTasks(error),
+        crate::runtime::TaskError::Serde(error) => RuntimeError::FailedToSerializeTasks(error),
+        crate::runtime::TaskError::Validation(message) => RuntimeError::InvalidTask(message),
     }
 }

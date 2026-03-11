@@ -257,4 +257,35 @@ impl Agent {
     fn truncate_to_char_boundary(text: &str, max_chars: usize) -> String {
         text.chars().take(max_chars).collect()
     }
+
+    pub(crate) fn inject_teammate_identity(&self, messages: &mut Vec<Message>) {
+        let Some(identity) = &self.teammate_identity else {
+            return;
+        };
+        if messages.len() > 3 {
+            return;
+        }
+
+        messages.insert(
+            0,
+            Message {
+                role: Role::User,
+                content: vec![ContentBlock::Text {
+                    text: format!(
+                        "<identity>You are teammate '{}' with role '{}' on the team led by '{}'. Continue your assigned work and stay in character.</identity>",
+                        self.name, identity.role, identity.lead
+                    ),
+                }],
+            },
+        );
+        messages.insert(
+            1,
+            Message {
+                role: Role::Assistant,
+                content: vec![ContentBlock::Text {
+                    text: format!("I am {}. Continuing.", self.name),
+                }],
+            },
+        );
+    }
 }

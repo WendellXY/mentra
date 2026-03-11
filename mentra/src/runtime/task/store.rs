@@ -5,7 +5,7 @@ use std::{
 };
 
 use super::{
-    TaskGraphError,
+    TaskAccess, TaskError,
     graph::{
         add_dependency, apply_status_change, find_task, remove_dependency, sort_and_dedup_ids,
         sort_tasks, validate_loaded_tasks,
@@ -30,7 +30,7 @@ impl TaskStore {
         Self { dir: dir.into() }
     }
 
-    pub(crate) fn load_all(&self) -> Result<Vec<TaskItem>, TaskGraphError> {
+    pub(crate) fn load_all(&self) -> Result<Vec<TaskItem>, TaskError> {
         if !self.dir.exists() {
             return Ok(Vec::new());
         }
@@ -55,7 +55,7 @@ impl TaskStore {
         Ok(tasks)
     }
 
-    pub(crate) fn capture_disk_state(&self) -> Result<TaskDiskState, TaskGraphError> {
+    pub(crate) fn capture_disk_state(&self) -> Result<TaskDiskState, TaskError> {
         if !self.dir.exists() {
             return Ok(TaskDiskState {
                 existed: false,
@@ -84,7 +84,7 @@ impl TaskStore {
         })
     }
 
-    pub(crate) fn restore_disk_state(&self, state: &TaskDiskState) -> Result<(), TaskGraphError> {
+    pub(crate) fn restore_disk_state(&self, state: &TaskDiskState) -> Result<(), TaskError> {
         if self.dir.exists() {
             for path in self.task_file_paths()? {
                 fs::remove_file(path)?;
@@ -97,7 +97,7 @@ impl TaskStore {
                     Ok(()) => {}
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {}
                     Err(error) if error.kind() == io::ErrorKind::DirectoryNotEmpty => {}
-                    Err(error) => return Err(TaskGraphError::Io(error)),
+                    Err(error) => return Err(TaskError::Io(error)),
                 }
             }
             return Ok(());
@@ -110,7 +110,7 @@ impl TaskStore {
         Ok(())
     }
 
-    pub(crate) fn create(&self, input: TaskCreateInput) -> Result<String, TaskGraphError> {
+    pub(crate) fn create(&self, input: TaskCreateInput) -> Result<String, TaskError> {
         let mut tasks = self.load_all()?;
         let task_id = tasks.iter().map(|task| task.id).max().unwrap_or(0) + 1;
         tasks.push(TaskItem {
@@ -132,10 +132,53 @@ impl TaskStore {
         serialize_pretty(&created)
     }
 
-    pub(crate) fn update(&self, input: TaskUpdateInput) -> Result<String, TaskGraphError> {
+    pub(crate) fn claim(
+        &self,
+        task_id: Option<u64>,
+        owner: Option<&str>,
+    ) -> Result<String, TaskError> {
+        let owner = owner
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                TaskError::Validation("Only named teammates can claim tasks".to_string())
+            })?
+            .trim()
+            .to_string();
+        let mut tasks = self.load_all()?;
+        let claimed = match task_id {
+            Some(task_id) => {
+                let task = find_task_mut(&mut tasks, task_id)?;
+                validate_claimable(task, &owner)?;
+                task.owner = owner;
+                task.clone()
+            }
+            None => {
+                let task = tasks
+                    .iter_mut()
+                    .find(|task| is_claimable(task))
+                    .ok_or_else(|| {
+                        TaskError::Validation(
+                            "No ready unowned tasks are available to claim".to_string(),
+                        )
+                    })?;
+                task.owner = owner;
+                task.clone()
+            }
+        };
+
+        self.write_all(&tasks)?;
+        serialize_pretty(&claimed)
+    }
+
+    pub(crate) fn update(
+        &self,
+        input: TaskUpdateInput,
+        access: TaskAccess<'_>,
+    ) -> Result<String, TaskError> {
         let mut tasks = self.load_all()?;
         let task_id = input.task_id;
         let original_status = find_task(&tasks, task_id)?.status.clone();
+        validate_update_access(find_task(&tasks, task_id)?, &input, access)?;
 
         {
             let task = find_task_mut(&mut tasks, task_id)?;
@@ -189,12 +232,12 @@ impl TaskStore {
         })
     }
 
-    pub(crate) fn get(&self, task_id: u64) -> Result<String, TaskGraphError> {
+    pub(crate) fn get(&self, task_id: u64) -> Result<String, TaskError> {
         let tasks = self.load_all()?;
         serialize_pretty(find_task(&tasks, task_id)?)
     }
 
-    pub(crate) fn list(&self) -> Result<String, TaskGraphError> {
+    pub(crate) fn list(&self) -> Result<String, TaskError> {
         let tasks = self.load_all()?;
         let mut ready = Vec::new();
         let mut blocked = Vec::new();
@@ -219,7 +262,7 @@ impl TaskStore {
         })
     }
 
-    fn write_all(&self, tasks: &[TaskItem]) -> Result<(), TaskGraphError> {
+    fn write_all(&self, tasks: &[TaskItem]) -> Result<(), TaskError> {
         if tasks.is_empty() {
             return Ok(());
         }
@@ -234,7 +277,7 @@ impl TaskStore {
         Ok(())
     }
 
-    fn write_raw_file(&self, path: &Path, content: &str) -> Result<(), TaskGraphError> {
+    fn write_raw_file(&self, path: &Path, content: &str) -> Result<(), TaskError> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -253,7 +296,7 @@ impl TaskStore {
         self.dir.join(format!("task_{task_id}.json"))
     }
 
-    fn task_file_paths(&self) -> Result<Vec<PathBuf>, TaskGraphError> {
+    fn task_file_paths(&self) -> Result<Vec<PathBuf>, TaskError> {
         if !self.dir.exists() {
             return Ok(Vec::new());
         }
@@ -269,11 +312,11 @@ impl TaskStore {
     }
 }
 
-fn validate_unblocked_status(task: &TaskItem) -> Result<(), TaskGraphError> {
+fn validate_unblocked_status(task: &TaskItem) -> Result<(), TaskError> {
     if matches!(task.status, TaskStatus::InProgress | TaskStatus::Completed)
         && !task.blocked_by.is_empty()
     {
-        return Err(TaskGraphError::Validation(format!(
+        return Err(TaskError::Validation(format!(
             "Task {} cannot be {:?} while blocked by {:?}",
             task.id, task.status, task.blocked_by
         )));
@@ -282,11 +325,76 @@ fn validate_unblocked_status(task: &TaskItem) -> Result<(), TaskGraphError> {
     Ok(())
 }
 
-fn find_task_mut(tasks: &mut [TaskItem], task_id: u64) -> Result<&mut TaskItem, TaskGraphError> {
+fn validate_claimable(task: &TaskItem, owner: &str) -> Result<(), TaskError> {
+    if !task.owner.is_empty() {
+        return Err(TaskError::Validation(format!(
+            "Task {} is already owned by '{}'",
+            task.id, task.owner
+        )));
+    }
+    if !task.blocked_by.is_empty() {
+        return Err(TaskError::Validation(format!(
+            "Task {} is blocked by {:?} and cannot be claimed",
+            task.id, task.blocked_by
+        )));
+    }
+    if task.status != TaskStatus::Pending {
+        return Err(TaskError::Validation(format!(
+            "Task {} is {:?} and cannot be claimed by '{}'",
+            task.id, task.status, owner
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_update_access(
+    task: &TaskItem,
+    input: &TaskUpdateInput,
+    access: TaskAccess<'_>,
+) -> Result<(), TaskError> {
+    match access {
+        TaskAccess::Lead => Ok(()),
+        TaskAccess::Teammate(name) if task.owner == name => {
+            if updates_dependencies(input) {
+                return Err(TaskError::Validation(format!(
+                    "Teammate '{name}' cannot edit dependencies for task {}",
+                    task.id
+                )));
+            }
+            if let Some(owner) = &input.owner
+                && owner != name
+            {
+                return Err(TaskError::Validation(format!(
+                    "Teammate '{name}' cannot reassign task {} to '{}'",
+                    task.id, owner
+                )));
+            }
+            Ok(())
+        }
+        TaskAccess::Teammate(name) => Err(TaskError::Validation(format!(
+            "Teammate '{name}' cannot update task {} owned by '{}'",
+            task.id, task.owner
+        ))),
+    }
+}
+
+fn updates_dependencies(input: &TaskUpdateInput) -> bool {
+    !input.add_blocked_by.is_empty()
+        || !input.remove_blocked_by.is_empty()
+        || !input.add_blocks.is_empty()
+        || !input.remove_blocks.is_empty()
+}
+
+fn is_claimable(task: &TaskItem) -> bool {
+    task.status == TaskStatus::Pending && task.blocked_by.is_empty() && task.owner.is_empty()
+}
+
+fn find_task_mut(tasks: &mut [TaskItem], task_id: u64) -> Result<&mut TaskItem, TaskError> {
     tasks
         .iter_mut()
         .find(|task| task.id == task_id)
-        .ok_or_else(|| TaskGraphError::Validation(format!("Task {task_id} does not exist")))
+        .ok_or_else(|| TaskError::Validation(format!("Task {task_id} does not exist")))
 }
 
 fn is_task_file(path: &Path) -> bool {

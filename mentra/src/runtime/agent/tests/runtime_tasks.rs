@@ -9,15 +9,15 @@ use crate::{
     ContentBlock, Message, ModelProviderKind, Role,
     provider::{ContentBlockDelta, ContentBlockStart, ProviderError, ProviderEvent},
     runtime::{
-        AgentConfig, ContextCompactionConfig, Runtime, TaskGraphConfig, TaskItem, TaskStatus,
-        task_graph::TASK_REMINDER_TEXT,
+        AgentConfig, ContextCompactionConfig, Runtime, TaskConfig, TaskItem, TaskStatus,
+        task::TASK_REMINDER_TEXT,
     },
 };
 
 use super::support::{ScriptedProvider, erroring_stream, model_info, ok_stream};
 
 #[tokio::test]
-async fn task_graph_updates_snapshot_and_persists_for_new_agents() {
+async fn task_updates_snapshot_and_persists_for_new_agents() {
     let model = model_info("model", ModelProviderKind::Anthropic);
     let tasks_dir = temp_tasks_dir("persist");
     let provider = ScriptedProvider::new(
@@ -37,7 +37,7 @@ async fn task_graph_updates_snapshot_and_persists_for_new_agents() {
         .with_provider_instance(provider)
         .build()
         .expect("build runtime");
-    let config = task_graph_config(tasks_dir.clone());
+    let config = task_config(tasks_dir.clone());
     let mut agent = runtime
         .spawn_with_config("agent", model.clone(), config.clone())
         .expect("spawn agent");
@@ -106,7 +106,7 @@ async fn task_reminder_is_injected_after_three_rounds_without_task_tools() {
             model,
             AgentConfig {
                 system: Some("Base system prompt".to_string()),
-                task_graph: TaskGraphConfig {
+                task: TaskConfig {
                     tasks_dir,
                     reminder_threshold: 3,
                 },
@@ -148,7 +148,7 @@ async fn task_reminder_is_injected_after_three_rounds_without_task_tools() {
 }
 
 #[tokio::test]
-async fn task_graph_state_rolls_back_when_run_fails() {
+async fn task_state_rolls_back_when_run_fails() {
     let model = model_info("model", ModelProviderKind::Anthropic);
     let tasks_dir = temp_tasks_dir("rollback");
     let provider = ScriptedProvider::new(
@@ -172,7 +172,7 @@ async fn task_graph_state_rolls_back_when_run_fails() {
         .build()
         .expect("build runtime");
     let mut agent = runtime
-        .spawn_with_config("agent", model, task_graph_config(tasks_dir.clone()))
+        .spawn_with_config("agent", model, task_config(tasks_dir.clone()))
         .expect("spawn agent");
 
     let result = agent
@@ -188,7 +188,7 @@ async fn task_graph_state_rolls_back_when_run_fails() {
 }
 
 #[tokio::test]
-async fn task_graph_survives_auto_compaction() {
+async fn task_survives_auto_compaction() {
     let model = model_info("model", ModelProviderKind::Anthropic);
     let tasks_dir = temp_tasks_dir("compact");
     let provider = ScriptedProvider::new(
@@ -211,7 +211,7 @@ async fn task_graph_survives_auto_compaction() {
             "agent",
             model,
             AgentConfig {
-                task_graph: TaskGraphConfig {
+                task: TaskConfig {
                     tasks_dir,
                     reminder_threshold: 3,
                 },
@@ -247,9 +247,9 @@ async fn task_graph_survives_auto_compaction() {
     ));
 }
 
-fn task_graph_config(tasks_dir: PathBuf) -> AgentConfig {
+fn task_config(tasks_dir: PathBuf) -> AgentConfig {
     AgentConfig {
-        task_graph: TaskGraphConfig {
+        task: TaskConfig {
             tasks_dir,
             reminder_threshold: 3,
         },

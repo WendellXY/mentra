@@ -1,3 +1,4 @@
+use serde_json::json;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -13,7 +14,8 @@ use crate::{
     },
     runtime::{
         Agent, AgentConfig, AgentEvent, BackgroundTaskStatus, Runtime, SpawnedAgentStatus,
-        TeamConfig, TeamMemberStatus, TeamProtocolStatus,
+        TaskConfig, TeamAutonomyConfig, TeamConfig, TeamMemberStatus, TeamProtocolStatus,
+        task::{self, TaskAccess},
     },
 };
 
@@ -603,6 +605,7 @@ async fn default_runtime_exposes_task_and_new_empty_does_not() {
     assert!(default_tools.contains("read_file"));
     assert!(default_tools.contains("task"));
     assert!(default_tools.contains("task_create"));
+    assert!(default_tools.contains("task_claim"));
     assert!(default_tools.contains("task_update"));
     assert!(default_tools.contains("task_list"));
     assert!(default_tools.contains("task_get"));
@@ -633,6 +636,7 @@ async fn default_runtime_exposes_task_and_new_empty_does_not() {
     assert!(!empty_tools.contains("compact"));
     assert!(!empty_tools.contains("task"));
     assert!(!empty_tools.contains("task_create"));
+    assert!(!empty_tools.contains("task_claim"));
     assert!(!empty_tools.contains("task_update"));
     assert!(!empty_tools.contains("task_list"));
     assert!(!empty_tools.contains("task_get"));
@@ -827,6 +831,7 @@ async fn task_tool_runs_child_with_isolated_history_and_filtered_tools() {
     let child_tools = tool_names(&requests[1]);
     assert!(child_tools.contains("bash"));
     assert!(child_tools.contains("read_file"));
+    assert!(!child_tools.contains("idle"));
     assert!(!child_tools.contains("task"));
 
     let subagents = agent.watch_snapshot().borrow().subagents.clone();
@@ -1117,9 +1122,7 @@ async fn team_spawn_tool_registers_persistent_teammate() {
             "lead",
             model,
             AgentConfig {
-                team: TeamConfig {
-                    team_dir: temp_team_dir("spawn-tool"),
-                },
+                team: team_config(temp_team_dir("spawn-tool")),
                 ..AgentConfig::default()
             },
         )
@@ -1190,9 +1193,7 @@ async fn persistent_teammate_processes_mail_and_reports_back_to_lead() {
             "lead",
             model,
             AgentConfig {
-                team: TeamConfig {
-                    team_dir: temp_team_dir("mailbox"),
-                },
+                team: team_config(temp_team_dir("mailbox")),
                 ..AgentConfig::default()
             },
         )
@@ -1221,10 +1222,12 @@ async fn persistent_teammate_processes_mail_and_reports_back_to_lead() {
     assert!(child_tools.contains("team_request"));
     assert!(child_tools.contains("team_respond"));
     assert!(child_tools.contains("team_list_requests"));
+    assert!(child_tools.contains("idle"));
     assert!(!child_tools.contains("team_spawn"));
     assert!(!child_tools.contains("broadcast"));
     assert!(!child_tools.contains("task_create"));
-    assert!(!child_tools.contains("task_update"));
+    assert!(child_tools.contains("task_claim"));
+    assert!(child_tools.contains("task_update"));
     assert!(child_tools.contains("task_list"));
     assert!(child_tools.contains("task_get"));
 
@@ -1264,9 +1267,7 @@ async fn broadcast_tool_sends_to_every_other_known_agent() {
             "lead",
             model.clone(),
             AgentConfig {
-                team: TeamConfig {
-                    team_dir: team_dir.clone(),
-                },
+                team: team_config(team_dir.clone()),
                 ..AgentConfig::default()
             },
         )
@@ -1276,9 +1277,7 @@ async fn broadcast_tool_sends_to_every_other_known_agent() {
             "alice",
             model.clone(),
             AgentConfig {
-                team: TeamConfig {
-                    team_dir: team_dir.clone(),
-                },
+                team: team_config(team_dir.clone()),
                 ..AgentConfig::default()
             },
         )
@@ -1288,7 +1287,7 @@ async fn broadcast_tool_sends_to_every_other_known_agent() {
             "bob",
             model,
             AgentConfig {
-                team: TeamConfig { team_dir },
+                team: team_config(team_dir),
                 ..AgentConfig::default()
             },
         )
@@ -1357,9 +1356,7 @@ async fn teammate_message_updates_lead_unread_count_before_next_turn() {
             "lead",
             model,
             AgentConfig {
-                team: TeamConfig {
-                    team_dir: temp_team_dir("lead-unread-message"),
-                },
+                team: team_config(temp_team_dir("lead-unread-message")),
                 ..AgentConfig::default()
             },
         )
@@ -1402,6 +1399,7 @@ async fn protocol_messages_update_lead_unread_count_and_clear_on_drain() {
             ),
             text_stream(&model.id, "waiting"),
             text_stream(&model.id, "lead handled it"),
+            text_stream(&model.id, "done waiting"),
         ],
     );
     let provider_handle = provider.clone();
@@ -1415,9 +1413,7 @@ async fn protocol_messages_update_lead_unread_count_and_clear_on_drain() {
             "lead",
             model,
             AgentConfig {
-                team: TeamConfig {
-                    team_dir: temp_team_dir("lead-unread-protocol"),
-                },
+                team: team_config(temp_team_dir("lead-unread-protocol")),
                 ..AgentConfig::default()
             },
         )
@@ -1487,9 +1483,7 @@ async fn team_request_tool_persists_pending_request_and_updates_snapshot() {
             "lead",
             model,
             AgentConfig {
-                team: TeamConfig {
-                    team_dir: team_dir.clone(),
-                },
+                team: team_config(team_dir.clone()),
                 ..AgentConfig::default()
             },
         )
@@ -1538,9 +1532,7 @@ async fn team_respond_tool_resolves_request_and_sends_correlated_response() {
             "lead",
             model.clone(),
             AgentConfig {
-                team: TeamConfig {
-                    team_dir: team_dir.clone(),
-                },
+                team: team_config(team_dir.clone()),
                 ..AgentConfig::default()
             },
         )
@@ -1550,9 +1542,7 @@ async fn team_respond_tool_resolves_request_and_sends_correlated_response() {
             "reviewer",
             model.clone(),
             AgentConfig {
-                team: TeamConfig {
-                    team_dir: team_dir.clone(),
-                },
+                team: team_config(team_dir.clone()),
                 ..AgentConfig::default()
             },
         )
@@ -1589,9 +1579,7 @@ async fn team_respond_tool_resolves_request_and_sends_correlated_response() {
             "lead",
             model.clone(),
             AgentConfig {
-                team: TeamConfig {
-                    team_dir: team_dir.clone(),
-                },
+                team: team_config(team_dir.clone()),
                 ..AgentConfig::default()
             },
         )
@@ -1601,9 +1589,7 @@ async fn team_respond_tool_resolves_request_and_sends_correlated_response() {
             "reviewer",
             model,
             AgentConfig {
-                team: TeamConfig {
-                    team_dir: team_dir.clone(),
-                },
+                team: team_config(team_dir.clone()),
                 ..AgentConfig::default()
             },
         )
@@ -1667,9 +1653,7 @@ async fn team_list_requests_tool_filters_visible_requests() {
             "lead",
             model.clone(),
             AgentConfig {
-                team: TeamConfig {
-                    team_dir: team_dir.clone(),
-                },
+                team: team_config(team_dir.clone()),
                 ..AgentConfig::default()
             },
         )
@@ -1679,9 +1663,7 @@ async fn team_list_requests_tool_filters_visible_requests() {
             "reviewer",
             model.clone(),
             AgentConfig {
-                team: TeamConfig {
-                    team_dir: team_dir.clone(),
-                },
+                team: team_config(team_dir.clone()),
                 ..AgentConfig::default()
             },
         )
@@ -1691,9 +1673,7 @@ async fn team_list_requests_tool_filters_visible_requests() {
             "architect",
             model,
             AgentConfig {
-                team: TeamConfig {
-                    team_dir: team_dir.clone(),
-                },
+                team: team_config(team_dir.clone()),
                 ..AgentConfig::default()
             },
         )
@@ -1747,6 +1727,7 @@ async fn plan_approval_request_response_keeps_teammate_alive() {
             ),
             text_stream(&model.id, "waiting for review"),
             text_stream(&model.id, "plan rejected, continuing safely"),
+            text_stream(&model.id, "still available"),
         ],
     );
     let provider_handle = provider.clone();
@@ -1761,9 +1742,7 @@ async fn plan_approval_request_response_keeps_teammate_alive() {
             "lead",
             model,
             AgentConfig {
-                team: TeamConfig {
-                    team_dir: team_dir.clone(),
-                },
+                team: team_config(team_dir.clone()),
                 ..AgentConfig::default()
             },
         )
@@ -1815,9 +1794,7 @@ async fn shutdown_approval_shuts_down_teammate_after_current_wake_cycle() {
             "lead",
             model,
             AgentConfig {
-                team: TeamConfig {
-                    team_dir: team_dir.clone(),
-                },
+                team: team_config(team_dir.clone()),
                 ..AgentConfig::default()
             },
         )
@@ -1911,9 +1888,7 @@ async fn failed_run_requeues_protocol_messages_and_preserves_request_state() {
             "lead",
             model.clone(),
             AgentConfig {
-                team: TeamConfig {
-                    team_dir: team_dir.clone(),
-                },
+                team: team_config(team_dir.clone()),
                 ..AgentConfig::default()
             },
         )
@@ -1923,9 +1898,7 @@ async fn failed_run_requeues_protocol_messages_and_preserves_request_state() {
             "reviewer",
             model,
             AgentConfig {
-                team: TeamConfig {
-                    team_dir: team_dir.clone(),
-                },
+                team: team_config(team_dir.clone()),
                 ..AgentConfig::default()
             },
         )
@@ -1961,6 +1934,58 @@ async fn failed_run_requeues_protocol_messages_and_preserves_request_state() {
 }
 
 #[tokio::test]
+async fn failed_teammate_can_recover_on_next_wake() {
+    let model = model_info("model", ModelProviderKind::Anthropic);
+    let provider = ScriptedProvider::new(
+        ModelProviderKind::Anthropic,
+        vec![model.clone()],
+        vec![
+            erroring_stream(
+                vec![ProviderEvent::MessageStarted {
+                    id: "msg-error".to_string(),
+                    model: model.id.clone(),
+                    role: Role::Assistant,
+                }],
+                ProviderError::InvalidResponse("boom".to_string()),
+            ),
+            text_stream(&model.id, "recovered"),
+        ],
+    );
+    let provider_handle = provider.clone();
+
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut lead = runtime
+        .spawn_with_config(
+            "lead",
+            model,
+            AgentConfig {
+                team: team_config(temp_team_dir("teammate-recover")),
+                ..AgentConfig::default()
+            },
+        )
+        .unwrap();
+
+    lead.spawn_teammate("alice", "researcher", Some("first try".to_string()))
+        .await
+        .expect("spawn teammate");
+    wait_for_teammate_status(
+        &lead,
+        TeamMemberStatus::Failed(
+            "FailedToStreamResponse(InvalidResponse(\"boom\"))".to_string(),
+        ),
+    )
+    .await;
+
+    lead.send_team_message("alice", "try again")
+        .expect("send retry");
+    wait_for_recorded_requests(&provider_handle, 2).await;
+    wait_for_teammate_status(&lead, TeamMemberStatus::Idle).await;
+}
+
+#[tokio::test]
 async fn persisted_protocol_requests_load_on_restart() {
     let model = model_info("model", ModelProviderKind::Anthropic);
     let provider = ScriptedProvider::new(ModelProviderKind::Anthropic, vec![model.clone()], vec![]);
@@ -1975,9 +2000,7 @@ async fn persisted_protocol_requests_load_on_restart() {
             "lead",
             model.clone(),
             AgentConfig {
-                team: TeamConfig {
-                    team_dir: team_dir.clone(),
-                },
+                team: team_config(team_dir.clone()),
                 ..AgentConfig::default()
             },
         )
@@ -1987,9 +2010,7 @@ async fn persisted_protocol_requests_load_on_restart() {
             "reviewer",
             model.clone(),
             AgentConfig {
-                team: TeamConfig {
-                    team_dir: team_dir.clone(),
-                },
+                team: team_config(team_dir.clone()),
                 ..AgentConfig::default()
             },
         )
@@ -2009,7 +2030,7 @@ async fn persisted_protocol_requests_load_on_restart() {
             "lead",
             model,
             AgentConfig {
-                team: TeamConfig { team_dir },
+                team: team_config(team_dir),
                 ..AgentConfig::default()
             },
         )
@@ -2042,9 +2063,7 @@ async fn persisted_teammates_reload_as_shutdown_without_live_actor() {
             "lead",
             model.clone(),
             AgentConfig {
-                team: TeamConfig {
-                    team_dir: team_dir.clone(),
-                },
+                team: team_config(team_dir.clone()),
                 ..AgentConfig::default()
             },
         )
@@ -2064,7 +2083,7 @@ async fn persisted_teammates_reload_as_shutdown_without_live_actor() {
             "lead",
             model,
             AgentConfig {
-                team: TeamConfig { team_dir },
+                team: team_config(team_dir),
                 ..AgentConfig::default()
             },
         )
@@ -2091,9 +2110,7 @@ async fn team_spawn_revives_shutdown_teammate_name_after_restart() {
             "lead",
             model.clone(),
             AgentConfig {
-                team: TeamConfig {
-                    team_dir: team_dir.clone(),
-                },
+                team: team_config(team_dir.clone()),
                 ..AgentConfig::default()
             },
         )
@@ -2113,9 +2130,7 @@ async fn team_spawn_revives_shutdown_teammate_name_after_restart() {
             "lead",
             model,
             AgentConfig {
-                team: TeamConfig {
-                    team_dir: team_dir.clone(),
-                },
+                team: team_config(team_dir.clone()),
                 ..AgentConfig::default()
             },
         )
@@ -2131,6 +2146,415 @@ async fn team_spawn_revives_shutdown_teammate_name_after_restart() {
     assert_eq!(teammates[0].name, "bob");
     assert_eq!(teammates[0].role, "refactor specialist");
     assert_eq!(teammates[0].status, TeamMemberStatus::Idle);
+}
+
+#[tokio::test]
+async fn autonomous_teammate_auto_claims_ready_task_after_spawn() {
+    let model = model_info("model", ModelProviderKind::Anthropic);
+    let provider = ScriptedProvider::new(
+        ModelProviderKind::Anthropic,
+        vec![model.clone()],
+        vec![text_stream(&model.id, "claimed work")],
+    );
+    let provider_handle = provider.clone();
+
+    let team_dir = temp_team_dir("auto-claim-team");
+    let tasks_dir = temp_team_dir("auto-claim-tasks");
+    create_task(&tasks_dir, "Implement feature", "", vec![]);
+
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut lead = runtime
+        .spawn_with_config(
+            "lead",
+            model,
+            AgentConfig {
+                team: autonomous_team_config(
+                    team_dir,
+                    Duration::from_millis(10),
+                    Duration::from_millis(120),
+                ),
+                task: TaskConfig {
+                    tasks_dir: tasks_dir.clone(),
+                    reminder_threshold: 3,
+                },
+                ..AgentConfig::default()
+            },
+        )
+        .unwrap();
+
+    lead.spawn_teammate("alice", "coder", None)
+        .await
+        .expect("spawn teammate");
+
+    wait_for_recorded_requests(&provider_handle, 1).await;
+    wait_for_teammate_status(&lead, TeamMemberStatus::Idle).await;
+
+    let task = load_task(&tasks_dir, 1);
+    assert_eq!(task["owner"].as_str(), Some("alice"));
+
+    let requests = provider_handle.recorded_requests().await;
+    let auto_claim = latest_auto_claim_text(&requests[0]).expect("auto-claim text");
+    assert!(auto_claim.contains("Task #1"));
+    assert!(auto_claim.contains("Implement feature"));
+}
+
+#[tokio::test]
+async fn autonomous_teammates_do_not_double_claim_same_task() {
+    let model = model_info("model", ModelProviderKind::Anthropic);
+    let provider = ScriptedProvider::new(
+        ModelProviderKind::Anthropic,
+        vec![model.clone()],
+        vec![text_stream(&model.id, "picked it up")],
+    );
+    let provider_handle = provider.clone();
+
+    let team_dir = temp_team_dir("claim-race-team");
+    let tasks_dir = temp_team_dir("claim-race-tasks");
+    create_task(&tasks_dir, "One task", "", vec![]);
+
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut lead = runtime
+        .spawn_with_config(
+            "lead",
+            model,
+            AgentConfig {
+                team: autonomous_team_config(
+                    team_dir,
+                    Duration::from_millis(10),
+                    Duration::from_millis(70),
+                ),
+                task: TaskConfig {
+                    tasks_dir: tasks_dir.clone(),
+                    reminder_threshold: 3,
+                },
+                ..AgentConfig::default()
+            },
+        )
+        .unwrap();
+
+    lead.spawn_teammate("alice", "coder", None)
+        .await
+        .expect("spawn alice");
+    lead.spawn_teammate("bob", "coder", None)
+        .await
+        .expect("spawn bob");
+
+    wait_for_recorded_requests(&provider_handle, 1).await;
+    sleep(Duration::from_millis(120)).await;
+
+    let task = load_task(&tasks_dir, 1);
+    let owner = task["owner"].as_str().expect("owner");
+    assert!(owner == "alice" || owner == "bob");
+    assert_eq!(provider_handle.recorded_requests().await.len(), 1);
+}
+
+#[tokio::test]
+async fn autonomous_teammate_claims_task_after_dependency_unblocks() {
+    let model = model_info("model", ModelProviderKind::Anthropic);
+    let provider = ScriptedProvider::new(
+        ModelProviderKind::Anthropic,
+        vec![model.clone()],
+        vec![text_stream(&model.id, "starting unblocked task")],
+    );
+
+    let team_dir = temp_team_dir("unblock-team");
+    let tasks_dir = temp_team_dir("unblock-tasks");
+    create_task(&tasks_dir, "Blocked elsewhere", "lead", vec![]);
+    create_task(&tasks_dir, "Ready later", "", vec![1]);
+
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut lead = runtime
+        .spawn_with_config(
+            "lead",
+            model,
+            AgentConfig {
+                team: autonomous_team_config(
+                    team_dir,
+                    Duration::from_millis(10),
+                    Duration::from_millis(150),
+                ),
+                task: TaskConfig {
+                    tasks_dir: tasks_dir.clone(),
+                    reminder_threshold: 3,
+                },
+                ..AgentConfig::default()
+            },
+        )
+        .unwrap();
+
+    lead.spawn_teammate("alice", "coder", None)
+        .await
+        .expect("spawn teammate");
+
+    sleep(Duration::from_millis(30)).await;
+    assert_eq!(load_task(&tasks_dir, 2)["owner"].as_str(), Some(""));
+
+    task::execute(
+        task::TASK_UPDATE_TOOL_NAME,
+        json!({"taskId": 1, "status": "completed"}),
+        tasks_dir.as_path(),
+        TaskAccess::Lead,
+    )
+    .expect("complete blocker");
+
+    wait_for_task_owner(&tasks_dir, 2, "alice").await;
+}
+
+#[tokio::test]
+async fn teammate_task_updates_are_limited_to_owned_tasks() {
+    let model = model_info("model", ModelProviderKind::Anthropic);
+    let provider = ScriptedProvider::new(
+        ModelProviderKind::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(
+                &model.id,
+                "own-task",
+                "task_update",
+                r#"{"taskId":1,"status":"in_progress"}"#,
+            ),
+            text_stream(&model.id, "updated own task"),
+            tool_use_stream(
+                &model.id,
+                "other-task",
+                "task_update",
+                r#"{"taskId":2,"status":"completed"}"#,
+            ),
+            text_stream(&model.id, "could not touch task 2"),
+        ],
+    );
+    let team_dir = temp_team_dir("owned-update-team");
+    let tasks_dir = temp_team_dir("owned-update-tasks");
+    create_task(&tasks_dir, "Alice task", "alice", vec![]);
+    create_task(&tasks_dir, "Shared task", "", vec![]);
+
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut lead = runtime
+        .spawn_with_config(
+            "lead",
+            model,
+            AgentConfig {
+                team: team_config(team_dir),
+                task: TaskConfig {
+                    tasks_dir: tasks_dir.clone(),
+                    reminder_threshold: 3,
+                },
+                ..AgentConfig::default()
+            },
+        )
+        .unwrap();
+
+    lead.spawn_teammate("alice", "coder", Some("Start task 1.".to_string()))
+        .await
+        .expect("spawn teammate");
+    wait_for_teammate_status(&lead, TeamMemberStatus::Idle).await;
+
+    lead.send_team_message("alice", "Now try to complete task 2.")
+        .expect("send message");
+    sleep(Duration::from_millis(100)).await;
+    wait_for_teammate_status(&lead, TeamMemberStatus::Idle).await;
+
+    assert_eq!(
+        load_task(&tasks_dir, 1)["status"].as_str(),
+        Some("in_progress")
+    );
+    assert_eq!(load_task(&tasks_dir, 2)["status"].as_str(), Some("pending"));
+}
+
+#[tokio::test]
+async fn teammate_task_subagent_inherits_owner_restrictions() {
+    let model = model_info("model", ModelProviderKind::Anthropic);
+    let provider = ScriptedProvider::new(
+        ModelProviderKind::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(
+                &model.id,
+                "delegate-task",
+                "task",
+                r#"{"prompt":"finish the other task"}"#,
+            ),
+            tool_use_stream(
+                &model.id,
+                "illegal-update",
+                "task_update",
+                r#"{"taskId":2,"status":"completed"}"#,
+            ),
+            text_stream(&model.id, "child could not change task 2"),
+            text_stream(&model.id, "delegation handled"),
+        ],
+    );
+    let team_dir = temp_team_dir("teammate-task-subagent");
+    let tasks_dir = temp_team_dir("teammate-task-subagent-tasks");
+    create_task(&tasks_dir, "Alice task", "alice", vec![]);
+    create_task(&tasks_dir, "Bob task", "bob", vec![]);
+
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut lead = runtime
+        .spawn_with_config(
+            "lead",
+            model,
+            AgentConfig {
+                team: team_config(team_dir),
+                task: TaskConfig {
+                    tasks_dir: tasks_dir.clone(),
+                    reminder_threshold: 3,
+                },
+                ..AgentConfig::default()
+            },
+        )
+        .unwrap();
+
+    lead.spawn_teammate("alice", "coder", Some("delegate it".to_string()))
+        .await
+        .expect("spawn teammate");
+    wait_for_teammate_status(&lead, TeamMemberStatus::Idle).await;
+
+    assert_eq!(load_task(&tasks_dir, 2)["status"].as_str(), Some("pending"));
+}
+
+#[tokio::test]
+async fn idle_tool_returns_teammate_to_idle() {
+    let model = model_info("model", ModelProviderKind::Anthropic);
+    let provider = ScriptedProvider::new(
+        ModelProviderKind::Anthropic,
+        vec![model.clone()],
+        vec![tool_use_stream(&model.id, "idle-now", "idle", "{}")],
+    );
+    let provider_handle = provider.clone();
+
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut lead = runtime
+        .spawn_with_config(
+            "lead",
+            model,
+            AgentConfig {
+                team: team_config(temp_team_dir("idle-tool-team")),
+                ..AgentConfig::default()
+            },
+        )
+        .unwrap();
+
+    lead.spawn_teammate("alice", "coder", Some("Check in then idle.".to_string()))
+        .await
+        .expect("spawn teammate");
+
+    wait_for_recorded_requests(&provider_handle, 1).await;
+    wait_for_teammate_status(&lead, TeamMemberStatus::Idle).await;
+    assert_eq!(provider_handle.recorded_requests().await.len(), 1);
+}
+
+#[tokio::test]
+async fn autonomous_idle_timeout_shuts_down_and_same_name_can_respawn() {
+    let model = model_info("model", ModelProviderKind::Anthropic);
+    let provider = ScriptedProvider::new(ModelProviderKind::Anthropic, vec![model.clone()], vec![]);
+
+    let team_dir = temp_team_dir("idle-timeout-team");
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut lead = runtime
+        .spawn_with_config(
+            "lead",
+            model.clone(),
+            AgentConfig {
+                team: autonomous_team_config(
+                    team_dir.clone(),
+                    Duration::from_millis(10),
+                    Duration::from_millis(40),
+                ),
+                ..AgentConfig::default()
+            },
+        )
+        .unwrap();
+
+    lead.spawn_teammate("alice", "researcher", None)
+        .await
+        .expect("spawn teammate");
+    wait_for_teammate_status(&lead, TeamMemberStatus::Shutdown).await;
+
+    lead.spawn_teammate("alice", "researcher", None)
+        .await
+        .expect("respawn teammate");
+}
+
+#[tokio::test]
+async fn teammate_identity_is_reinjected_after_compaction() {
+    let model = model_info("model", ModelProviderKind::Anthropic);
+    let provider = ScriptedProvider::new(
+        ModelProviderKind::Anthropic,
+        vec![model.clone()],
+        vec![
+            text_stream(&model.id, "first done"),
+            text_stream(&model.id, "summary"),
+            text_stream(&model.id, "second done"),
+            text_stream(&model.id, "extra done"),
+        ],
+    );
+    let provider_handle = provider.clone();
+
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut lead = runtime
+        .spawn_with_config(
+            "lead",
+            model,
+            AgentConfig {
+                team: team_config(temp_team_dir("identity-compact-team")),
+                context_compaction: crate::runtime::ContextCompactionConfig {
+                    auto_compact_threshold_tokens: Some(1),
+                    ..crate::runtime::ContextCompactionConfig::default()
+                },
+                ..AgentConfig::default()
+            },
+        )
+        .unwrap();
+
+    lead.spawn_teammate("alice", "researcher", Some("first".to_string()))
+        .await
+        .expect("spawn teammate");
+    wait_for_recorded_requests(&provider_handle, 1).await;
+    wait_for_teammate_status(&lead, TeamMemberStatus::Idle).await;
+
+    lead.send_team_message("alice", "second")
+        .expect("send second");
+    wait_for_recorded_requests(&provider_handle, 3).await;
+    wait_for_teammate_status(&lead, TeamMemberStatus::Idle).await;
+
+    let requests = provider_handle.recorded_requests().await;
+    assert!(
+        requests
+            .iter()
+            .skip(1)
+            .any(|request| request_contains_text(request, "<identity>"))
+    );
+    assert!(
+        requests
+            .iter()
+            .skip(1)
+            .any(|request| request_contains_text(request, "I am alice"))
+    );
 }
 
 fn collect_events(receiver: &mut tokio::sync::broadcast::Receiver<AgentEvent>) -> Vec<AgentEvent> {
@@ -2208,6 +2632,26 @@ fn latest_team_inbox_text<'a>(request: &'a Request<'a>) -> Option<&'a str> {
             ContentBlock::Text { text } if text.contains("<team-inbox>") => Some(text.as_str()),
             _ => None,
         })
+}
+
+fn latest_auto_claim_text<'a>(request: &'a Request<'a>) -> Option<&'a str> {
+    request
+        .messages
+        .iter()
+        .rev()
+        .flat_map(|message| message.content.iter())
+        .find_map(|block| match block {
+            ContentBlock::Text { text } if text.contains("<auto-claimed>") => Some(text.as_str()),
+            _ => None,
+        })
+}
+
+fn request_contains_text(request: &Request<'_>, pattern: &str) -> bool {
+    request
+        .messages
+        .iter()
+        .flat_map(|message| message.content.iter())
+        .any(|block| matches!(block, ContentBlock::Text { text } if text.contains(pattern)))
 }
 
 fn text_stream(model: &str, text: &str) -> StreamScript {
@@ -2310,11 +2754,60 @@ fn temp_team_dir(label: &str) -> PathBuf {
     path
 }
 
+fn team_config(team_dir: PathBuf) -> TeamConfig {
+    TeamConfig {
+        team_dir,
+        ..TeamConfig::default()
+    }
+}
+
+fn autonomous_team_config(
+    team_dir: PathBuf,
+    poll_interval: Duration,
+    idle_timeout: Duration,
+) -> TeamConfig {
+    TeamConfig {
+        team_dir,
+        autonomy: TeamAutonomyConfig {
+            enabled: true,
+            poll_interval,
+            idle_timeout,
+        },
+    }
+}
+
 fn load_team_config(team_dir: &Path) -> serde_json::Value {
     serde_json::from_str(
         &fs::read_to_string(team_dir.join("config.json")).expect("read team config"),
     )
     .expect("parse team config")
+}
+
+fn create_task(tasks_dir: &Path, subject: &str, owner: &str, blocked_by: Vec<u64>) {
+    task::execute(
+        task::TASK_CREATE_TOOL_NAME,
+        json!({
+            "subject": subject,
+            "owner": owner,
+            "blockedBy": blocked_by,
+        }),
+        tasks_dir,
+        TaskAccess::Lead,
+    )
+    .expect("create task");
+}
+
+fn load_task(tasks_dir: &Path, task_id: u64) -> serde_json::Value {
+    serde_json::from_str(
+        &task::execute(
+            task::TASK_GET_TOOL_NAME,
+            json!({ "taskId": task_id }),
+            tasks_dir,
+            TaskAccess::Lead,
+        )
+        .expect("load task"),
+    )
+    .expect("parse task")
 }
 
 fn write_skill(root: &Path, name: &str, content: &str) {
@@ -2344,4 +2837,15 @@ async fn wait_for_teammate_status(agent: &Agent, expected: TeamMemberStatus) {
     }
 
     panic!("timed out waiting for teammate status {:?}", expected);
+}
+
+async fn wait_for_task_owner(tasks_dir: &Path, task_id: u64, owner: &str) {
+    for _ in 0..200 {
+        if load_task(tasks_dir, task_id)["owner"].as_str() == Some(owner) {
+            return;
+        }
+        sleep(Duration::from_millis(10)).await;
+    }
+
+    panic!("timed out waiting for task {task_id} owner {owner}");
 }

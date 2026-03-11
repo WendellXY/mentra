@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
 #[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -9,12 +9,12 @@ use crate::provider::ToolChoice;
 static NEXT_TEST_TRANSCRIPT_DIR_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskGraphConfig {
+pub struct TaskConfig {
     pub tasks_dir: PathBuf,
     pub reminder_threshold: usize,
 }
 
-impl Default for TaskGraphConfig {
+impl Default for TaskConfig {
     fn default() -> Self {
         Self {
             tasks_dir: PathBuf::from(".tasks"),
@@ -24,14 +24,33 @@ impl Default for TaskGraphConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TeamAutonomyConfig {
+    pub enabled: bool,
+    pub poll_interval: Duration,
+    pub idle_timeout: Duration,
+}
+
+impl Default for TeamAutonomyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            poll_interval: Duration::from_secs(5),
+            idle_timeout: Duration::from_secs(60),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TeamConfig {
     pub team_dir: PathBuf,
+    pub autonomy: TeamAutonomyConfig,
 }
 
 impl Default for TeamConfig {
     fn default() -> Self {
         Self {
             team_dir: default_team_dir(),
+            autonomy: TeamAutonomyConfig::default(),
         }
     }
 }
@@ -91,7 +110,7 @@ pub struct AgentConfig {
     pub max_output_tokens: Option<u32>,
     pub metadata: BTreeMap<String, String>,
     pub team: TeamConfig,
-    pub task_graph: TaskGraphConfig,
+    pub task: TaskConfig,
     pub context_compaction: ContextCompactionConfig,
 }
 
@@ -104,7 +123,7 @@ impl Default for AgentConfig {
             max_output_tokens: Some(8192),
             metadata: BTreeMap::new(),
             team: TeamConfig::default(),
-            task_graph: TaskGraphConfig::default(),
+            task: TaskConfig::default(),
             context_compaction: ContextCompactionConfig::default(),
         }
     }

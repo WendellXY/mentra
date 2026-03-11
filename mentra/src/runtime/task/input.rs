@@ -17,6 +17,13 @@ pub(crate) struct TaskCreateInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TaskClaimInput {
+    #[serde(default)]
+    pub(crate) task_id: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct TaskUpdateInput {
     pub(crate) task_id: u64,
     #[serde(default)]
@@ -67,6 +74,11 @@ pub(crate) fn parse_task_update_input(input: Value) -> Result<TaskUpdateInput, S
     }
 
     Ok(parsed)
+}
+
+pub(crate) fn parse_task_claim_input(input: Value) -> Result<TaskClaimInput, String> {
+    serde_json::from_value::<TaskClaimInput>(input)
+        .map_err(|error| format!("Invalid task_claim input: {error}"))
 }
 
 pub(crate) fn parse_task_get_input(input: Value) -> Result<TaskGetInput, String> {
