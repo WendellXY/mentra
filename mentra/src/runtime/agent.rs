@@ -1,14 +1,17 @@
 mod compact;
 mod config;
 mod events;
+mod lifecycle;
 mod pending;
 mod pending_block;
 mod runner;
+mod snapshot;
+mod subagent;
+mod task_state;
 #[cfg(test)]
 mod tests;
 
 use std::{
-    borrow::Cow,
     collections::HashSet,
     sync::{
         Arc,
@@ -21,15 +24,9 @@ use tokio::sync::{broadcast, watch};
 use crate::{
     provider::{
         Provider,
-        model::{ContentBlock, Message, Role, ToolChoice},
+        model::{Message, ToolChoice},
     },
-    runtime::{
-        TASK_TOOL_NAME, TaskDiskState, TaskItem,
-        error::RuntimeError,
-        handle::RuntimeHandle,
-        task::{SUBAGENT_MAX_ROUNDS, build_subagent_system_prompt},
-        task_graph::{TASK_REMINDER_TEXT, TaskStore, has_unfinished_tasks},
-    },
+    runtime::{TaskItem, error::RuntimeError, handle::RuntimeHandle},
 };
 
 pub use config::{AgentConfig, ContextCompactionConfig, TaskGraphConfig};
@@ -142,246 +139,6 @@ impl Agent {
                 Some(ToolChoice::Auto)
             }
             other => other,
-        }
-    }
-
-    pub(crate) fn spawn_subagent(&self) -> Result<Self, RuntimeError> {
-        let mut hidden_tools = self.hidden_tools.clone();
-        hidden_tools.insert(TASK_TOOL_NAME.to_string());
-
-        let mut config = self.config.clone();
-        config.system = Some(build_subagent_system_prompt(
-            self.config.system.as_deref().map(Cow::Borrowed),
-        ));
-
-        Self::new(
-            self.runtime.clone(),
-            self.model.clone(),
-            format!("{}::task", self.name),
-            config,
-            Arc::clone(&self.provider),
-            hidden_tools,
-            Some(SUBAGENT_MAX_ROUNDS),
-        )
-    }
-
-    pub(crate) fn register_subagent(&mut self, agent: &Agent) -> SpawnedAgentSummary {
-        let summary = SpawnedAgentSummary {
-            id: agent.id.clone(),
-            name: agent.name.clone(),
-            model: agent.model.clone(),
-            status: SpawnedAgentStatus::Running,
-        };
-        self.snapshot.subagents.push(summary.clone());
-        self.publish_snapshot();
-        summary
-    }
-
-    pub(crate) fn finish_subagent(
-        &mut self,
-        id: &str,
-        status: SpawnedAgentStatus,
-    ) -> Option<SpawnedAgentSummary> {
-        let summary = self
-            .snapshot
-            .subagents
-            .iter_mut()
-            .find(|agent| agent.id == id)?;
-        summary.status = status;
-        let summary = summary.clone();
-        self.publish_snapshot();
-        Some(summary)
-    }
-
-    pub(crate) fn final_text_summary(&self) -> String {
-        let Some(message) = self.last_message() else {
-            return "(no summary)".to_string();
-        };
-
-        if message.role != Role::Assistant {
-            return "(no summary)".to_string();
-        }
-
-        let text = message
-            .content
-            .iter()
-            .filter_map(|block| match block {
-                ContentBlock::Text { text } => Some(text.as_str()),
-                ContentBlock::Image { .. } => None,
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("");
-
-        if text.is_empty() {
-            "(no summary)".to_string()
-        } else {
-            text
-        }
-    }
-
-    pub async fn send(
-        &mut self,
-        content: impl Into<Vec<ContentBlock>>,
-    ) -> Result<(), RuntimeError> {
-        self.refresh_tasks_from_disk()?;
-        let history_before_run = self.history.clone();
-        let tasks_before_run = self.tasks.clone();
-        let rounds_before_run = self.rounds_since_task_graph;
-        let task_disk_state = self.capture_task_disk_state()?;
-        self.push_history(Message {
-            role: Role::User,
-            content: content.into(),
-        });
-        self.emit_event(AgentEvent::RunStarted);
-
-        match TurnRunner::new(self).run().await {
-            Ok(()) => {
-                self.clear_pending_turn();
-                self.set_status(AgentStatus::Finished);
-                self.emit_event(AgentEvent::RunFinished);
-                Ok(())
-            }
-            Err(error) => {
-                self.restore_history(history_before_run);
-                self.restore_task_state(tasks_before_run, rounds_before_run, &task_disk_state)?;
-                self.clear_pending_turn();
-                let message = format!("{error:?}");
-                self.set_status(AgentStatus::Failed(message.clone()));
-                self.emit_event(AgentEvent::RunFailed { error: message });
-                Err(error)
-            }
-        }
-    }
-
-    pub(crate) fn push_history(&mut self, message: Message) {
-        self.history.push(message);
-        self.sync_history_len();
-    }
-
-    pub(crate) fn replace_history(&mut self, history: Vec<Message>) {
-        self.history = history;
-        self.sync_history_len();
-    }
-
-    pub(crate) fn clear_pending_turn(&mut self) {
-        self.snapshot.current_text.clear();
-        self.snapshot.pending_tool_uses.clear();
-        self.publish_snapshot();
-    }
-
-    pub(crate) fn publish_pending_turn(&mut self, pending: &PendingAssistantTurn) {
-        self.snapshot.current_text = pending.current_text().to_string();
-        self.snapshot.pending_tool_uses = pending.pending_tool_use_summaries();
-        self.publish_snapshot();
-    }
-
-    fn restore_history(&mut self, history: Vec<Message>) {
-        self.history = history;
-        self.sync_history_len();
-    }
-
-    pub(crate) fn effective_system_prompt(&self) -> Option<Cow<'_, str>> {
-        let mut sections = Vec::new();
-
-        if self.rounds_since_task_graph >= self.config.task_graph.reminder_threshold
-            && has_unfinished_tasks(&self.tasks)
-        {
-            sections.push(TASK_REMINDER_TEXT.to_string());
-        }
-
-        if let Some(system) = &self.config.system {
-            sections.push(system.clone());
-        }
-
-        if let Some(skills) = self.runtime.skill_descriptions() {
-            sections.push(skills);
-        }
-
-        if sections.is_empty() {
-            None
-        } else {
-            Some(Cow::Owned(sections.join("\n\n")))
-        }
-    }
-
-    pub(crate) fn note_round_without_task_graph(&mut self) {
-        if has_unfinished_tasks(&self.tasks) {
-            self.rounds_since_task_graph += 1;
-        }
-    }
-
-    pub(crate) fn record_task_graph_activity(&mut self) {
-        self.rounds_since_task_graph = 0;
-    }
-
-    pub(crate) fn refresh_tasks_from_disk(&mut self) -> Result<(), RuntimeError> {
-        let tasks = TaskStore::new(self.config.task_graph.tasks_dir.clone())
-            .load_all()
-            .map_err(map_task_graph_error_for_load)?;
-        self.tasks = tasks;
-        self.snapshot.tasks = self.tasks.clone();
-        self.publish_snapshot();
-        Ok(())
-    }
-
-    fn capture_task_disk_state(&self) -> Result<TaskDiskState, RuntimeError> {
-        TaskStore::new(self.config.task_graph.tasks_dir.clone())
-            .capture_disk_state()
-            .map_err(map_task_graph_error_for_load)
-    }
-
-    fn restore_task_state(
-        &mut self,
-        tasks: Vec<TaskItem>,
-        rounds_since_task_graph: usize,
-        disk_state: &TaskDiskState,
-    ) -> Result<(), RuntimeError> {
-        TaskStore::new(self.config.task_graph.tasks_dir.clone())
-            .restore_disk_state(disk_state)
-            .map_err(map_task_graph_error_for_restore)?;
-        self.tasks = tasks;
-        self.rounds_since_task_graph = rounds_since_task_graph;
-        self.snapshot.tasks = self.tasks.clone();
-        self.publish_snapshot();
-        Ok(())
-    }
-
-    pub(crate) fn emit_event(&self, event: AgentEvent) {
-        let _ = self.event_tx.send(event);
-    }
-
-    pub(crate) fn set_status(&mut self, status: AgentStatus) {
-        self.snapshot.status = status;
-        self.publish_snapshot();
-    }
-
-    fn sync_history_len(&mut self) {
-        self.snapshot.history_len = self.history.len();
-        self.publish_snapshot();
-    }
-
-    fn publish_snapshot(&self) {
-        self.snapshot_tx.send_replace(self.snapshot.clone());
-    }
-}
-
-fn map_task_graph_error_for_load(error: crate::runtime::TaskGraphError) -> RuntimeError {
-    match error {
-        crate::runtime::TaskGraphError::Io(error) => RuntimeError::FailedToLoadTasks(error),
-        crate::runtime::TaskGraphError::Serde(error) => RuntimeError::FailedToSerializeTasks(error),
-        crate::runtime::TaskGraphError::Validation(message) => {
-            RuntimeError::InvalidTaskGraph(message)
-        }
-    }
-}
-
-fn map_task_graph_error_for_restore(error: crate::runtime::TaskGraphError) -> RuntimeError {
-    match error {
-        crate::runtime::TaskGraphError::Io(error) => RuntimeError::FailedToRestoreTasks(error),
-        crate::runtime::TaskGraphError::Serde(error) => RuntimeError::FailedToSerializeTasks(error),
-        crate::runtime::TaskGraphError::Validation(message) => {
-            RuntimeError::InvalidTaskGraph(message)
         }
     }
 }
