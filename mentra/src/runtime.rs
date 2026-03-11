@@ -4,7 +4,7 @@ mod error;
 mod handle;
 mod skill;
 mod task;
-mod todo;
+mod task_graph;
 
 use std::{collections::HashSet, path::Path};
 
@@ -20,13 +20,16 @@ use crate::{
 pub use agent::{
     Agent, AgentConfig, AgentEvent, AgentSnapshot, AgentStatus, ContextCompactionConfig,
     ContextCompactionDetails, ContextCompactionTrigger, PendingAssistantTurn,
-    PendingToolUseSummary, SpawnedAgentStatus, SpawnedAgentSummary,
+    PendingToolUseSummary, SpawnedAgentStatus, SpawnedAgentSummary, TaskGraphConfig,
 };
 pub(crate) use handle::RuntimeHandle;
 pub(crate) const COMPACT_TOOL_NAME: &str = "compact";
 pub(crate) use task::TASK_TOOL_NAME;
-pub(crate) use todo::TODO_TOOL_NAME;
-pub use todo::{TodoItem, TodoStatus};
+pub(crate) use task_graph::{
+    TASK_CREATE_TOOL_NAME, TASK_GET_TOOL_NAME, TASK_LIST_TOOL_NAME, TASK_UPDATE_TOOL_NAME,
+    TaskDiskState, TaskGraphError, TaskStore, is_task_graph_tool,
+};
+pub use task_graph::{TaskItem, TaskStatus};
 
 pub struct Runtime {
     handle: RuntimeHandle,
@@ -65,7 +68,7 @@ impl Runtime {
         model: ModelInfo,
         config: AgentConfig,
     ) -> Result<Agent, RuntimeError> {
-        Ok(Agent::new(
+        Agent::new(
             self.handle.clone(),
             model.id,
             name.into(),
@@ -75,7 +78,7 @@ impl Runtime {
                 .ok_or_else(|| RuntimeError::ProviderNotFound(Some(model.provider)))?,
             HashSet::new(),
             None,
-        ))
+        )
     }
 }
 

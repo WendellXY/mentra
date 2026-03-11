@@ -2,7 +2,14 @@ use std::borrow::Cow;
 
 use crate::{
     provider::model::{Message, Request, Role},
-    runtime::{self, COMPACT_TOOL_NAME, TASK_TOOL_NAME, TODO_TOOL_NAME, error::RuntimeError},
+    runtime::{
+        self, COMPACT_TOOL_NAME, TASK_TOOL_NAME, TaskStore, error::RuntimeError,
+        is_task_graph_tool,
+        task_graph::{
+            parse_task_create_input, parse_task_get_input, parse_task_list_input,
+            parse_task_update_input,
+        },
+    },
 };
 
 use super::{Agent, AgentEvent, AgentStatus, PendingAssistantTurn, SpawnedAgentStatus};
@@ -32,12 +39,12 @@ impl<'a> TurnRunner<'a> {
 
             let tool_calls = pending.ready_tool_calls()?;
             if tool_calls.is_empty() {
-                self.agent.note_round_without_todo();
+                self.agent.note_round_without_task_graph();
                 return Ok(());
             }
 
             let mut tool_results = Vec::new();
-            let mut successful_todo = false;
+            let mut successful_task_graph = false;
             for call in tool_calls {
                 self.agent.set_status(AgentStatus::ExecutingTool {
                     id: call.id.clone(),
@@ -46,21 +53,21 @@ impl<'a> TurnRunner<'a> {
                 self.agent
                     .emit_event(AgentEvent::ToolExecutionStarted { call: call.clone() });
 
-                let (result, todo_succeeded) = if !self.agent.can_use_tool(&call.name) {
+                let (result, task_graph_succeeded) = if !self.agent.can_use_tool(&call.name) {
                     (self.unavailable_tool_result(call), false)
-                } else if call.name == TODO_TOOL_NAME {
-                    (self.execute_todo(call), true)
                 } else if call.name == COMPACT_TOOL_NAME {
                     (self.execute_compact(call).await, false)
                 } else if call.name == TASK_TOOL_NAME {
                     (self.execute_task(call).await, false)
+                } else if is_task_graph_tool(&call.name) {
+                    self.execute_task_graph(call)
                 } else {
                     (self.agent.runtime.execute_tool(call).await, false)
                 };
                 self.agent.emit_event(AgentEvent::ToolExecutionFinished {
                     result: result.clone(),
                 });
-                successful_todo |= todo_succeeded;
+                successful_task_graph |= task_graph_succeeded;
                 tool_results.push(result);
             }
 
@@ -68,8 +75,10 @@ impl<'a> TurnRunner<'a> {
                 role: Role::User,
                 content: tool_results,
             });
-            if !successful_todo {
-                self.agent.note_round_without_todo();
+            if successful_task_graph {
+                self.agent.record_task_graph_activity();
+            } else {
+                self.agent.note_round_without_task_graph();
             }
             self.agent.clear_pending_turn();
         }
@@ -77,6 +86,7 @@ impl<'a> TurnRunner<'a> {
 
     async fn stream_turn(&mut self) -> Result<PendingAssistantTurn, RuntimeError> {
         self.agent.set_status(AgentStatus::AwaitingModel);
+        self.agent.refresh_tasks_from_disk()?;
         self.agent.auto_compact_if_needed().await?;
         let provider = self.agent.provider.clone();
         let tools = self.agent.tools();
@@ -129,25 +139,53 @@ impl<'a> TurnRunner<'a> {
         Ok(())
     }
 
-    fn execute_todo(
+    fn execute_task_graph(
         &mut self,
         call: crate::tool::ToolCall,
-    ) -> crate::provider::model::ContentBlock {
-        match runtime::todo::parse_todo_input(call.input) {
-            Ok(items) => {
-                let rendered = runtime::todo::render_todos(&items);
-                self.agent.apply_todo_items(items);
+    ) -> (crate::provider::model::ContentBlock, bool) {
+        let store = TaskStore::new(self.agent.config().task_graph.tasks_dir.clone());
+        let output = match call.name.as_str() {
+            runtime::TASK_CREATE_TOOL_NAME => parse_task_create_input(call.input).and_then(|input| {
+                store.create(input).map_err(|error| error.to_string())
+            }),
+            runtime::TASK_UPDATE_TOOL_NAME => parse_task_update_input(call.input).and_then(|input| {
+                store.update(input).map_err(|error| error.to_string())
+            }),
+            runtime::TASK_GET_TOOL_NAME => parse_task_get_input(call.input).and_then(|input| {
+                store.get(input.task_id).map_err(|error| error.to_string())
+            }),
+            runtime::TASK_LIST_TOOL_NAME => parse_task_list_input(call.input)
+                .and_then(|()| store.list().map_err(|error| error.to_string())),
+            _ => Err(format!("Tool '{}' is not a task graph tool", call.name)),
+        };
+
+        match output {
+            Ok(content) => match self.agent.refresh_tasks_from_disk() {
+                Ok(()) => (
+                    crate::provider::model::ContentBlock::ToolResult {
+                        tool_use_id: call.id,
+                        content,
+                        is_error: false,
+                    },
+                    true,
+                ),
+                Err(error) => (
+                    crate::provider::model::ContentBlock::ToolResult {
+                        tool_use_id: call.id,
+                        content: format!("Task graph refresh failed: {error:?}"),
+                        is_error: true,
+                    },
+                    false,
+                ),
+            },
+            Err(content) => (
                 crate::provider::model::ContentBlock::ToolResult {
                     tool_use_id: call.id,
-                    content: rendered,
-                    is_error: false,
-                }
-            }
-            Err(content) => crate::provider::model::ContentBlock::ToolResult {
-                tool_use_id: call.id,
-                content,
-                is_error: true,
-            },
+                    content,
+                    is_error: true,
+                },
+                false,
+            ),
         }
     }
 
@@ -192,7 +230,16 @@ impl<'a> TurnRunner<'a> {
     ) -> crate::provider::model::ContentBlock {
         match runtime::task::parse_task_input(call.input) {
             Ok(prompt) => {
-                let mut child = self.agent.spawn_subagent();
+                let mut child = match self.agent.spawn_subagent() {
+                    Ok(child) => child,
+                    Err(error) => {
+                        return crate::provider::model::ContentBlock::ToolResult {
+                            tool_use_id: call.id,
+                            content: format!("Failed to spawn subagent: {error:?}"),
+                            is_error: true,
+                        };
+                    }
+                };
                 let started = self.agent.register_subagent(&child);
                 self.agent
                     .emit_event(AgentEvent::SubagentSpawned { agent: started });
@@ -210,6 +257,13 @@ impl<'a> TurnRunner<'a> {
                             self.agent
                                 .emit_event(AgentEvent::SubagentFinished { agent: finished });
                         }
+                        if let Err(error) = self.agent.refresh_tasks_from_disk() {
+                            return crate::provider::model::ContentBlock::ToolResult {
+                                tool_use_id: call.id,
+                                content: format!("Task graph refresh failed: {error:?}"),
+                                is_error: true,
+                            };
+                        }
 
                         crate::provider::model::ContentBlock::ToolResult {
                             tool_use_id: call.id,
@@ -225,6 +279,7 @@ impl<'a> TurnRunner<'a> {
                             self.agent
                                 .emit_event(AgentEvent::SubagentFinished { agent: finished });
                         }
+                        let _ = self.agent.refresh_tasks_from_disk();
 
                         crate::provider::model::ContentBlock::ToolResult {
                             tool_use_id: call.id,

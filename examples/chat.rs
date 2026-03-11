@@ -4,7 +4,7 @@ use dotenvy::dotenv;
 use mentra::{
     provider::model::{ContentBlock, ModelInfo, ModelProviderKind},
     runtime::{
-        Agent, AgentConfig, AgentEvent, ContextCompactionConfig, Runtime, TodoItem, TodoStatus,
+        Agent, AgentConfig, AgentEvent, ContextCompactionConfig, Runtime, TaskItem, TaskStatus,
     },
     tool::ToolCall,
 };
@@ -209,7 +209,7 @@ fn subscribe_events(agent: &Agent) -> tokio::task::JoinHandle<()> {
 
     tokio::spawn(async move {
         let mut assistant_line_open = false;
-        let mut last_rendered_todos = render_todos(&snapshot.borrow().todos);
+        let mut last_rendered_tasks = render_tasks(&snapshot.borrow().tasks);
 
         loop {
             tokio::select! {
@@ -260,11 +260,11 @@ fn subscribe_events(agent: &Agent) -> tokio::task::JoinHandle<()> {
                         break;
                     }
 
-                    let rendered_todos = render_todos(&snapshot.borrow().todos);
-                    if rendered_todos != last_rendered_todos {
+                    let rendered_tasks = render_tasks(&snapshot.borrow().tasks);
+                    if rendered_tasks != last_rendered_tasks {
                         end_assistant_line(&mut assistant_line_open);
-                        print_todos(&rendered_todos);
-                        last_rendered_todos = rendered_todos;
+                        print_tasks(&rendered_tasks);
+                        last_rendered_tasks = rendered_tasks;
                     }
                 }
             }
@@ -289,16 +289,32 @@ fn describe_tool_call(call: &ToolCall) -> String {
         return format!("read_file {} (all lines)", path);
     }
 
-    if call.name == "todo"
-        && let Some(items) = call.input.get("items").and_then(|value| value.as_array())
-    {
-        return format!("todo {} item(s)", items.len());
-    }
-
     if call.name == "task"
         && let Some(prompt) = call.input.get("prompt").and_then(|value| value.as_str())
     {
         return format!("task \"{prompt}\"");
+    }
+
+    if call.name == "task_create"
+        && let Some(subject) = call.input.get("subject").and_then(|value| value.as_str())
+    {
+        return format!("task_create \"{subject}\"");
+    }
+
+    if call.name == "task_update"
+        && let Some(task_id) = call.input.get("taskId").and_then(|value| value.as_u64())
+    {
+        return format!("task_update {task_id}");
+    }
+
+    if call.name == "task_get"
+        && let Some(task_id) = call.input.get("taskId").and_then(|value| value.as_u64())
+    {
+        return format!("task_get {task_id}");
+    }
+
+    if call.name == "task_list" {
+        return "task_list".to_string();
     }
 
     if call.name == "load_skill"
@@ -317,30 +333,68 @@ fn end_assistant_line(assistant_line_open: &mut bool) {
     }
 }
 
-fn print_todos(rendered_todos: &str) {
-    if rendered_todos.is_empty() {
+fn print_tasks(rendered_tasks: &str) {
+    if rendered_tasks.is_empty() {
         return;
     }
 
-    println!("\x1b[36mTodos\x1b[0m");
-    println!("{rendered_todos}");
+    println!("\x1b[36mTasks\x1b[0m");
+    println!("{rendered_tasks}");
 }
 
-fn render_todos(todos: &[TodoItem]) -> String {
-    if todos.is_empty() {
+fn render_tasks(tasks: &[TaskItem]) -> String {
+    if tasks.is_empty() {
         return String::new();
     }
 
-    todos
-        .iter()
-        .map(|item| {
-            let marker = match item.status {
-                TodoStatus::Pending => "[ ]",
-                TodoStatus::InProgress => "[>]",
-                TodoStatus::Completed => "[x]",
-            };
-            format!("{marker} {}: {}", item.id, item.text)
+    let mut ready = Vec::new();
+    let mut blocked = Vec::new();
+    let mut in_progress = Vec::new();
+    let mut completed = Vec::new();
+
+    for task in tasks {
+        let line = match task.status {
+            TaskStatus::Pending if task.blocked_by.is_empty() => {
+                format!("[ ] {}: {}", task.id, task.subject)
+            }
+            TaskStatus::Pending => format!(
+                "[-] {}: {} (blocked by {})",
+                task.id,
+                task.subject,
+                task.blocked_by
+                    .iter()
+                    .map(u64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            TaskStatus::InProgress => format!("[>] {}: {}", task.id, task.subject),
+            TaskStatus::Completed => format!("[x] {}: {}", task.id, task.subject),
+        };
+
+        match task.status {
+            TaskStatus::Pending if task.blocked_by.is_empty() => ready.push(line),
+            TaskStatus::Pending => blocked.push(line),
+            TaskStatus::InProgress => in_progress.push(line),
+            TaskStatus::Completed => completed.push(line),
+        }
+    }
+
+    let sections = [
+        ("Ready", ready),
+        ("In Progress", in_progress),
+        ("Blocked", blocked),
+        ("Completed", completed),
+    ];
+
+    sections
+        .into_iter()
+        .filter_map(|(label, items)| {
+            if items.is_empty() {
+                None
+            } else {
+                Some(format!("{label}\n{}", items.join("\n")))
+            }
         })
         .collect::<Vec<_>>()
-        .join("\n")
+        .join("\n\n")
 }

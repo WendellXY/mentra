@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::{
     provider::model::{ContentBlock, Message},
-    runtime::TodoItem,
+    runtime::TaskItem,
     tool::ToolCall,
 };
 
@@ -64,7 +64,7 @@ pub struct AgentSnapshot {
     pub history_len: usize,
     pub current_text: String,
     pub pending_tool_uses: Vec<PendingToolUseSummary>,
-    pub todos: Vec<TodoItem>,
+    pub tasks: Vec<TaskItem>,
     pub subagents: Vec<SpawnedAgentSummary>,
 }
 

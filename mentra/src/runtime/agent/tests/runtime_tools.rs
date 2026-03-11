@@ -229,6 +229,10 @@ async fn default_runtime_exposes_task_and_new_empty_does_not() {
     assert!(default_tools.contains("compact"));
     assert!(default_tools.contains("read_file"));
     assert!(default_tools.contains("task"));
+    assert!(default_tools.contains("task_create"));
+    assert!(default_tools.contains("task_update"));
+    assert!(default_tools.contains("task_list"));
+    assert!(default_tools.contains("task_get"));
     assert!(!default_tools.contains("load_skill"));
 
     let empty_provider = ScriptedProvider::new(
@@ -253,6 +257,10 @@ async fn default_runtime_exposes_task_and_new_empty_does_not() {
     let empty_tools = tool_names(&empty_requests[0]);
     assert!(!empty_tools.contains("compact"));
     assert!(!empty_tools.contains("task"));
+    assert!(!empty_tools.contains("task_create"));
+    assert!(!empty_tools.contains("task_update"));
+    assert!(!empty_tools.contains("task_list"));
+    assert!(!empty_tools.contains("task_get"));
     assert!(!empty_tools.contains("load_skill"));
 }
 

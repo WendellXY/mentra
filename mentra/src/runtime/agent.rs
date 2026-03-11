@@ -24,15 +24,15 @@ use crate::{
         model::{ContentBlock, Message, Role, ToolChoice},
     },
     runtime::{
-        TASK_TOOL_NAME, TodoItem,
+        TASK_TOOL_NAME, TaskDiskState, TaskItem,
         error::RuntimeError,
         handle::RuntimeHandle,
         task::{SUBAGENT_MAX_ROUNDS, build_subagent_system_prompt},
-        todo::{TODO_REMINDER_TEXT, TODO_REMINDER_THRESHOLD, has_unfinished_todos},
+        task_graph::{TASK_REMINDER_TEXT, TaskStore, has_unfinished_tasks},
     },
 };
 
-pub use config::{AgentConfig, ContextCompactionConfig};
+pub use config::{AgentConfig, ContextCompactionConfig, TaskGraphConfig};
 pub use events::{
     AgentEvent, AgentSnapshot, AgentStatus, ContextCompactionDetails, ContextCompactionTrigger,
     PendingToolUseSummary, SpawnedAgentStatus, SpawnedAgentSummary,
@@ -49,8 +49,8 @@ pub struct Agent {
     name: String,
     config: AgentConfig,
     history: Vec<Message>,
-    todos: Vec<TodoItem>,
-    rounds_since_todo: usize,
+    tasks: Vec<TaskItem>,
+    rounds_since_task_graph: usize,
     event_tx: broadcast::Sender<AgentEvent>,
     snapshot: AgentSnapshot,
     snapshot_tx: watch::Sender<AgentSnapshot>,
@@ -68,27 +68,28 @@ impl Agent {
         provider: Arc<dyn Provider>,
         hidden_tools: HashSet<String>,
         max_rounds: Option<usize>,
-    ) -> Self {
+    ) -> Result<Self, RuntimeError> {
         let (event_tx, _) = broadcast::channel(256);
         let snapshot = AgentSnapshot::default();
         let (snapshot_tx, _) = watch::channel(snapshot.clone());
-
-        Self {
+        let mut agent = Self {
             id: format!("agent-{}", NEXT_AGENT_ID.fetch_add(1, Ordering::Relaxed)),
             runtime,
             model,
             name,
             config,
             history: Vec::new(),
-            todos: Vec::new(),
-            rounds_since_todo: 0,
+            tasks: Vec::new(),
+            rounds_since_task_graph: 0,
             event_tx,
             snapshot,
             snapshot_tx,
             provider,
             hidden_tools,
             max_rounds,
-        }
+        };
+        agent.refresh_tasks_from_disk()?;
+        Ok(agent)
     }
 
     pub fn name(&self) -> &str {
@@ -144,7 +145,7 @@ impl Agent {
         }
     }
 
-    pub(crate) fn spawn_subagent(&self) -> Self {
+    pub(crate) fn spawn_subagent(&self) -> Result<Self, RuntimeError> {
         let mut hidden_tools = self.hidden_tools.clone();
         hidden_tools.insert(TASK_TOOL_NAME.to_string());
 
@@ -223,9 +224,11 @@ impl Agent {
         &mut self,
         content: impl Into<Vec<ContentBlock>>,
     ) -> Result<(), RuntimeError> {
+        self.refresh_tasks_from_disk()?;
         let history_before_run = self.history.clone();
-        let todos_before_run = self.todos.clone();
-        let rounds_before_run = self.rounds_since_todo;
+        let tasks_before_run = self.tasks.clone();
+        let rounds_before_run = self.rounds_since_task_graph;
+        let task_disk_state = self.capture_task_disk_state()?;
         self.push_history(Message {
             role: Role::User,
             content: content.into(),
@@ -241,7 +244,7 @@ impl Agent {
             }
             Err(error) => {
                 self.restore_history(history_before_run);
-                self.restore_todo_state(todos_before_run, rounds_before_run);
+                self.restore_task_state(tasks_before_run, rounds_before_run, &task_disk_state)?;
                 self.clear_pending_turn();
                 let message = format!("{error:?}");
                 self.set_status(AgentStatus::Failed(message.clone()));
@@ -281,8 +284,10 @@ impl Agent {
     pub(crate) fn effective_system_prompt(&self) -> Option<Cow<'_, str>> {
         let mut sections = Vec::new();
 
-        if self.rounds_since_todo >= TODO_REMINDER_THRESHOLD && has_unfinished_todos(&self.todos) {
-            sections.push(TODO_REMINDER_TEXT.to_string());
+        if self.rounds_since_task_graph >= self.config.task_graph.reminder_threshold
+            && has_unfinished_tasks(&self.tasks)
+        {
+            sections.push(TASK_REMINDER_TEXT.to_string());
         }
 
         if let Some(system) = &self.config.system {
@@ -300,24 +305,46 @@ impl Agent {
         }
     }
 
-    pub(crate) fn apply_todo_items(&mut self, items: Vec<TodoItem>) {
-        self.todos = items;
-        self.rounds_since_todo = 0;
-        self.snapshot.todos = self.todos.clone();
-        self.publish_snapshot();
-    }
-
-    pub(crate) fn note_round_without_todo(&mut self) {
-        if has_unfinished_todos(&self.todos) {
-            self.rounds_since_todo += 1;
+    pub(crate) fn note_round_without_task_graph(&mut self) {
+        if has_unfinished_tasks(&self.tasks) {
+            self.rounds_since_task_graph += 1;
         }
     }
 
-    fn restore_todo_state(&mut self, todos: Vec<TodoItem>, rounds_since_todo: usize) {
-        self.todos = todos;
-        self.rounds_since_todo = rounds_since_todo;
-        self.snapshot.todos = self.todos.clone();
+    pub(crate) fn record_task_graph_activity(&mut self) {
+        self.rounds_since_task_graph = 0;
+    }
+
+    pub(crate) fn refresh_tasks_from_disk(&mut self) -> Result<(), RuntimeError> {
+        let tasks = TaskStore::new(self.config.task_graph.tasks_dir.clone())
+            .load_all()
+            .map_err(map_task_graph_error_for_load)?;
+        self.tasks = tasks;
+        self.snapshot.tasks = self.tasks.clone();
         self.publish_snapshot();
+        Ok(())
+    }
+
+    fn capture_task_disk_state(&self) -> Result<TaskDiskState, RuntimeError> {
+        TaskStore::new(self.config.task_graph.tasks_dir.clone())
+            .capture_disk_state()
+            .map_err(map_task_graph_error_for_load)
+    }
+
+    fn restore_task_state(
+        &mut self,
+        tasks: Vec<TaskItem>,
+        rounds_since_task_graph: usize,
+        disk_state: &TaskDiskState,
+    ) -> Result<(), RuntimeError> {
+        TaskStore::new(self.config.task_graph.tasks_dir.clone())
+            .restore_disk_state(disk_state)
+            .map_err(map_task_graph_error_for_restore)?;
+        self.tasks = tasks;
+        self.rounds_since_task_graph = rounds_since_task_graph;
+        self.snapshot.tasks = self.tasks.clone();
+        self.publish_snapshot();
+        Ok(())
     }
 
     pub(crate) fn emit_event(&self, event: AgentEvent) {
@@ -336,5 +363,25 @@ impl Agent {
 
     fn publish_snapshot(&self) {
         self.snapshot_tx.send_replace(self.snapshot.clone());
+    }
+}
+
+fn map_task_graph_error_for_load(error: crate::runtime::TaskGraphError) -> RuntimeError {
+    match error {
+        crate::runtime::TaskGraphError::Io(error) => RuntimeError::FailedToLoadTasks(error),
+        crate::runtime::TaskGraphError::Serde(error) => RuntimeError::FailedToSerializeTasks(error),
+        crate::runtime::TaskGraphError::Validation(message) => {
+            RuntimeError::InvalidTaskGraph(message)
+        }
+    }
+}
+
+fn map_task_graph_error_for_restore(error: crate::runtime::TaskGraphError) -> RuntimeError {
+    match error {
+        crate::runtime::TaskGraphError::Io(error) => RuntimeError::FailedToRestoreTasks(error),
+        crate::runtime::TaskGraphError::Serde(error) => RuntimeError::FailedToSerializeTasks(error),
+        crate::runtime::TaskGraphError::Validation(message) => {
+            RuntimeError::InvalidTaskGraph(message)
+        }
     }
 }

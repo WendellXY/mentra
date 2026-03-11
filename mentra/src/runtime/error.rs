@@ -9,6 +9,11 @@ pub enum RuntimeError {
     FailedToCompactHistory(ProviderError),
     FailedToPersistTranscript(std::io::Error),
     FailedToSerializeTranscript(serde_json::Error),
+    FailedToLoadTasks(std::io::Error),
+    FailedToWriteTasks(std::io::Error),
+    FailedToSerializeTasks(serde_json::Error),
+    FailedToRestoreTasks(std::io::Error),
+    InvalidTaskGraph(String),
     MaxRoundsExceeded(usize),
     InvalidToolUseInput {
         id: String,
