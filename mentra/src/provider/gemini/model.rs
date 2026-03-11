@@ -82,7 +82,6 @@ impl<'a> TryFrom<Request<'a>> for GeminiGenerateContentRequest {
     type Error = ProviderError;
 
     fn try_from(value: Request<'a>) -> Result<Self, Self::Error> {
-        let tool_choice = value.tool_choice.clone().unwrap_or_default();
         let generation_config = GeminiGenerationConfig::from_request(&value);
         let tool_name_by_id = collect_tool_name_by_id(value.messages.as_ref());
         let contents = value
@@ -112,7 +111,10 @@ impl<'a> TryFrom<Request<'a>> for GeminiGenerateContentRequest {
                 }],
             }),
             contents,
-            tool_config: (!tools.is_empty()).then(|| tool_choice.into()),
+            tool_config: value
+                .tool_choice
+                .filter(|_| !tools.is_empty())
+                .map(Into::into),
             tools,
             generation_config,
         })
@@ -579,6 +581,33 @@ mod tests {
             auto_payload["toolConfig"]["functionCallingConfig"]["mode"],
             "AUTO"
         );
+    }
+
+    #[test]
+    fn omits_tool_config_when_tool_choice_is_unset() {
+        let request = Request {
+            model: Cow::Borrowed("gemini-2.0-flash"),
+            system: None,
+            messages: Cow::Owned(vec![Message {
+                role: Role::User,
+                content: vec![ContentBlock::text("hi")],
+            }]),
+            tools: Cow::Owned(vec![ToolSpec {
+                name: "echo".to_string(),
+                description: None,
+                input_schema: json!({"type":"object"}),
+            }]),
+            tool_choice: None,
+            temperature: None,
+            max_output_tokens: None,
+            metadata: Cow::Owned(BTreeMap::new()),
+        };
+
+        let payload =
+            serde_json::to_value(GeminiGenerateContentRequest::try_from(request).unwrap())
+                .expect("request should serialize");
+
+        assert!(payload.get("toolConfig").is_none());
     }
 
     #[test]

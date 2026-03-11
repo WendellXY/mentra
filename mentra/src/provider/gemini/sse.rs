@@ -198,11 +198,12 @@ fn parse_frame(frame: &[u8], state: &mut StreamState) -> Result<Vec<ProviderEven
     }
 
     let mut events = Vec::new();
-    if let Some(event) = state.ensure_message_started(&chunk) {
-        events.push(event);
-    }
 
     if let Some(candidate) = chunk.candidates.first() {
+        if let Some(event) = state.ensure_message_started(&chunk) {
+            events.push(event);
+        }
+
         if let Some(content) = candidate.content.as_ref() {
             for (index, part) in content.parts.iter().enumerate() {
                 if let Some(text) = part.text.as_deref() {
@@ -243,6 +244,16 @@ fn parse_frame(frame: &[u8], state: &mut StreamState) -> Result<Vec<ProviderEven
             events.push(ProviderEvent::MessageStopped);
             state.stopped = true;
         }
+    } else if let Some(prompt_feedback) = chunk.prompt_feedback.as_ref() {
+        if let Some(event) = state.ensure_message_started(&chunk) {
+            events.push(event);
+        }
+        events.extend(state.close_all_blocks());
+        events.push(ProviderEvent::MessageDelta {
+            stop_reason: Some(prompt_feedback.stop_reason()),
+        });
+        events.push(ProviderEvent::MessageStopped);
+        state.stopped = true;
     }
 
     Ok(events)
@@ -292,6 +303,8 @@ fn find_frame_boundary(buffer: &[u8]) -> Option<(usize, usize)> {
 struct GeminiStreamChunk {
     #[serde(default)]
     candidates: Vec<GeminiCandidate>,
+    #[serde(default, rename = "promptFeedback", alias = "prompt_feedback")]
+    prompt_feedback: Option<GeminiPromptFeedback>,
     #[serde(default, rename = "responseId", alias = "response_id")]
     response_id: Option<String>,
     #[serde(default, rename = "modelVersion", alias = "model_version")]
@@ -336,6 +349,20 @@ struct GeminiFunctionCall {
 struct GeminiErrorBody {
     #[serde(default)]
     message: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GeminiPromptFeedback {
+    #[serde(default, rename = "blockReason", alias = "block_reason")]
+    block_reason: Option<String>,
+}
+
+impl GeminiPromptFeedback {
+    fn stop_reason(&self) -> String {
+        self.block_reason
+            .clone()
+            .unwrap_or_else(|| "BLOCKED".to_string())
+    }
 }
 
 #[cfg(test)]
@@ -498,5 +525,31 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn treats_prompt_feedback_only_chunks_as_terminal() {
+        let mut state = StreamState::new("gemini-2.0-flash".to_string());
+
+        let events = parse_frame(
+            br#"data: {"responseId":"resp-2","promptFeedback":{"blockReason":"SAFETY"}}"#,
+            &mut state,
+        )
+        .expect("frame should parse");
+
+        assert_eq!(
+            events,
+            vec![
+                ProviderEvent::MessageStarted {
+                    id: "resp-2".to_string(),
+                    model: "gemini-2.0-flash".to_string(),
+                    role: crate::provider::Role::Assistant,
+                },
+                ProviderEvent::MessageDelta {
+                    stop_reason: Some("SAFETY".to_string()),
+                },
+                ProviderEvent::MessageStopped,
+            ]
+        );
     }
 }

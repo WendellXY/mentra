@@ -18,7 +18,7 @@ The repository is organized as a small workspace:
 - Anthropic provider support
 - Gemini Developer API provider support
 - OpenAI provider support via the Responses API
-- image inputs for OpenAI, Anthropic, and Gemini models
+- image inputs for OpenAI and Anthropic models, plus inline image bytes for Gemini
 
 ## Sending Images
 
@@ -36,6 +36,7 @@ agent
 ```
 
 For already-hosted assets, use `ContentBlock::image_url(...)` instead.
+Gemini currently supports inline `image_bytes(...)` inputs only and rejects `image_url(...)`.
 
 ## Building A Runtime
 
