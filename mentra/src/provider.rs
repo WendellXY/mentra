@@ -2,11 +2,14 @@ use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 
-use crate::provider::{anthropic::AnthropicProvider, openai::OpenAIProvider};
+use crate::provider::{
+    anthropic::AnthropicProvider, gemini::GeminiProvider, openai::OpenAIProvider,
+};
 
 pub mod anthropic;
-pub mod openai;
+pub mod gemini;
 mod model;
+pub mod openai;
 
 pub use model::{
     ContentBlock, ContentBlockDelta, ContentBlockStart, ImageSource, Message, ModelInfo,
@@ -42,8 +45,8 @@ impl ProviderRegistry {
         let api_key = api_key.into();
         let provider: Arc<dyn Provider> = match kind {
             ModelProviderKind::Anthropic => Arc::new(AnthropicProvider::new(api_key)),
+            ModelProviderKind::Gemini => Arc::new(GeminiProvider::new(api_key)),
             ModelProviderKind::OpenAI => Arc::new(OpenAIProvider::new(api_key)),
-            _ => todo!("Add support for new provider"),
         };
 
         if self.default_provider.is_none() {
