@@ -12,6 +12,8 @@ pub(crate) struct TaskCreateInput {
     #[serde(default)]
     pub(crate) owner: String,
     #[serde(default)]
+    pub(crate) working_directory: Option<String>,
+    #[serde(default)]
     pub(crate) blocked_by: Vec<u64>,
 }
 
@@ -32,6 +34,8 @@ pub(crate) struct TaskUpdateInput {
     pub(crate) description: Option<String>,
     #[serde(default)]
     pub(crate) owner: Option<String>,
+    #[serde(default)]
+    pub(crate) working_directory: Option<Option<String>>,
     #[serde(default)]
     pub(crate) status: Option<TaskStatus>,
     #[serde(default)]
@@ -62,7 +66,10 @@ pub(crate) fn parse_task_create_input(input: Value) -> Result<TaskCreateInput, S
         return Err("Task subject must not be empty".to_string());
     }
 
-    Ok(parsed)
+    Ok(TaskCreateInput {
+        working_directory: normalize_optional_path(parsed.working_directory),
+        ..parsed
+    })
 }
 
 pub(crate) fn parse_task_update_input(input: Value) -> Result<TaskUpdateInput, String> {
@@ -73,7 +80,10 @@ pub(crate) fn parse_task_update_input(input: Value) -> Result<TaskUpdateInput, S
         return Err("Task subject must not be empty".to_string());
     }
 
-    Ok(parsed)
+    Ok(TaskUpdateInput {
+        working_directory: parsed.working_directory.map(normalize_optional_path),
+        ..parsed
+    })
 }
 
 pub(crate) fn parse_task_claim_input(input: Value) -> Result<TaskClaimInput, String> {
@@ -90,4 +100,11 @@ pub(crate) fn parse_task_list_input(input: Value) -> Result<(), String> {
     serde_json::from_value::<TaskListInput>(input)
         .map(|_| ())
         .map_err(|error| format!("Invalid task_list input: {error}"))
+}
+
+fn normalize_optional_path(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    })
 }

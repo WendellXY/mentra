@@ -10,9 +10,6 @@ use crate::{
         AgentEvent, AgentSnapshot,
         background::{BackgroundNotification, BackgroundTaskManager, BackgroundTaskSummary},
         error::RuntimeError,
-        execution_context::{
-            self, ExecutionContextCommandOutput, ExecutionContextStatus, ExecutionContextStore,
-        },
         task::{self, TaskAccess},
         team::{
             TeamDispatch, TeamManager, TeamMemberSummary, TeamMessage, TeamProtocolRequestSummary,
@@ -49,7 +46,6 @@ pub(crate) struct AgentExecutionConfig {
     pub(crate) team_dir: PathBuf,
     pub(crate) tasks_dir: PathBuf,
     pub(crate) base_dir: PathBuf,
-    pub(crate) contexts_dir: PathBuf,
     pub(crate) auto_route_shell: bool,
     pub(crate) is_teammate: bool,
 }
@@ -270,23 +266,10 @@ impl RuntimeHandle {
         task::execute(tool_name, input, dir, access)
     }
 
-    pub fn execute_execution_context_mutation(
-        &self,
-        tool_name: &str,
-        input: serde_json::Value,
-        base_dir: &Path,
-        contexts_dir: &Path,
-        tasks_dir: &Path,
-        access: TaskAccess<'_>,
-    ) -> Result<ExecutionContextCommandOutput, String> {
-        let _guard = self.state_lock.lock().expect("state lock poisoned");
-        execution_context::execute(tool_name, input, base_dir, contexts_dir, tasks_dir, access)
-    }
-
     pub fn resolve_working_directory(
         &self,
         agent_id: &str,
-        context_id: Option<&str>,
+        explicit_directory: Option<&str>,
     ) -> Result<PathBuf, String> {
         let config = self
             .agent_contexts
@@ -296,14 +279,8 @@ impl RuntimeHandle {
             .cloned()
             .ok_or_else(|| format!("Unknown agent '{agent_id}'"))?;
 
-        let store =
-            ExecutionContextStore::new(config.base_dir.clone(), config.contexts_dir.clone());
-
-        if let Some(context_id) = context_id {
-            return store
-                .resolve_path(context_id)
-                .map(|context| context.path)
-                .map_err(|error| error.to_string());
+        if let Some(directory) = explicit_directory {
+            return Ok(resolve_path(&config.base_dir, directory));
         }
 
         if !config.auto_route_shell {
@@ -322,40 +299,24 @@ impl RuntimeHandle {
             })
             .collect::<Vec<_>>();
 
-        if owned.is_empty() {
+        let directories = owned
+            .iter()
+            .filter_map(|task| task.working_directory.as_deref())
+            .map(|path| resolve_path(&config.base_dir, path))
+            .collect::<BTreeSet<_>>();
+
+        if directories.is_empty() {
             return Ok(config.base_dir);
         }
 
-        let context_ids = owned
-            .iter()
-            .filter_map(|task| task.execution_context_id.clone())
-            .collect::<BTreeSet<_>>();
-
-        if context_ids.is_empty() {
+        if directories.len() > 1 {
             return Err(
-                "You own unfinished task(s) but none has a bound execution context. Call context_create first."
+                "Multiple owned task directories are active. Pass workingDirectory explicitly."
                     .to_string(),
             );
         }
 
-        if context_ids.len() > 1 {
-            return Err(
-                "Multiple owned execution contexts are active. Pass contextId explicitly."
-                    .to_string(),
-            );
-        }
-
-        let context_id = context_ids.into_iter().next().expect("one context id");
-        let context = store
-            .resolve_path(&context_id)
-            .map_err(|error| error.to_string())?;
-        match context.status {
-            ExecutionContextStatus::Active | ExecutionContextStatus::Kept => Ok(context.path),
-            ExecutionContextStatus::Removed => Err(format!(
-                "Execution context '{}' has been removed",
-                context.name
-            )),
-        }
+        Ok(directories.into_iter().next().expect("one directory"))
     }
 
     pub fn default_working_directory(&self, agent_id: &str) -> PathBuf {
@@ -408,6 +369,15 @@ impl RuntimeHandle {
                 is_error: true,
             }
         }
+    }
+}
+
+fn resolve_path(base_dir: &Path, path: &str) -> PathBuf {
+    let candidate = PathBuf::from(path);
+    if candidate.is_absolute() {
+        candidate
+    } else {
+        base_dir.join(candidate)
     }
 }
 

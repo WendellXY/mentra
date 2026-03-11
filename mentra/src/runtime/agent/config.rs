@@ -4,7 +4,6 @@ use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::provider::ToolChoice;
-use crate::runtime::execution_context::ExecutionContextBackendKind;
 
 #[cfg(test)]
 static NEXT_TEST_TRANSCRIPT_DIR_ID: AtomicU64 = AtomicU64::new(1);
@@ -78,20 +77,16 @@ impl Default for ContextCompactionConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExecutionContextConfig {
+pub struct WorkspaceConfig {
     pub base_dir: PathBuf,
-    pub contexts_dir: PathBuf,
-    pub default_backend: ExecutionContextBackendKind,
     pub auto_route_shell: bool,
 }
 
-impl Default for ExecutionContextConfig {
+impl Default for WorkspaceConfig {
     fn default() -> Self {
         let base_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         Self {
-            contexts_dir: base_dir.join(".contexts"),
             base_dir,
-            default_backend: ExecutionContextBackendKind::GitWorktree,
             auto_route_shell: true,
         }
     }
@@ -132,7 +127,7 @@ pub struct AgentConfig {
     pub metadata: BTreeMap<String, String>,
     pub team: TeamConfig,
     pub task: TaskConfig,
-    pub execution_context: ExecutionContextConfig,
+    pub workspace: WorkspaceConfig,
     pub context_compaction: ContextCompactionConfig,
 }
 
@@ -146,7 +141,7 @@ impl Default for AgentConfig {
             metadata: BTreeMap::new(),
             team: TeamConfig::default(),
             task: TaskConfig::default(),
-            execution_context: ExecutionContextConfig::default(),
+            workspace: WorkspaceConfig::default(),
             context_compaction: ContextCompactionConfig::default(),
         }
     }

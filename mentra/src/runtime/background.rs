@@ -84,11 +84,7 @@ struct BackgroundObserver {
 }
 
 impl BackgroundTaskManager {
-    pub(crate) fn register_agent(
-        &self,
-        agent_id: &str,
-        observer: &AgentObserver,
-    ) {
+    pub(crate) fn register_agent(&self, agent_id: &str, observer: &AgentObserver) {
         let tasks = {
             let mut state = self
                 .inner

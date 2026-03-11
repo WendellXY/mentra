@@ -25,5 +25,5 @@ pub struct TaskItem {
     #[serde(default)]
     pub owner: String,
     #[serde(default)]
-    pub execution_context_id: Option<String>,
+    pub working_directory: Option<String>,
 }

@@ -25,6 +25,7 @@ fn create_and_list_group_ready_blocked_and_completed_tasks() {
             subject: "Plan".to_string(),
             description: String::new(),
             owner: String::new(),
+            working_directory: None,
             blocked_by: Vec::new(),
         })
         .expect("create task 1");
@@ -33,6 +34,7 @@ fn create_and_list_group_ready_blocked_and_completed_tasks() {
             subject: "Build".to_string(),
             description: String::new(),
             owner: String::new(),
+            working_directory: None,
             blocked_by: vec![1],
         })
         .expect("create task 2");
@@ -41,6 +43,7 @@ fn create_and_list_group_ready_blocked_and_completed_tasks() {
             subject: "Review".to_string(),
             description: String::new(),
             owner: String::new(),
+            working_directory: None,
             blocked_by: Vec::new(),
         })
         .expect("create task 3");
@@ -85,6 +88,7 @@ fn completion_unblocks_and_reopen_reblocks_dependents() {
             subject: "A".to_string(),
             description: String::new(),
             owner: String::new(),
+            working_directory: None,
             blocked_by: Vec::new(),
         })
         .expect("create task 1");
@@ -93,6 +97,7 @@ fn completion_unblocks_and_reopen_reblocks_dependents() {
             subject: "B".to_string(),
             description: String::new(),
             owner: String::new(),
+            working_directory: None,
             blocked_by: vec![1],
         })
         .expect("create task 2");
@@ -139,6 +144,7 @@ fn adding_cycle_is_rejected() {
             subject: "A".to_string(),
             description: String::new(),
             owner: String::new(),
+            working_directory: None,
             blocked_by: Vec::new(),
         })
         .expect("create task 1");
@@ -147,6 +153,7 @@ fn adding_cycle_is_rejected() {
             subject: "B".to_string(),
             description: String::new(),
             owner: String::new(),
+            working_directory: None,
             blocked_by: vec![1],
         })
         .expect("create task 2");
@@ -173,6 +180,7 @@ fn blocked_task_cannot_start_or_complete() {
             subject: "A".to_string(),
             description: String::new(),
             owner: String::new(),
+            working_directory: None,
             blocked_by: Vec::new(),
         })
         .expect("create task 1");
@@ -181,6 +189,7 @@ fn blocked_task_cannot_start_or_complete() {
             subject: "B".to_string(),
             description: String::new(),
             owner: String::new(),
+            working_directory: None,
             blocked_by: vec![1],
         })
         .expect("create task 2");
@@ -218,6 +227,7 @@ fn completed_blocker_stays_out_of_unresolved_blocked_by() {
             subject: "A".to_string(),
             description: String::new(),
             owner: String::new(),
+            working_directory: None,
             blocked_by: Vec::new(),
         })
         .expect("create task 1");
@@ -236,6 +246,7 @@ fn completed_blocker_stays_out_of_unresolved_blocked_by() {
             subject: "B".to_string(),
             description: String::new(),
             owner: String::new(),
+            working_directory: None,
             blocked_by: vec![1],
         })
         .expect("create task 2");
@@ -254,6 +265,7 @@ fn claim_first_ready_unowned_task() {
             subject: "A".to_string(),
             description: String::new(),
             owner: String::new(),
+            working_directory: None,
             blocked_by: Vec::new(),
         })
         .expect("create task 1");
@@ -262,6 +274,7 @@ fn claim_first_ready_unowned_task() {
             subject: "B".to_string(),
             description: String::new(),
             owner: String::new(),
+            working_directory: None,
             blocked_by: vec![1],
         })
         .expect("create task 2");
@@ -280,6 +293,7 @@ fn claim_explicit_task_id() {
             subject: "A".to_string(),
             description: String::new(),
             owner: String::new(),
+            working_directory: None,
             blocked_by: Vec::new(),
         })
         .expect("create task 1");
@@ -288,6 +302,7 @@ fn claim_explicit_task_id() {
             subject: "B".to_string(),
             description: String::new(),
             owner: String::new(),
+            working_directory: None,
             blocked_by: Vec::new(),
         })
         .expect("create task 2");
@@ -306,6 +321,7 @@ fn claim_rejects_unclaimable_tasks() {
             subject: "A".to_string(),
             description: String::new(),
             owner: String::new(),
+            working_directory: None,
             blocked_by: Vec::new(),
         })
         .expect("create task 1");
@@ -314,6 +330,7 @@ fn claim_rejects_unclaimable_tasks() {
             subject: "B".to_string(),
             description: String::new(),
             owner: String::new(),
+            working_directory: None,
             blocked_by: vec![1],
         })
         .expect("create task 2");
@@ -338,6 +355,7 @@ fn claim_rejects_unclaimable_tasks() {
             subject: "C".to_string(),
             description: String::new(),
             owner: String::new(),
+            working_directory: None,
             blocked_by: Vec::new(),
         })
         .expect("create task 1");
@@ -362,6 +380,7 @@ fn claim_rejects_unclaimable_tasks() {
             subject: "D".to_string(),
             description: String::new(),
             owner: String::new(),
+            working_directory: None,
             blocked_by: Vec::new(),
         })
         .expect("create task 1");
@@ -389,6 +408,7 @@ fn teammate_cannot_edit_task_dependencies() {
             subject: "Owned".to_string(),
             description: String::new(),
             owner: "alice".to_string(),
+            working_directory: None,
             blocked_by: Vec::new(),
         })
         .expect("create task 1");
@@ -397,6 +417,7 @@ fn teammate_cannot_edit_task_dependencies() {
             subject: "Other".to_string(),
             description: String::new(),
             owner: String::new(),
+            working_directory: None,
             blocked_by: Vec::new(),
         })
         .expect("create task 2");

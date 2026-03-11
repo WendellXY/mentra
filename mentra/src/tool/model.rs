@@ -34,9 +34,12 @@ impl ToolContext {
         self.working_directory.as_path()
     }
 
-    pub fn resolve_working_directory(&self, context_id: Option<&str>) -> Result<PathBuf, String> {
+    pub fn resolve_working_directory(
+        &self,
+        working_directory: Option<&str>,
+    ) -> Result<PathBuf, String> {
         self.runtime
-            .resolve_working_directory(&self.agent_id, context_id)
+            .resolve_working_directory(&self.agent_id, working_directory)
     }
 
     pub fn load_skill(&self, name: &str) -> Result<String, String> {

@@ -31,6 +31,10 @@ pub(crate) fn intrinsic_specs() -> Vec<ToolSpec> {
                         "type": "string",
                         "description": "Optional owner label for the task"
                     },
+                    "workingDirectory": {
+                        "type": ["string", "null"],
+                        "description": "Optional working directory hint for shell-based work"
+                    },
                     "blockedBy": {
                         "type": "array",
                         "items": { "type": "integer" },
@@ -79,6 +83,10 @@ pub(crate) fn intrinsic_specs() -> Vec<ToolSpec> {
                     "owner": {
                         "type": "string",
                         "description": "Updated task owner"
+                    },
+                    "workingDirectory": {
+                        "type": ["string", "null"],
+                        "description": "Updated working directory hint for shell-based work; pass null to clear it"
                     },
                     "status": {
                         "type": "string",

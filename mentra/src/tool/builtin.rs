@@ -24,9 +24,9 @@ impl ToolHandler for BashTool {
                         "type": "string",
                         "description": "Shell command to execute"
                     },
-                    "contextId": {
+                    "workingDirectory": {
                         "type": "string",
-                        "description": "Optional execution context to run inside"
+                        "description": "Optional directory to run inside"
                     }
                 },
                 "required": ["command"]
@@ -40,8 +40,10 @@ impl ToolHandler for BashTool {
             .and_then(|value| value.as_str())
             .ok_or_else(|| "Command is required".to_string())?;
 
-        let context_id = input.get("contextId").and_then(|value| value.as_str());
-        let working_directory = ctx.resolve_working_directory(context_id)?;
+        let working_directory = input
+            .get("workingDirectory")
+            .and_then(|value| value.as_str());
+        let working_directory = ctx.resolve_working_directory(working_directory)?;
 
         let output = Command::new("bash")
             .arg("-c")
@@ -80,9 +82,9 @@ impl ToolHandler for BackgroundRunTool {
                         "type": "string",
                         "description": "Shell command to execute in the background"
                     },
-                    "contextId": {
+                    "workingDirectory": {
                         "type": "string",
-                        "description": "Optional execution context to run inside"
+                        "description": "Optional directory to run inside"
                     }
                 },
                 "required": ["command"]
@@ -95,8 +97,10 @@ impl ToolHandler for BackgroundRunTool {
             .get("command")
             .and_then(|value| value.as_str())
             .ok_or_else(|| "Command is required".to_string())?;
-        let context_id = input.get("contextId").and_then(|value| value.as_str());
-        let working_directory = ctx.resolve_working_directory(context_id)?;
+        let working_directory = input
+            .get("workingDirectory")
+            .and_then(|value| value.as_str());
+        let working_directory = ctx.resolve_working_directory(working_directory)?;
 
         let task = ctx.start_background_task(command.to_string(), working_directory);
         Ok(format!(

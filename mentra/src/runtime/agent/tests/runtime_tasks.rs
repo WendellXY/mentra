@@ -59,7 +59,7 @@ async fn task_updates_snapshot_and_persists_for_new_agents() {
             blocked_by: Vec::new(),
             blocks: Vec::new(),
             owner: "agent-a".to_string(),
-            execution_context_id: None,
+            working_directory: None,
         }]
     );
     assert!(tasks_dir.join("task_1.json").exists());

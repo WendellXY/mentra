@@ -9,12 +9,10 @@ impl Agent {
     ) -> Result<(), RuntimeError> {
         self.idle_requested = false;
         self.refresh_tasks_from_disk()?;
-        self.refresh_execution_contexts_from_disk()?;
         let history_before_run = self.history.clone();
         let tasks_before_run = self.tasks.clone();
         let rounds_before_run = self.rounds_since_task;
         let task_disk_state = self.capture_task_disk_state()?;
-        let execution_context_disk_state = self.capture_execution_context_disk_state()?;
         self.push_history(Message {
             role: Role::User,
             content: content.into(),
@@ -36,7 +34,6 @@ impl Agent {
                 self.requeue_inflight_background_notifications();
                 self.restore_history(history_before_run);
                 self.restore_task_state(tasks_before_run, rounds_before_run, &task_disk_state)?;
-                self.restore_execution_context_state(&execution_context_disk_state)?;
                 self.clear_pending_turn();
                 let message = format!("{error:?}");
                 self.set_status(AgentStatus::Failed(message.clone()));

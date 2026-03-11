@@ -1,10 +1,8 @@
 use std::borrow::Cow;
 
-use crate::runtime::execution_context::ExecutionContextStore;
 use crate::runtime::{
-    ExecutionContextDiskState, TaskDiskState,
+    TaskDiskState,
     error::RuntimeError,
-    execution_context::CONTEXT_REMINDER_TEXT,
     task::{TASK_CLAIM_TOOL_NAME, TASK_REMINDER_TEXT, TaskAccess, TaskStore, has_unfinished_tasks},
 };
 
@@ -18,9 +16,6 @@ impl Agent {
             && has_unfinished_tasks(&self.tasks)
         {
             sections.push(TASK_REMINDER_TEXT.to_string());
-        }
-        if self.should_remind_missing_execution_context() {
-            sections.push(CONTEXT_REMINDER_TEXT.to_string());
         }
 
         if let Some(system) = &self.config.system {
@@ -56,19 +51,6 @@ impl Agent {
         let tasks = self.tasks.clone();
         self.mutate_snapshot(|snapshot| {
             snapshot.tasks = tasks;
-        });
-        Ok(())
-    }
-
-    pub(crate) fn refresh_execution_contexts_from_disk(&mut self) -> Result<(), RuntimeError> {
-        let contexts = ExecutionContextStore::new(
-            self.config.execution_context.base_dir.clone(),
-            self.config.execution_context.contexts_dir.clone(),
-        )
-        .load_all()
-        .map_err(map_execution_context_error_for_load)?;
-        self.mutate_snapshot(|snapshot| {
-            snapshot.execution_contexts = contexts;
         });
         Ok(())
     }
@@ -113,36 +95,10 @@ impl Agent {
         )
     }
 
-    pub(crate) fn execute_execution_context_mutation(
-        &self,
-        tool_name: &str,
-        input: serde_json::Value,
-    ) -> Result<crate::runtime::execution_context::ExecutionContextCommandOutput, String> {
-        self.runtime.execute_execution_context_mutation(
-            tool_name,
-            input,
-            self.config.execution_context.base_dir.as_path(),
-            self.config.execution_context.contexts_dir.as_path(),
-            self.config.task.tasks_dir.as_path(),
-            self.task_access(),
-        )
-    }
-
     pub(super) fn capture_task_disk_state(&self) -> Result<TaskDiskState, RuntimeError> {
         TaskStore::new(self.config.task.tasks_dir.clone())
             .capture_disk_state()
             .map_err(map_task_error_for_load)
-    }
-
-    pub(super) fn capture_execution_context_disk_state(
-        &self,
-    ) -> Result<ExecutionContextDiskState, RuntimeError> {
-        ExecutionContextStore::new(
-            self.config.execution_context.base_dir.clone(),
-            self.config.execution_context.contexts_dir.clone(),
-        )
-        .capture_disk_state()
-        .map_err(map_execution_context_error_for_load)
     }
 
     fn owns_unfinished_tasks(&self) -> bool {
@@ -168,29 +124,6 @@ impl Agent {
         });
         Ok(())
     }
-
-    pub(super) fn restore_execution_context_state(
-        &mut self,
-        disk_state: &ExecutionContextDiskState,
-    ) -> Result<(), RuntimeError> {
-        ExecutionContextStore::new(
-            self.config.execution_context.base_dir.clone(),
-            self.config.execution_context.contexts_dir.clone(),
-        )
-        .restore_disk_state(disk_state)
-        .map_err(map_execution_context_error_for_restore)?;
-        self.refresh_execution_contexts_from_disk()
-    }
-
-    fn should_remind_missing_execution_context(&self) -> bool {
-        self.config.execution_context.auto_route_shell
-            && self.teammate_identity.is_some()
-            && self.tasks.iter().any(|task| {
-                task.owner == self.name
-                    && !matches!(task.status, crate::runtime::TaskStatus::Completed)
-                    && task.execution_context_id.is_none()
-            })
-    }
 }
 
 fn map_task_error_for_load(error: crate::runtime::TaskError) -> RuntimeError {
@@ -206,37 +139,5 @@ fn map_task_error_for_restore(error: crate::runtime::TaskError) -> RuntimeError 
         crate::runtime::TaskError::Io(error) => RuntimeError::FailedToRestoreTasks(error),
         crate::runtime::TaskError::Serde(error) => RuntimeError::FailedToSerializeTasks(error),
         crate::runtime::TaskError::Validation(message) => RuntimeError::InvalidTask(message),
-    }
-}
-
-fn map_execution_context_error_for_load(
-    error: crate::runtime::execution_context::ExecutionContextError,
-) -> RuntimeError {
-    match error {
-        crate::runtime::execution_context::ExecutionContextError::Io(error) => {
-            RuntimeError::FailedToLoadExecutionContexts(error)
-        }
-        crate::runtime::execution_context::ExecutionContextError::Serde(error) => {
-            RuntimeError::FailedToSerializeExecutionContexts(error)
-        }
-        crate::runtime::execution_context::ExecutionContextError::Validation(message) => {
-            RuntimeError::InvalidExecutionContext(message)
-        }
-    }
-}
-
-fn map_execution_context_error_for_restore(
-    error: crate::runtime::execution_context::ExecutionContextError,
-) -> RuntimeError {
-    match error {
-        crate::runtime::execution_context::ExecutionContextError::Io(error) => {
-            RuntimeError::FailedToRestoreExecutionContexts(error)
-        }
-        crate::runtime::execution_context::ExecutionContextError::Serde(error) => {
-            RuntimeError::FailedToSerializeExecutionContexts(error)
-        }
-        crate::runtime::execution_context::ExecutionContextError::Validation(message) => {
-            RuntimeError::InvalidExecutionContext(message)
-        }
     }
 }

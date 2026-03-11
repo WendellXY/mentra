@@ -26,15 +26,17 @@ use crate::{
     Message,
     provider::{Provider, ToolChoice},
     runtime::{
-        TaskItem, background::BackgroundNotification, error::RuntimeError,
+        TaskItem,
+        background::BackgroundNotification,
+        error::RuntimeError,
         handle::{AgentExecutionConfig, AgentObserver, RuntimeHandle},
         team::TeamMessage,
     },
 };
 
 pub use config::{
-    AgentConfig, ContextCompactionConfig, ExecutionContextConfig, TaskConfig, TeamAutonomyConfig,
-    TeamConfig,
+    AgentConfig, ContextCompactionConfig, TaskConfig, TeamAutonomyConfig, TeamConfig,
+    WorkspaceConfig,
 };
 pub use events::{
     AgentEvent, AgentSnapshot, AgentStatus, ContextCompactionDetails, ContextCompactionTrigger,
@@ -123,9 +125,8 @@ impl Agent {
             name: agent.name.clone(),
             team_dir: agent.config.team.team_dir.clone(),
             tasks_dir: agent.config.task.tasks_dir.clone(),
-            base_dir: agent.config.execution_context.base_dir.clone(),
-            contexts_dir: agent.config.execution_context.contexts_dir.clone(),
-            auto_route_shell: agent.config.execution_context.auto_route_shell,
+            base_dir: agent.config.workspace.base_dir.clone(),
+            auto_route_shell: agent.config.workspace.auto_route_shell,
             is_teammate: agent.teammate_identity.is_some(),
         };
         let observer = AgentObserver {
@@ -137,7 +138,6 @@ impl Agent {
             .runtime
             .register_agent(&agent.id, &agent.name, execution_config, &observer)?;
         agent.refresh_tasks_from_disk()?;
-        agent.refresh_execution_contexts_from_disk()?;
         Ok(agent)
     }
 

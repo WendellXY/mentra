@@ -121,7 +121,7 @@ impl TaskStore {
             blocked_by: Vec::new(),
             blocks: Vec::new(),
             owner: input.owner,
-            execution_context_id: None,
+            working_directory: input.working_directory,
         });
 
         for blocker_id in input.blocked_by {
@@ -192,6 +192,9 @@ impl TaskStore {
             if let Some(owner) = input.owner {
                 task.owner = owner;
             }
+            if let Some(working_directory) = input.working_directory {
+                task.working_directory = working_directory;
+            }
         }
 
         for blocker_id in input.add_blocked_by {
@@ -236,72 +239,6 @@ impl TaskStore {
     pub(crate) fn get(&self, task_id: u64) -> Result<String, TaskError> {
         let tasks = self.load_all()?;
         serialize_pretty(find_task(&tasks, task_id)?)
-    }
-
-    pub(crate) fn get_task(&self, task_id: u64) -> Result<TaskItem, TaskError> {
-        let tasks = self.load_all()?;
-        Ok(find_task(&tasks, task_id)?.clone())
-    }
-
-    pub(crate) fn bind_execution_context(
-        &self,
-        task_id: u64,
-        context_id: &str,
-        access: TaskAccess<'_>,
-    ) -> Result<TaskItem, TaskError> {
-        let mut tasks = self.load_all()?;
-        let task = find_task(&tasks, task_id)?.clone();
-        validate_context_access(&task, access)?;
-        if let Some(existing) = task.execution_context_id.as_deref()
-            && existing != context_id
-        {
-            return Err(TaskError::Validation(format!(
-                "Task {task_id} is already bound to execution context '{existing}'"
-            )));
-        }
-        if !task.blocked_by.is_empty() {
-            return Err(TaskError::Validation(format!(
-                "Task {task_id} is blocked by {:?} and cannot bind an execution context",
-                task.blocked_by
-            )));
-        }
-
-        let task = find_task_mut(&mut tasks, task_id)?;
-        task.execution_context_id = Some(context_id.to_string());
-        if task.status == TaskStatus::Pending {
-            task.status = TaskStatus::InProgress;
-        }
-        let bound = task.clone();
-        self.write_all(&tasks)?;
-        Ok(bound)
-    }
-
-    pub(crate) fn clear_execution_context(
-        &self,
-        task_id: u64,
-        expected_context_id: Option<&str>,
-        complete_task: bool,
-        access: TaskAccess<'_>,
-    ) -> Result<TaskItem, TaskError> {
-        let mut tasks = self.load_all()?;
-        let task = find_task(&tasks, task_id)?.clone();
-        validate_context_access(&task, access)?;
-        if let Some(expected) = expected_context_id
-            && task.execution_context_id.as_deref() != Some(expected)
-        {
-            return Err(TaskError::Validation(format!(
-                "Task {task_id} is not bound to execution context '{expected}'"
-            )));
-        }
-
-        let task = find_task_mut(&mut tasks, task_id)?;
-        task.execution_context_id = None;
-        if complete_task {
-            task.status = TaskStatus::Completed;
-        }
-        let updated = task.clone();
-        self.write_all(&tasks)?;
-        Ok(updated)
     }
 
     pub(crate) fn list(&self) -> Result<String, TaskError> {
@@ -441,17 +378,6 @@ fn validate_update_access(
         }
         TaskAccess::Teammate(name) => Err(TaskError::Validation(format!(
             "Teammate '{name}' cannot update task {} owned by '{}'",
-            task.id, task.owner
-        ))),
-    }
-}
-
-fn validate_context_access(task: &TaskItem, access: TaskAccess<'_>) -> Result<(), TaskError> {
-    match access {
-        TaskAccess::Lead => Ok(()),
-        TaskAccess::Teammate(name) if task.owner == name => Ok(()),
-        TaskAccess::Teammate(name) => Err(TaskError::Validation(format!(
-            "Teammate '{name}' cannot manage execution context for task {} owned by '{}'",
             task.id, task.owner
         ))),
     }
