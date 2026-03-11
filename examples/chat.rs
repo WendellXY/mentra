@@ -12,24 +12,19 @@ use time::format_description::well_known::Rfc3339;
 async fn main() {
     dotenv().ok();
 
-    let mut runtime = Runtime::default();
-
-    if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
-        runtime.register_provider(ModelProviderKind::OpenAI, api_key);
-    }
-
-    if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
-        runtime.register_provider(ModelProviderKind::Anthropic, api_key);
-    }
-
-    runtime
-        .register_skills_dir(example_skills_dir())
-        .expect("Failed to register example skills");
-
-    assert!(
-        !runtime.providers().is_empty(),
-        "Set OPENAI_API_KEY or ANTHROPIC_API_KEY before running this example"
-    );
+    let runtime = Runtime::builder()
+        .with_optional_provider(
+            ModelProviderKind::OpenAI,
+            std::env::var("OPENAI_API_KEY").ok(),
+        )
+        .with_optional_provider(
+            ModelProviderKind::Anthropic,
+            std::env::var("ANTHROPIC_API_KEY").ok(),
+        )
+        .with_skills_dir(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skills"))
+        .expect("Failed to register example skills")
+        .build()
+        .expect("Failed to build runtime");
 
     let mut agent = runtime
         .spawn_with_config(
@@ -325,8 +320,4 @@ fn render_todos(todos: &[TodoItem]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-fn example_skills_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skills")
 }

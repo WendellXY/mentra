@@ -35,6 +35,18 @@ agent
 
 For already-hosted assets, use `ContentBlock::image_url(...)` instead.
 
+## Building A Runtime
+
+Use `Runtime::builder()` for the standard builtin tools, or `Runtime::empty_builder()` when you want to opt into tools explicitly:
+
+```rust
+use mentra::{provider::model::ModelProviderKind, runtime::Runtime};
+
+let runtime = Runtime::builder()
+    .with_provider(ModelProviderKind::OpenAI, std::env::var("OPENAI_API_KEY")?)
+    .build()?;
+```
+
 ## Run The Example
 
 Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, then run. The example will let you choose a provider, then show up to 10 models from that provider ordered newest to oldest:

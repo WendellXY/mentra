@@ -19,8 +19,10 @@ async fn snapshot_progresses_during_streaming() {
         vec![script],
     );
 
-    let mut runtime = Runtime::new_empty();
-    runtime.register_provider_instance(provider);
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
     let agent = runtime.spawn("agent", model.clone()).unwrap();
     let mut snapshot = agent.watch_snapshot();
 

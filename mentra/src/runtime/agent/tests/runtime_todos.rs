@@ -31,8 +31,10 @@ async fn todo_updates_snapshot_and_returns_rendered_checklist() {
         ],
     );
 
-    let mut runtime = Runtime::new_empty();
-    runtime.register_provider_instance(provider);
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
     let mut agent = runtime.spawn("agent", model).unwrap();
 
     agent
@@ -85,8 +87,11 @@ async fn todo_rejects_multiple_in_progress_items() {
         ],
     );
 
-    let mut runtime = Runtime::new_empty();
-    runtime.register_provider_instance(provider);
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+
     let mut agent = runtime.spawn("agent", model).unwrap();
 
     agent
@@ -125,8 +130,10 @@ async fn todo_rejects_duplicate_ids() {
         ],
     );
 
-    let mut runtime = Runtime::new_empty();
-    runtime.register_provider_instance(provider);
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
     let mut agent = runtime.spawn("agent", model).unwrap();
 
     agent
@@ -164,8 +171,10 @@ async fn todo_rejects_missing_required_fields() {
         ],
     );
 
-    let mut runtime = Runtime::new_empty();
-    runtime.register_provider_instance(provider);
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
     let mut agent = runtime.spawn("agent", model).unwrap();
 
     agent
@@ -207,8 +216,10 @@ async fn reminder_is_injected_after_three_rounds_without_todo() {
     );
     let provider_handle = provider.clone();
 
-    let mut runtime = Runtime::new_empty();
-    runtime.register_provider_instance(provider);
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
     let mut agent = runtime
         .spawn_with_config(
             "agent",
@@ -271,8 +282,10 @@ async fn reminder_composes_with_skills_catalog() {
     );
     let provider_handle = provider.clone();
 
-    let mut runtime = Runtime::new_empty();
-    runtime.register_provider_instance(provider);
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
     let skills_dir = temp_skills_dir("todo-skills");
     write_skill(
         &skills_dir,
@@ -347,8 +360,11 @@ async fn completed_todos_do_not_trigger_reminders() {
     );
     let provider_handle = provider.clone();
 
-    let mut runtime = Runtime::new_empty();
-    runtime.register_provider_instance(provider);
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+
     let mut agent = runtime.spawn("agent", model).unwrap();
 
     agent
@@ -394,8 +410,10 @@ async fn todo_state_rolls_back_when_run_fails() {
         ],
     );
 
-    let mut runtime = Runtime::new_empty();
-    runtime.register_provider_instance(provider);
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
     let mut agent = runtime.spawn("agent", model).unwrap();
 
     let result = agent

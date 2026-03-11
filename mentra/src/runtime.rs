@@ -1,4 +1,5 @@
 mod agent;
+mod builder;
 mod error;
 mod handle;
 mod skill;
@@ -12,8 +13,7 @@ use crate::{
         Provider, ProviderRegistry,
         model::{ModelInfo, ModelProviderKind},
     },
-    runtime::error::RuntimeError,
-    runtime::skill::SkillLoadError,
+    runtime::{builder::RuntimeBuilder, error::RuntimeError, skill::SkillLoadError},
     tool::ToolHandler,
 };
 
@@ -26,22 +26,18 @@ pub(crate) use task::TASK_TOOL_NAME;
 pub(crate) use todo::TODO_TOOL_NAME;
 pub use todo::{TodoItem, TodoStatus};
 
-#[derive(Default)]
 pub struct Runtime {
     handle: RuntimeHandle,
     provider_registry: ProviderRegistry,
 }
 
 impl Runtime {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn builder() -> RuntimeBuilder {
+        RuntimeBuilder::new()
     }
 
-    pub fn new_empty() -> Self {
-        Self {
-            handle: RuntimeHandle::new_empty(),
-            provider_registry: ProviderRegistry::default(),
-        }
+    pub fn empty_builder() -> RuntimeBuilder {
+        RuntimeBuilder::new_empty()
     }
 
     pub fn register_tool<T>(&self, tool: T)

@@ -64,9 +64,11 @@ async fn send_tool_use_turn_executes_tool_and_commits_follow_up_response() {
         ],
     );
 
-    let mut runtime = Runtime::new_empty();
-    runtime.register_provider_instance(provider);
-    runtime.register_tool(StaticTool::success("echo_tool", "tool output"));
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .with_tool(StaticTool::success("echo_tool", "tool output"))
+        .build()
+        .expect("build runtime");
     let mut agent = runtime.spawn("agent", model).unwrap();
     let mut events = agent.subscribe_events();
 
@@ -163,9 +165,11 @@ async fn tool_execution_error_is_wrapped_and_loop_continues() {
         ],
     );
 
-    let mut runtime = Runtime::new_empty();
-    runtime.register_provider_instance(provider);
-    runtime.register_tool(StaticTool::failure("failing_tool", "tool failed"));
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .with_tool(StaticTool::failure("failing_tool", "tool failed"))
+        .build()
+        .expect("build runtime");
     let mut agent = runtime.spawn("agent", model).unwrap();
 
     agent
@@ -207,8 +211,10 @@ async fn default_runtime_exposes_task_and_new_empty_does_not() {
         vec![text_stream(&model.id, "ok")],
     );
     let default_handle = default_provider.clone();
-    let mut default_runtime = Runtime::default();
-    default_runtime.register_provider_instance(default_provider);
+    let default_runtime = Runtime::builder()
+        .with_provider_instance(default_provider)
+        .build()
+        .expect("build runtime");
     let mut default_agent = default_runtime.spawn("agent", model.clone()).unwrap();
     default_agent
         .send(vec![ContentBlock::Text {
@@ -230,8 +236,10 @@ async fn default_runtime_exposes_task_and_new_empty_does_not() {
         vec![text_stream(&model.id, "ok")],
     );
     let empty_handle = empty_provider.clone();
-    let mut empty_runtime = Runtime::new_empty();
-    empty_runtime.register_provider_instance(empty_provider);
+    let empty_runtime = Runtime::empty_builder()
+        .with_provider_instance(empty_provider)
+        .build()
+        .expect("build runtime");
     let mut empty_agent = empty_runtime.spawn("agent", model).unwrap();
     empty_agent
         .send(vec![ContentBlock::Text {
@@ -259,17 +267,18 @@ async fn registered_skills_are_exposed_and_load_skill_returns_wrapped_content() 
     );
     let provider_handle = provider.clone();
 
-    let mut runtime = Runtime::new_empty();
-    runtime.register_provider_instance(provider);
     let skills_dir = temp_skills_dir("load-skill");
     write_skill(
         &skills_dir,
         "git",
         "---\nname: git\ndescription: Git workflow helpers\n---\nUse feature branches.\nRun tests first.\n",
     );
-    runtime
-        .register_skills_dir(&skills_dir)
-        .expect("register skills");
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .with_skills_dir(&skills_dir)
+        .expect("register skills")
+        .build()
+        .expect("build runtime");
     let mut agent = runtime
         .spawn_with_config(
             "agent",
@@ -331,17 +340,18 @@ async fn task_subagent_keeps_load_skill_while_hiding_task() {
     );
     let provider_handle = provider.clone();
 
-    let mut runtime = Runtime::default();
-    runtime.register_provider_instance(provider);
     let skills_dir = temp_skills_dir("subagent-skills");
     write_skill(
         &skills_dir,
         "review",
         "---\nname: review\ndescription: Code review checklist\n---\nCheck tests.\n",
     );
-    runtime
-        .register_skills_dir(&skills_dir)
-        .expect("register skills");
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .with_skills_dir(&skills_dir)
+        .expect("register skills")
+        .build()
+        .expect("build runtime");
     let mut agent = runtime.spawn("agent", model).unwrap();
 
     agent
@@ -382,8 +392,10 @@ async fn task_tool_runs_child_with_isolated_history_and_filtered_tools() {
     );
     let provider_handle = provider.clone();
 
-    let mut runtime = Runtime::default();
-    runtime.register_provider_instance(provider);
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
     let mut agent = runtime.spawn("agent", model.clone()).unwrap();
     let mut events = agent.subscribe_events();
 
@@ -470,8 +482,10 @@ async fn task_subagent_does_not_force_hidden_task_tool_choice() {
     );
     let provider_handle = provider.clone();
 
-    let mut runtime = Runtime::default();
-    runtime.register_provider_instance(provider);
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
     let mut agent = runtime
         .spawn_with_config(
             "agent",
@@ -528,8 +542,10 @@ async fn task_tool_wraps_child_failure_and_parent_continues() {
         ],
     );
 
-    let mut runtime = Runtime::default();
-    runtime.register_provider_instance(provider);
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
     let mut agent = runtime.spawn("agent", model).unwrap();
 
     agent
@@ -585,8 +601,10 @@ async fn child_rejects_nested_task_requests_without_recursing() {
     );
     let provider_handle = provider.clone();
 
-    let mut runtime = Runtime::default();
-    runtime.register_provider_instance(provider);
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
     let mut agent = runtime.spawn("agent", model).unwrap();
 
     agent
@@ -648,9 +666,11 @@ async fn task_tool_returns_error_when_child_hits_round_limit() {
         ScriptedProvider::new(ModelProviderKind::Anthropic, vec![model.clone()], scripts);
     let provider_handle = provider.clone();
 
-    let mut runtime = Runtime::default();
-    runtime.register_provider_instance(provider);
-    runtime.register_tool(StaticTool::success("echo_tool", "pong"));
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .with_tool(StaticTool::success("echo_tool", "pong"))
+        .build()
+        .expect("build runtime");
     let mut agent = runtime.spawn("agent", model).unwrap();
 
     agent

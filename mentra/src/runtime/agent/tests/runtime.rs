@@ -33,8 +33,10 @@ async fn send_streamed_text_turn_emits_events_and_commits_history() {
         ])],
     );
 
-    let mut runtime = Runtime::new_empty();
-    runtime.register_provider_instance(provider);
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
     let mut agent = runtime
         .spawn_with_config(
             "agent",
@@ -118,8 +120,10 @@ async fn send_failure_rolls_history_back_and_emits_run_failed() {
         ],
     );
 
-    let mut runtime = Runtime::new_empty();
-    runtime.register_provider_instance(provider);
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
     let mut agent = runtime.spawn("agent", model).unwrap();
     agent
         .send(vec![ContentBlock::Text {
