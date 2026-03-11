@@ -17,8 +17,9 @@ The repository is organized as a small workspace:
 - three-layer context compaction with silent tool-result shrinking, auto-summary compaction, and a builtin `compact` tool
 - agent events and snapshots for CLI or UI watchers
 - Anthropic provider support
+- Gemini Developer API provider support
 - OpenAI provider support via the Responses API
-- image inputs for OpenAI and Anthropic models
+- image inputs for OpenAI and Anthropic models, plus inline image bytes for Gemini
 
 ## Sending Images
 
@@ -36,6 +37,7 @@ agent
 ```
 
 For already-hosted assets, use `ContentBlock::image_url(...)` instead.
+Gemini currently supports inline `image_bytes(...)` inputs only and rejects `image_url(...)`.
 
 ## Building A Runtime
 
@@ -46,6 +48,7 @@ use mentra::{ModelProviderKind, runtime::Runtime};
 
 let runtime = Runtime::builder()
     .with_provider(ModelProviderKind::OpenAI, std::env::var("OPENAI_API_KEY")?)
+    .with_optional_provider(ModelProviderKind::Gemini, std::env::var("GEMINI_API_KEY").ok())
     .build()?;
 ```
 
@@ -73,7 +76,7 @@ let config = AgentConfig {
 
 ## Run The Example
 
-Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, then run. The example will let you choose a provider, then show up to 10 models from that provider ordered newest to oldest:
+Set `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY`, then run. The example will let you choose a provider, then show up to 10 models from that provider ordered newest to oldest:
 
 ```bash
 cargo run -p mentra-examples --example chat

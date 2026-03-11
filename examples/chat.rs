@@ -23,6 +23,10 @@ async fn main() {
             ModelProviderKind::Anthropic,
             std::env::var("ANTHROPIC_API_KEY").ok(),
         )
+        .with_optional_provider(
+            ModelProviderKind::Gemini,
+            std::env::var("GEMINI_API_KEY").ok(),
+        )
         .with_skills_dir(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skills"))
         .expect("Failed to register example skills")
         .build()
