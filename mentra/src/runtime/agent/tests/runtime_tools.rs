@@ -1,3 +1,10 @@
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 use crate::{
     provider::model::{
         ContentBlock, ContentBlockDelta, ContentBlockStart, Message, ModelProviderKind,
@@ -215,6 +222,7 @@ async fn default_runtime_exposes_task_and_new_empty_does_not() {
     assert!(default_tools.contains("bash"));
     assert!(default_tools.contains("read_file"));
     assert!(default_tools.contains("task"));
+    assert!(!default_tools.contains("load_skill"));
 
     let empty_provider = ScriptedProvider::new(
         ModelProviderKind::Anthropic,
@@ -235,6 +243,124 @@ async fn default_runtime_exposes_task_and_new_empty_does_not() {
     let empty_requests = empty_handle.recorded_requests().await;
     let empty_tools = tool_names(&empty_requests[0]);
     assert!(!empty_tools.contains("task"));
+    assert!(!empty_tools.contains("load_skill"));
+}
+
+#[tokio::test]
+async fn registered_skills_are_exposed_and_load_skill_returns_wrapped_content() {
+    let model = model_info("model", ModelProviderKind::Anthropic);
+    let provider = ScriptedProvider::new(
+        ModelProviderKind::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(&model.id, "tool-skill", "load_skill", r#"{"name":"git"}"#),
+            text_stream(&model.id, "done"),
+        ],
+    );
+    let provider_handle = provider.clone();
+
+    let mut runtime = Runtime::new_empty();
+    runtime.register_provider_instance(provider);
+    let skills_dir = temp_skills_dir("load-skill");
+    write_skill(
+        &skills_dir,
+        "git",
+        "---\nname: git\ndescription: Git workflow helpers\n---\nUse feature branches.\nRun tests first.\n",
+    );
+    runtime
+        .register_skills_dir(&skills_dir)
+        .expect("register skills");
+    let mut agent = runtime
+        .spawn_with_config(
+            "agent",
+            model,
+            AgentConfig {
+                system: Some("Base system prompt".to_string()),
+                ..AgentConfig::default()
+            },
+        )
+        .unwrap();
+
+    agent
+        .send(vec![ContentBlock::Text {
+            text: "hello".to_string(),
+        }])
+        .await
+        .unwrap();
+
+    assert_eq!(
+        agent.history()[2],
+        Message {
+            role: Role::User,
+            content: vec![ContentBlock::ToolResult {
+                tool_use_id: "tool-skill".to_string(),
+                content: "<skill name=\"git\">\nUse feature branches.\nRun tests first.\n</skill>"
+                    .to_string(),
+                is_error: false,
+            }],
+        }
+    );
+
+    let requests = provider_handle.recorded_requests().await;
+    let tools = tool_names(&requests[0]);
+    assert!(tools.contains("load_skill"));
+    assert_eq!(
+        requests[0].system.as_deref(),
+        Some(
+            "Base system prompt\n\nSkills available:\n  - git: Git workflow helpers\nUse the load_skill tool only when one of these skills is relevant to the task."
+        )
+    );
+}
+
+#[tokio::test]
+async fn task_subagent_keeps_load_skill_while_hiding_task() {
+    let model = model_info("model", ModelProviderKind::Anthropic);
+    let provider = ScriptedProvider::new(
+        ModelProviderKind::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(
+                &model.id,
+                "tool-parent",
+                "task",
+                r#"{"prompt":"inspect repo"}"#,
+            ),
+            text_stream(&model.id, "child summary"),
+            text_stream(&model.id, "parent done"),
+        ],
+    );
+    let provider_handle = provider.clone();
+
+    let mut runtime = Runtime::default();
+    runtime.register_provider_instance(provider);
+    let skills_dir = temp_skills_dir("subagent-skills");
+    write_skill(
+        &skills_dir,
+        "review",
+        "---\nname: review\ndescription: Code review checklist\n---\nCheck tests.\n",
+    );
+    runtime
+        .register_skills_dir(&skills_dir)
+        .expect("register skills");
+    let mut agent = runtime.spawn("agent", model).unwrap();
+
+    agent
+        .send(vec![ContentBlock::Text {
+            text: "delegate".to_string(),
+        }])
+        .await
+        .unwrap();
+
+    let requests = provider_handle.recorded_requests().await;
+    let child_tools = tool_names(&requests[1]);
+    assert!(child_tools.contains("load_skill"));
+    assert!(!child_tools.contains("task"));
+    assert_eq!(
+        requests[1].system.as_deref(),
+        Some(
+            "You are a subagent working for another agent. Solve the delegated task, use tools when helpful, and finish with a concise final answer for the parent agent.\n\nSkills available:\n  - review: Code review checklist\nUse the load_skill tool only when one of these skills is relevant to the task."
+        )
+    );
 }
 
 #[tokio::test]
@@ -612,4 +738,25 @@ fn tool_use_stream(model: &str, id: &str, name: &str, input_json: &str) -> Strea
 
 fn tool_names(request: &Request<'_>) -> std::collections::HashSet<String> {
     request.tools.iter().map(|tool| tool.name.clone()).collect()
+}
+
+static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(1);
+
+fn temp_skills_dir(label: &str) -> PathBuf {
+    let unique = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "mentra-runtime-skills-{label}-{timestamp}-{unique}"
+    ));
+    fs::create_dir_all(&path).expect("create temp dir");
+    path
+}
+
+fn write_skill(root: &Path, name: &str, content: &str) {
+    let skill_dir = root.join(name);
+    fs::create_dir_all(&skill_dir).expect("create skill dir");
+    fs::write(skill_dir.join("SKILL.md"), content).expect("write skill");
 }
