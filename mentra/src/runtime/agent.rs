@@ -32,7 +32,8 @@ use crate::{
 };
 
 pub use config::{
-    AgentConfig, ContextCompactionConfig, TaskConfig, TeamAutonomyConfig, TeamConfig,
+    AgentConfig, ContextCompactionConfig, ExecutionContextConfig, TaskConfig, TeamAutonomyConfig,
+    TeamConfig,
 };
 pub use events::{
     AgentEvent, AgentSnapshot, AgentStatus, ContextCompactionDetails, ContextCompactionTrigger,
@@ -112,11 +113,16 @@ impl Agent {
             &agent.name,
             agent.config.team.team_dir.as_path(),
             agent.config.task.tasks_dir.as_path(),
+            agent.config.execution_context.contexts_dir.as_path(),
+            agent.config.execution_context.base_dir.as_path(),
+            agent.config.execution_context.auto_route_shell,
+            agent.teammate_identity.is_some(),
             agent.event_tx.clone(),
             agent.snapshot_tx.clone(),
             Arc::clone(&agent.snapshot),
         )?;
         agent.refresh_tasks_from_disk()?;
+        agent.refresh_execution_contexts_from_disk()?;
         Ok(agent)
     }
 

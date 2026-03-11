@@ -23,6 +23,10 @@ impl ToolHandler for BashTool {
                     "command": {
                         "type": "string",
                         "description": "Shell command to execute"
+                    },
+                    "contextId": {
+                        "type": "string",
+                        "description": "Optional execution context to run inside"
                     }
                 },
                 "required": ["command"]
@@ -30,15 +34,19 @@ impl ToolHandler for BashTool {
         }
     }
 
-    async fn invoke(&self, _ctx: ToolContext, input: Value) -> ToolResult {
+    async fn invoke(&self, ctx: ToolContext, input: Value) -> ToolResult {
         let command = input
             .get("command")
             .and_then(|value| value.as_str())
             .ok_or_else(|| "Command is required".to_string())?;
 
+        let context_id = input.get("contextId").and_then(|value| value.as_str());
+        let working_directory = ctx.resolve_working_directory(context_id)?;
+
         let output = Command::new("bash")
             .arg("-c")
             .arg(command)
+            .current_dir(&working_directory)
             .output()
             .await
             .map_err(|error| format!("Failed to execute command: {error}"))?;
@@ -71,6 +79,10 @@ impl ToolHandler for BackgroundRunTool {
                     "command": {
                         "type": "string",
                         "description": "Shell command to execute in the background"
+                    },
+                    "contextId": {
+                        "type": "string",
+                        "description": "Optional execution context to run inside"
                     }
                 },
                 "required": ["command"]
@@ -83,11 +95,15 @@ impl ToolHandler for BackgroundRunTool {
             .get("command")
             .and_then(|value| value.as_str())
             .ok_or_else(|| "Command is required".to_string())?;
+        let context_id = input.get("contextId").and_then(|value| value.as_str());
+        let working_directory = ctx.resolve_working_directory(context_id)?;
 
-        let task = ctx.start_background_task(command.to_string());
+        let task = ctx.start_background_task(command.to_string(), working_directory);
         Ok(format!(
-            "Started background task {} for `{}`",
-            task.id, task.command
+            "Started background task {} in {} for `{}`",
+            task.id,
+            task.cwd.display(),
+            task.command
         ))
     }
 }

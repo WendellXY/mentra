@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
+    path::PathBuf,
     process::Stdio,
     sync::{
         Arc, Mutex,
@@ -38,6 +39,7 @@ impl BackgroundTaskStatus {
 pub struct BackgroundTaskSummary {
     pub id: String,
     pub command: String,
+    pub cwd: PathBuf,
     pub status: BackgroundTaskStatus,
     pub output_preview: Option<String>,
 }
@@ -46,6 +48,7 @@ pub struct BackgroundTaskSummary {
 pub(crate) struct BackgroundNotification {
     pub task_id: String,
     pub command: String,
+    pub cwd: PathBuf,
     pub status: BackgroundTaskStatus,
     pub output_preview: String,
 }
@@ -108,7 +111,12 @@ impl BackgroundTaskManager {
         snapshot_tx.send_replace(snapshot);
     }
 
-    pub(crate) fn start_task(&self, agent_id: &str, command: String) -> BackgroundTaskSummary {
+    pub(crate) fn start_task(
+        &self,
+        agent_id: &str,
+        command: String,
+        cwd: PathBuf,
+    ) -> BackgroundTaskSummary {
         let task_id = format!(
             "bg-{}",
             self.inner.next_task_id.fetch_add(1, Ordering::Relaxed) + 1
@@ -116,6 +124,7 @@ impl BackgroundTaskManager {
         let summary = BackgroundTaskSummary {
             id: task_id.clone(),
             command: command.clone(),
+            cwd: cwd.clone(),
             status: BackgroundTaskStatus::Running,
             output_preview: None,
         };
@@ -141,7 +150,7 @@ impl BackgroundTaskManager {
         let manager = self.clone();
         let agent_id = agent_id.to_string();
         tokio::spawn(async move {
-            let completed = execute_bash_task(task_id, command).await;
+            let completed = execute_bash_task(task_id, command, cwd).await;
             manager.finish_task(&agent_id, completed);
         });
 
@@ -220,12 +229,14 @@ impl BackgroundTaskManager {
         let summary = BackgroundTaskSummary {
             id: completed.id.clone(),
             command: completed.command.clone(),
+            cwd: completed.cwd.clone(),
             status: completed.status.clone(),
             output_preview: Some(completed.output_preview.clone()),
         };
         let notification = BackgroundNotification {
             task_id: completed.id,
             command: completed.command,
+            cwd: completed.cwd,
             status: completed.status,
             output_preview: completed.output_preview,
         };
@@ -282,14 +293,16 @@ impl BackgroundTaskManager {
 struct CompletedBackgroundTask {
     id: String,
     command: String,
+    cwd: PathBuf,
     status: BackgroundTaskStatus,
     output_preview: String,
 }
 
-async fn execute_bash_task(id: String, command: String) -> CompletedBackgroundTask {
+async fn execute_bash_task(id: String, command: String, cwd: PathBuf) -> CompletedBackgroundTask {
     let mut process = match Command::new("bash")
         .arg("-c")
         .arg(&command)
+        .current_dir(&cwd)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -299,6 +312,7 @@ async fn execute_bash_task(id: String, command: String) -> CompletedBackgroundTa
             return CompletedBackgroundTask {
                 id,
                 command,
+                cwd,
                 status: BackgroundTaskStatus::Failed,
                 output_preview: truncate_preview(&format!("Failed to spawn command: {error}")),
             };
@@ -341,6 +355,7 @@ async fn execute_bash_task(id: String, command: String) -> CompletedBackgroundTa
             return CompletedBackgroundTask {
                 id,
                 command,
+                cwd,
                 status: BackgroundTaskStatus::Failed,
                 output_preview: truncate_preview(&format!("Failed to wait for command: {error}")),
             };
@@ -350,6 +365,7 @@ async fn execute_bash_task(id: String, command: String) -> CompletedBackgroundTa
     CompletedBackgroundTask {
         id,
         command,
+        cwd,
         status,
         output_preview: preview,
     }
@@ -375,10 +391,22 @@ fn truncate_preview(text: &str) -> String {
 }
 
 fn render_task_summary(task: &BackgroundTaskSummary) -> String {
-    format!("{}: [{}] {}", task.id, task.status.as_str(), task.command)
+    format!(
+        "{}: [{}] cwd={} {}",
+        task.id,
+        task.status.as_str(),
+        task.cwd.display(),
+        task.command
+    )
 }
 
 fn render_task_detail(task: &BackgroundTaskSummary) -> String {
     let output = task.output_preview.as_deref().unwrap_or("(running)");
-    format!("[{}] {}\n{}", task.status.as_str(), task.command, output)
+    format!(
+        "[{}] cwd={}\n{}\n{}",
+        task.status.as_str(),
+        task.cwd.display(),
+        task.command,
+        output
+    )
 }

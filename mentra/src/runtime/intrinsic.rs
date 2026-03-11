@@ -2,7 +2,10 @@ use serde_json::json;
 
 use crate::{
     ContentBlock,
-    runtime::{Agent, AgentEvent, ContextCompactionTrigger, SpawnedAgentStatus, task, team},
+    runtime::{
+        Agent, AgentEvent, ContextCompactionTrigger, SpawnedAgentStatus, execution_context, task,
+        team,
+    },
     tool::{ToolCall, ToolSpec},
 };
 
@@ -54,6 +57,7 @@ pub(crate) fn specs() -> Vec<ToolSpec> {
         },
     ]
     .into_iter()
+    .chain(execution_context::intrinsic_specs())
     .chain(task::intrinsic_specs())
     .chain(team::intrinsic_specs())
     .collect()
@@ -84,6 +88,13 @@ pub(crate) async fn execute(agent: &mut Agent, call: ToolCall) -> Option<Intrins
                     touched_task: false,
                     end_turn: false,
                 })
+        }
+        name if execution_context::is_execution_context_tool(name) => {
+            execution_context::execute_intrinsic(agent, call).map(|result| IntrinsicOutcome {
+                result: result.result,
+                touched_task: result.touched_task,
+                end_turn: false,
+            })
         }
         name if task::is_task_tool(name) => {
             task::execute_intrinsic(agent, call).map(|outcome| IntrinsicOutcome {

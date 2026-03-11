@@ -2,6 +2,7 @@ use serde_json::json;
 use std::{
     fs,
     path::{Path, PathBuf},
+    process::Command,
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -13,8 +14,9 @@ use crate::{
         ContentBlockDelta, ContentBlockStart, ProviderError, ProviderEvent, Request, ToolChoice,
     },
     runtime::{
-        Agent, AgentConfig, AgentEvent, BackgroundTaskStatus, Runtime, SpawnedAgentStatus,
-        TaskConfig, TeamAutonomyConfig, TeamConfig, TeamMemberStatus, TeamProtocolStatus,
+        Agent, AgentConfig, AgentEvent, BackgroundTaskStatus, ExecutionContextConfig, Runtime,
+        SpawnedAgentStatus, TaskConfig, TeamAutonomyConfig, TeamConfig, TeamMemberStatus,
+        TeamProtocolStatus,
         task::{self, TaskAccess},
     },
 };
@@ -238,6 +240,12 @@ async fn background_run_tool_starts_task_and_continues_the_turn() {
         }])
         .await
         .unwrap();
+    let cwd = agent
+        .config()
+        .execution_context
+        .base_dir
+        .display()
+        .to_string();
 
     assert_eq!(
         agent.history()[2],
@@ -245,7 +253,9 @@ async fn background_run_tool_starts_task_and_continues_the_turn() {
             role: Role::User,
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: "tool-bg".to_string(),
-                content: "Started background task bg-1 for `sleep 0.2; printf bg-done`".to_string(),
+                content: format!(
+                    "Started background task bg-1 in {cwd} for `sleep 0.2; printf bg-done`"
+                ),
                 is_error: false,
             }],
         }
@@ -365,6 +375,12 @@ async fn check_background_reports_single_task_and_lists_all_tasks() {
         }])
         .await
         .unwrap();
+    let cwd = agent
+        .config()
+        .execution_context
+        .base_dir
+        .display()
+        .to_string();
 
     assert_eq!(
         agent.history()[7],
@@ -373,17 +389,337 @@ async fn check_background_reports_single_task_and_lists_all_tasks() {
             content: vec![
                 ContentBlock::ToolResult {
                     tool_use_id: "check-one".to_string(),
-                    content: "[finished] sleep 0.05; printf bg-done\nbg-done".to_string(),
+                    content: format!("[finished] cwd={cwd}\nsleep 0.05; printf bg-done\nbg-done"),
                     is_error: false,
                 },
                 ContentBlock::ToolResult {
                     tool_use_id: "check-all".to_string(),
-                    content: "bg-1: [finished] sleep 0.05; printf bg-done".to_string(),
+                    content: format!("bg-1: [finished] cwd={cwd} sleep 0.05; printf bg-done"),
                     is_error: false,
                 },
             ],
         }
     );
+}
+
+#[tokio::test]
+async fn context_create_binds_task_and_routes_shell_for_teammate() {
+    let model = model_info("model", ModelProviderKind::Anthropic);
+    let provider = ScriptedProvider::new(
+        ModelProviderKind::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(
+                &model.id,
+                "ctx",
+                "context_create",
+                r#"{"name":"task-1","taskId":1}"#,
+            ),
+            tool_use_stream(&model.id, "pwd", "bash", r#"{"command":"pwd"}"#),
+            text_stream(&model.id, "done"),
+        ],
+    );
+    let provider_handle = provider.clone();
+
+    let repo_dir = init_git_repo("teammate-context");
+    let team_dir = temp_team_dir("teammate-context-team");
+    let tasks_dir = repo_dir.join(".tasks");
+    create_task(&tasks_dir, "Implement feature", "alice", vec![]);
+
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut lead = runtime
+        .spawn_with_config(
+            "lead",
+            model,
+            AgentConfig {
+                team: team_config(team_dir),
+                task: TaskConfig {
+                    tasks_dir: tasks_dir.clone(),
+                    reminder_threshold: 3,
+                },
+                execution_context: execution_context_config(&repo_dir),
+                ..AgentConfig::default()
+            },
+        )
+        .expect("spawn lead");
+
+    lead.spawn_teammate(
+        "alice",
+        "coder",
+        Some("Set up the task and verify cwd.".to_string()),
+    )
+    .await
+    .expect("spawn teammate");
+    wait_for_recorded_requests(&provider_handle, 3).await;
+    wait_for_teammate_status(&lead, TeamMemberStatus::Idle).await;
+
+    let context_dir = repo_dir.join(".contexts").join("task-1");
+    let requests = provider_handle.recorded_requests().await;
+    assert!(request_contains_tool_result(
+        &requests[2],
+        context_dir.to_string_lossy().as_ref()
+    ));
+    assert_eq!(
+        load_task(&tasks_dir, 1)["executionContextId"].as_str(),
+        Some("task-1")
+    );
+    assert_eq!(
+        load_task(&tasks_dir, 1)["status"].as_str(),
+        Some("in_progress")
+    );
+    assert!(
+        lead.watch_snapshot()
+            .borrow()
+            .execution_contexts
+            .iter()
+            .any(|context| context.name == "task-1")
+    );
+}
+
+#[tokio::test]
+async fn teammate_shell_requires_context_when_owning_task() {
+    let model = model_info("model", ModelProviderKind::Anthropic);
+    let provider = ScriptedProvider::new(
+        ModelProviderKind::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(&model.id, "pwd", "bash", r#"{"command":"pwd"}"#),
+            text_stream(&model.id, "handled"),
+        ],
+    );
+    let provider_handle = provider.clone();
+
+    let repo_dir = init_git_repo("missing-context");
+    let team_dir = temp_team_dir("missing-context-team");
+    let tasks_dir = repo_dir.join(".tasks");
+    create_task(&tasks_dir, "Implement feature", "alice", vec![]);
+
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut lead = runtime
+        .spawn_with_config(
+            "lead",
+            model,
+            AgentConfig {
+                team: team_config(team_dir),
+                task: TaskConfig {
+                    tasks_dir,
+                    reminder_threshold: 3,
+                },
+                execution_context: execution_context_config(&repo_dir),
+                ..AgentConfig::default()
+            },
+        )
+        .expect("spawn lead");
+
+    lead.spawn_teammate("alice", "coder", Some("Try to run pwd.".to_string()))
+        .await
+        .expect("spawn teammate");
+    wait_for_recorded_requests(&provider_handle, 2).await;
+    wait_for_teammate_status(&lead, TeamMemberStatus::Idle).await;
+
+    let requests = provider_handle.recorded_requests().await;
+    assert!(request_contains_tool_result(
+        &requests[1],
+        "Call context_create first"
+    ));
+}
+
+#[tokio::test]
+async fn bash_context_id_overrides_default_routing() {
+    let model = model_info("model", ModelProviderKind::Anthropic);
+    let provider = ScriptedProvider::new(
+        ModelProviderKind::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(&model.id, "ctx", "context_create", r#"{"name":"ctx-1"}"#),
+            tool_use_stream(
+                &model.id,
+                "pwd",
+                "bash",
+                r#"{"command":"pwd","contextId":"ctx-1"}"#,
+            ),
+            text_stream(&model.id, "done"),
+        ],
+    );
+    let provider_handle = provider.clone();
+
+    let repo_dir = init_git_repo("explicit-context");
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime
+        .spawn_with_config(
+            "lead",
+            model,
+            AgentConfig {
+                execution_context: execution_context_config(&repo_dir),
+                task: TaskConfig {
+                    tasks_dir: repo_dir.join(".tasks"),
+                    reminder_threshold: 3,
+                },
+                ..AgentConfig::default()
+            },
+        )
+        .expect("spawn agent");
+
+    agent
+        .send(vec![ContentBlock::Text {
+            text: "Create a context and inspect it.".to_string(),
+        }])
+        .await
+        .expect("send");
+
+    let requests = provider_handle.recorded_requests().await;
+    assert!(request_contains_tool_result(
+        &requests[2],
+        repo_dir.join(".contexts/ctx-1").to_string_lossy().as_ref()
+    ));
+}
+
+#[tokio::test]
+async fn context_remove_complete_task_marks_task_completed() {
+    let model = model_info("model", ModelProviderKind::Anthropic);
+    let provider = ScriptedProvider::new(
+        ModelProviderKind::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(
+                &model.id,
+                "ctx",
+                "context_create",
+                r#"{"name":"ctx-1","taskId":1}"#,
+            ),
+            tool_use_stream(
+                &model.id,
+                "rm",
+                "context_remove",
+                r#"{"name":"ctx-1","completeTask":true}"#,
+            ),
+            text_stream(&model.id, "done"),
+        ],
+    );
+
+    let repo_dir = init_git_repo("remove-context");
+    let tasks_dir = repo_dir.join(".tasks");
+    create_task(&tasks_dir, "Implement feature", "", vec![]);
+
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime
+        .spawn_with_config(
+            "lead",
+            model,
+            AgentConfig {
+                execution_context: execution_context_config(&repo_dir),
+                task: TaskConfig {
+                    tasks_dir: tasks_dir.clone(),
+                    reminder_threshold: 3,
+                },
+                ..AgentConfig::default()
+            },
+        )
+        .expect("spawn agent");
+
+    agent
+        .send(vec![ContentBlock::Text {
+            text: "Create then remove.".to_string(),
+        }])
+        .await
+        .expect("send");
+
+    assert_eq!(
+        load_task(&tasks_dir, 1)["status"].as_str(),
+        Some("completed")
+    );
+    assert_eq!(
+        load_task(&tasks_dir, 1)["executionContextId"].as_str(),
+        None
+    );
+    let contexts = agent.watch_snapshot().borrow().execution_contexts.clone();
+    assert!(contexts.iter().any(|context| {
+        context.name == "ctx-1"
+            && matches!(
+                context.status,
+                crate::runtime::ExecutionContextStatus::Removed
+            )
+    }));
+}
+
+#[tokio::test]
+async fn context_creation_rolls_back_on_failed_turn() {
+    let model = model_info("model", ModelProviderKind::Anthropic);
+    let provider = ScriptedProvider::new(
+        ModelProviderKind::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(
+                "model",
+                "ctx",
+                "context_create",
+                r#"{"name":"ctx-1","taskId":1}"#,
+            ),
+            erroring_stream(
+                vec![ProviderEvent::MessageStarted {
+                    id: "msg-fail".to_string(),
+                    model: model.id.clone(),
+                    role: Role::Assistant,
+                }],
+                ProviderError::MalformedStream("boom".to_string()),
+            ),
+        ],
+    );
+
+    let repo_dir = init_git_repo("rollback-context");
+    let tasks_dir = repo_dir.join(".tasks");
+    create_task(&tasks_dir, "Implement feature", "", vec![]);
+
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime
+        .spawn_with_config(
+            "lead",
+            model,
+            AgentConfig {
+                execution_context: execution_context_config(&repo_dir),
+                task: TaskConfig {
+                    tasks_dir: tasks_dir.clone(),
+                    reminder_threshold: 3,
+                },
+                ..AgentConfig::default()
+            },
+        )
+        .expect("spawn agent");
+
+    let result = agent
+        .send(vec![ContentBlock::Text {
+            text: "Create a context.".to_string(),
+        }])
+        .await;
+    assert!(result.is_err());
+    assert!(
+        agent
+            .watch_snapshot()
+            .borrow()
+            .execution_contexts
+            .is_empty()
+    );
+    assert_eq!(load_task(&tasks_dir, 1)["status"].as_str(), Some("pending"));
+    assert_eq!(
+        load_task(&tasks_dir, 1)["executionContextId"].as_str(),
+        None
+    );
+    assert!(!repo_dir.join(".contexts/ctx-1").exists());
 }
 
 #[tokio::test]
@@ -2709,6 +3045,19 @@ fn request_contains_text(request: &Request<'_>, pattern: &str) -> bool {
         .any(|block| matches!(block, ContentBlock::Text { text } if text.contains(pattern)))
 }
 
+fn request_contains_tool_result(request: &Request<'_>, pattern: &str) -> bool {
+    request
+        .messages
+        .iter()
+        .flat_map(|message| message.content.iter())
+        .any(|block| {
+            matches!(
+                block,
+                ContentBlock::ToolResult { content, .. } if content.contains(pattern)
+            )
+        })
+}
+
 fn text_stream(model: &str, text: &str) -> StreamScript {
     ok_stream(vec![
         ProviderEvent::MessageStarted {
@@ -2839,6 +3188,7 @@ fn load_team_config(team_dir: &Path) -> serde_json::Value {
 }
 
 fn create_task(tasks_dir: &Path, subject: &str, owner: &str, blocked_by: Vec<u64>) {
+    fs::create_dir_all(tasks_dir).expect("create tasks dir");
     task::execute(
         task::TASK_CREATE_TOOL_NAME,
         json!({
@@ -2850,6 +3200,42 @@ fn create_task(tasks_dir: &Path, subject: &str, owner: &str, blocked_by: Vec<u64
         TaskAccess::Lead,
     )
     .expect("create task");
+}
+
+fn execution_context_config(base_dir: &Path) -> ExecutionContextConfig {
+    ExecutionContextConfig {
+        base_dir: base_dir.to_path_buf(),
+        contexts_dir: base_dir.join(".contexts"),
+        ..ExecutionContextConfig::default()
+    }
+}
+
+fn init_git_repo(label: &str) -> PathBuf {
+    let repo_dir = temp_team_dir(&format!("git-{label}"));
+    run_git(repo_dir.as_path(), &["init"]);
+    run_git(repo_dir.as_path(), &["config", "user.name", "Mentra Test"]);
+    run_git(
+        repo_dir.as_path(),
+        &["config", "user.email", "mentra@example.com"],
+    );
+    fs::write(repo_dir.join("README.md"), "hello\n").expect("write readme");
+    run_git(repo_dir.as_path(), &["add", "README.md"]);
+    run_git(repo_dir.as_path(), &["commit", "-m", "init"]);
+    repo_dir
+}
+
+fn run_git(repo_dir: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(repo_dir)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 fn load_task(tasks_dir: &Path, task_id: u64) -> serde_json::Value {

@@ -2,6 +2,7 @@ mod agent;
 mod background;
 mod builder;
 mod error;
+mod execution_context;
 mod handle;
 mod intrinsic;
 mod skill;
@@ -18,11 +19,15 @@ use crate::{
 
 pub use agent::{
     Agent, AgentConfig, AgentEvent, AgentSnapshot, AgentStatus, ContextCompactionConfig,
-    ContextCompactionDetails, ContextCompactionTrigger, PendingAssistantTurn,
-    PendingToolUseSummary, SpawnedAgentStatus, SpawnedAgentSummary, TaskConfig, TeamAutonomyConfig,
-    TeamConfig,
+    ContextCompactionDetails, ContextCompactionTrigger, ExecutionContextConfig,
+    PendingAssistantTurn, PendingToolUseSummary, SpawnedAgentStatus, SpawnedAgentSummary,
+    TaskConfig, TeamAutonomyConfig, TeamConfig,
 };
 pub use background::{BackgroundTaskStatus, BackgroundTaskSummary};
+pub use execution_context::{
+    ExecutionContextBackendKind, ExecutionContextDiskState, ExecutionContextItem,
+    ExecutionContextStatus,
+};
 pub(crate) use handle::RuntimeHandle;
 pub(crate) use intrinsic::TASK_TOOL_NAME;
 pub(crate) use task::{

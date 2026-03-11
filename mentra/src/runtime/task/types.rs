@@ -24,4 +24,6 @@ pub struct TaskItem {
     pub blocks: Vec<u64>,
     #[serde(default)]
     pub owner: String,
+    #[serde(default)]
+    pub execution_context_id: Option<String>,
 }

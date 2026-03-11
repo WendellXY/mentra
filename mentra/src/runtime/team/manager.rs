@@ -12,6 +12,7 @@ use tokio::sync::{broadcast, mpsc, watch};
 use crate::runtime::{
     AgentEvent, AgentSnapshot,
     error::RuntimeError,
+    execution_context::ExecutionContextStore,
     task::{TaskItem, TaskStore},
 };
 
@@ -57,6 +58,7 @@ struct TeamState {
 struct TeamObserver {
     agent_name: String,
     tasks_dir: PathBuf,
+    contexts_dir: PathBuf,
     events: broadcast::Sender<AgentEvent>,
     snapshot_tx: watch::Sender<AgentSnapshot>,
     snapshot: Arc<Mutex<AgentSnapshot>>,
@@ -73,6 +75,7 @@ impl TeamManager {
         agent_name: &str,
         team_dir: &Path,
         tasks_dir: &Path,
+        contexts_dir: &Path,
         events: broadcast::Sender<AgentEvent>,
         snapshot_tx: watch::Sender<AgentSnapshot>,
         snapshot: Arc<Mutex<AgentSnapshot>>,
@@ -90,6 +93,7 @@ impl TeamManager {
             team.observers.push(TeamObserver {
                 agent_name: agent_name.to_string(),
                 tasks_dir: tasks_dir.to_path_buf(),
+                contexts_dir: contexts_dir.to_path_buf(),
                 events,
                 snapshot_tx: snapshot_tx.clone(),
                 snapshot: Arc::clone(&snapshot),
@@ -107,6 +111,7 @@ impl TeamManager {
         Self::publish_snapshot(
             Arc::clone(&snapshot),
             tasks_dir,
+            contexts_dir,
             &members,
             &requests,
             unread_count,
@@ -572,6 +577,7 @@ impl TeamManager {
             Self::publish_snapshot(
                 Arc::clone(&observer.snapshot),
                 observer.tasks_dir.as_path(),
+                observer.contexts_dir.as_path(),
                 &members,
                 &requests,
                 unread_count,
@@ -589,13 +595,16 @@ impl TeamManager {
     fn publish_snapshot(
         snapshot: Arc<Mutex<AgentSnapshot>>,
         tasks_dir: &Path,
+        contexts_dir: &Path,
         members: &[TeamMemberSummary],
         requests: &[TeamProtocolRequestSummary],
         unread_count: usize,
     ) {
         let tasks = load_tasks(tasks_dir, &snapshot);
+        let execution_contexts = load_execution_contexts(contexts_dir, &snapshot);
         let mut guard = snapshot.lock().expect("agent snapshot poisoned");
         guard.tasks = tasks;
+        guard.execution_contexts = execution_contexts;
         guard.teammates = members.to_vec();
         guard.protocol_requests = requests.to_vec();
         guard.pending_team_messages = unread_count;
@@ -610,6 +619,7 @@ impl TeamManager {
             Self::publish_snapshot(
                 Arc::clone(&observer.snapshot),
                 observer.tasks_dir.as_path(),
+                observer.contexts_dir.as_path(),
                 &notification.members,
                 &notification.requests,
                 notification.unread_count,
@@ -634,6 +644,24 @@ fn load_tasks(tasks_dir: &Path, snapshot: &Arc<Mutex<AgentSnapshot>>) -> Vec<Tas
             .lock()
             .expect("agent snapshot poisoned")
             .tasks
+            .clone(),
+    }
+}
+
+fn load_execution_contexts(
+    contexts_dir: &Path,
+    snapshot: &Arc<Mutex<AgentSnapshot>>,
+) -> Vec<crate::runtime::ExecutionContextItem> {
+    let base_dir = contexts_dir
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    match ExecutionContextStore::new(base_dir, contexts_dir.to_path_buf()).load_all() {
+        Ok(contexts) => contexts,
+        Err(_) => snapshot
+            .lock()
+            .expect("agent snapshot poisoned")
+            .execution_contexts
             .clone(),
     }
 }

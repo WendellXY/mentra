@@ -92,6 +92,7 @@ impl<'a> TurnRunner<'a> {
         self.agent.inject_background_notifications();
         self.agent.set_status(AgentStatus::AwaitingModel);
         self.agent.refresh_tasks_from_disk()?;
+        self.agent.refresh_execution_contexts_from_disk()?;
         self.agent.auto_compact_if_needed().await?;
         let provider = self.agent.provider.clone();
         let tools = self.agent.tools();

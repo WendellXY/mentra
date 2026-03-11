@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -23,10 +25,20 @@ pub struct ToolContext {
     pub agent_id: String,
     pub tool_call_id: String,
     pub tool_name: String,
+    pub(crate) working_directory: PathBuf,
     pub(crate) runtime: RuntimeHandle,
 }
 
 impl ToolContext {
+    pub fn working_directory(&self) -> &Path {
+        self.working_directory.as_path()
+    }
+
+    pub fn resolve_working_directory(&self, context_id: Option<&str>) -> Result<PathBuf, String> {
+        self.runtime
+            .resolve_working_directory(&self.agent_id, context_id)
+    }
+
     pub fn load_skill(&self, name: &str) -> Result<String, String> {
         self.runtime.load_skill(name)
     }
@@ -35,8 +47,9 @@ impl ToolContext {
         self.runtime.skill_descriptions()
     }
 
-    pub fn start_background_task(&self, command: String) -> BackgroundTaskSummary {
-        self.runtime.start_background_task(&self.agent_id, command)
+    pub fn start_background_task(&self, command: String, cwd: PathBuf) -> BackgroundTaskSummary {
+        self.runtime
+            .start_background_task(&self.agent_id, command, cwd)
     }
 
     pub fn check_background_task(&self, task_id: Option<&str>) -> Result<String, String> {
