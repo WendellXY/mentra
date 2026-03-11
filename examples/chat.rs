@@ -10,15 +10,27 @@ use mentra::{
 async fn main() {
     let mut runtime = Runtime::default();
 
-    runtime.register_provider(
-        ModelProviderKind::Anthropic,
-        std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set"),
+    let mut configured_providers = Vec::new();
+
+    if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+        runtime.register_provider(ModelProviderKind::OpenAI, api_key);
+        configured_providers.push(ModelProviderKind::OpenAI);
+    }
+
+    if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
+        runtime.register_provider(ModelProviderKind::Anthropic, api_key);
+        configured_providers.push(ModelProviderKind::Anthropic);
+    }
+
+    assert!(
+        !configured_providers.is_empty(),
+        "Set OPENAI_API_KEY or ANTHROPIC_API_KEY before running this example"
     );
 
     let mut agent = runtime
         .spawn_with_config(
             "Foo",
-            pick_model(&runtime).await,
+            pick_model(&runtime, &configured_providers).await,
             AgentConfig {
                 system: Some("You are a helpful CLI agent.".to_string()),
                 ..AgentConfig::default()
@@ -47,16 +59,20 @@ async fn main() {
     }
 }
 
-async fn pick_model(runtime: &Runtime) -> ModelInfo {
-    let model = runtime
-        .list_models(Some(ModelProviderKind::Anthropic))
-        .await
-        .expect("Failed to list models")
-        .first()
-        .expect("No models found")
-        .clone();
-    println!("Picked model: {:?}", model);
-    model
+async fn pick_model(runtime: &Runtime, providers: &[ModelProviderKind]) -> ModelInfo {
+    for provider in providers {
+        let models = runtime
+            .list_models(Some(*provider))
+            .await
+            .expect("Failed to list models");
+
+        if let Some(model) = models.first() {
+            println!("Picked model: {:?}", model);
+            return model.clone();
+        }
+    }
+
+    panic!("No models found for configured providers");
 }
 
 fn subscribe_events(agent: &Agent) -> tokio::task::JoinHandle<()> {

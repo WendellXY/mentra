@@ -8,10 +8,12 @@ use crate::provider::{
         ModelInfo, ModelProviderKind, ProviderError, ProviderEventStream, Request, Response,
         collect_response_from_stream,
     },
+    openai::OpenAIProvider,
 };
 
 pub mod anthropic;
 pub mod model;
+pub mod openai;
 
 #[async_trait]
 pub trait Provider: Send + Sync {
@@ -34,8 +36,10 @@ pub struct ProviderRegistry {
 
 impl ProviderRegistry {
     pub fn register_provider(&mut self, kind: ModelProviderKind, api_key: impl Into<String>) {
-        let provider = match kind {
+        let api_key = api_key.into();
+        let provider: Arc<dyn Provider> = match kind {
             ModelProviderKind::Anthropic => Arc::new(AnthropicProvider::new(api_key)),
+            ModelProviderKind::OpenAI => Arc::new(OpenAIProvider::new(api_key)),
             _ => todo!("Add support for new provider"),
         };
 

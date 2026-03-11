@@ -15,10 +15,11 @@ The repository is organized as a small workspace:
 - builtin `task` subagents with isolated child context and parent-side tracking
 - agent events and snapshots for CLI or UI watchers
 - Anthropic provider support
+- OpenAI provider support via the Responses API
 
 ## Run The Example
 
-Set `ANTHROPIC_API_KEY`, then run:
+Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, then run:
 
 ```bash
 cargo run -p mentra-examples --example chat
