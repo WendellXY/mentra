@@ -7,7 +7,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{
     provider::model::{
-        ContentBlock, ImageSource, Message, ModelInfo, ModelProviderKind, ProviderError, Request,
+        ContentBlock, ImageSource, Message, ModelInfo, ProviderError, ProviderId, Request,
         Response, Role, ToolChoice,
     },
     tool::ToolSpec,
@@ -33,7 +33,7 @@ impl From<AnthropicModel> for ModelInfo {
     fn from(model: AnthropicModel) -> Self {
         ModelInfo {
             id: model.id,
-            provider: ModelProviderKind::Anthropic,
+            provider: ProviderId::from("anthropic"),
             display_name: model.display_name,
             description: None,
             created_at: model

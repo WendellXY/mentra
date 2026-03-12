@@ -3,13 +3,18 @@ mod model;
 
 use std::{collections::HashMap, sync::Arc};
 
-pub use model::{ToolCall, ToolContext, ToolHandler, ToolResult, ToolSpec};
+pub use model::{
+    ExecutableTool, ToolCall, ToolCapability, ToolContext, ToolDurability, ToolResult,
+    ToolSideEffectLevel, ToolSpec,
+};
 
+#[derive(Clone)]
 struct RegisteredTool {
     spec: ToolSpec,
-    handler: Arc<dyn ToolHandler>,
+    handler: Arc<dyn ExecutableTool>,
 }
 
+#[derive(Clone)]
 pub struct ToolRegistry {
     tools: HashMap<String, RegisteredTool>,
     tool_specs: Arc<[ToolSpec]>,
@@ -25,9 +30,9 @@ impl ToolRegistry {
 
     pub fn register_tool<T>(&mut self, tool: T)
     where
-        T: ToolHandler + 'static,
+        T: ExecutableTool + 'static,
     {
-        let handler: Arc<dyn ToolHandler> = Arc::new(tool);
+        let handler: Arc<dyn ExecutableTool> = Arc::new(tool);
         let spec = handler.spec();
         self.tools
             .insert(spec.name.clone(), RegisteredTool { spec, handler });
@@ -38,7 +43,7 @@ impl ToolRegistry {
         Arc::clone(&self.tool_specs)
     }
 
-    pub fn get_tool(&self, name: &str) -> Option<Arc<dyn ToolHandler>> {
+    pub fn get_tool(&self, name: &str) -> Option<Arc<dyn ExecutableTool>> {
         self.tools.get(name).map(|tool| Arc::clone(&tool.handler))
     }
 

@@ -65,4 +65,75 @@ impl Agent {
         }
         self.publish_snapshot();
     }
+
+    pub(crate) fn persist_state(&self) -> Result<(), crate::runtime::RuntimeError> {
+        self.runtime.store().save_agent_checkpoint(
+            &crate::runtime::PersistedAgentRecord {
+                id: self.id.clone(),
+                name: self.name.clone(),
+                model: self.model.clone(),
+                provider_id: self.provider_id.clone(),
+                config: self.config.clone(),
+                hidden_tools: self.hidden_tools.clone(),
+                max_rounds: self.max_rounds,
+                teammate_identity: self.teammate_identity.clone(),
+                rounds_since_task: self.rounds_since_task,
+                idle_requested: self.idle_requested,
+                status: self.watch_snapshot().borrow().status.clone(),
+                subagents: self.watch_snapshot().borrow().subagents.clone(),
+            },
+            &self.history,
+        )
+    }
+
+    pub(crate) fn persist_pending_turn(
+        &self,
+        pending: &PendingAssistantTurn,
+    ) -> Result<(), crate::runtime::RuntimeError> {
+        self.runtime.store().save_pending_turn(
+            &self.id,
+            &crate::runtime::PersistedPendingTurn {
+                current_text: pending.current_text().to_string(),
+                pending_tool_uses: pending.pending_tool_use_summaries(),
+            },
+        )
+    }
+
+    pub(crate) fn clear_persisted_pending_turn(&self) -> Result<(), crate::runtime::RuntimeError> {
+        self.runtime.store().clear_pending_turn(&self.id)
+    }
+
+    pub(crate) fn start_run_checkpoint(&mut self) -> Result<(), crate::runtime::RuntimeError> {
+        let run_id = self.runtime.store().start_run(&self.id)?;
+        self.current_run_id = Some(run_id);
+        Ok(())
+    }
+
+    pub(crate) fn update_run_state(
+        &self,
+        state: &str,
+        error: Option<&str>,
+    ) -> Result<(), crate::runtime::RuntimeError> {
+        if let Some(run_id) = &self.current_run_id {
+            self.runtime.store().update_run_state(run_id, state, error)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn finish_run_checkpoint(&mut self) -> Result<(), crate::runtime::RuntimeError> {
+        if let Some(run_id) = self.current_run_id.take() {
+            self.runtime.store().finish_run(&run_id)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn fail_run_checkpoint(
+        &mut self,
+        error: &str,
+    ) -> Result<(), crate::runtime::RuntimeError> {
+        if let Some(run_id) = self.current_run_id.take() {
+            self.runtime.store().fail_run(&run_id, error)?;
+        }
+        Ok(())
+    }
 }

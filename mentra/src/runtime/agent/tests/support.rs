@@ -6,10 +6,10 @@ use tokio::sync::{Mutex, mpsc};
 
 use crate::{
     provider::{
-        ModelInfo, ModelProviderKind, Provider, ProviderError, ProviderEvent, ProviderEventStream,
-        Request,
+        ModelInfo, Provider, ProviderDescriptor, ProviderError, ProviderEvent, ProviderEventStream,
+        ProviderId, Request,
     },
-    tool::{ToolContext, ToolHandler, ToolResult, ToolSpec},
+    tool::{ExecutableTool, ToolContext, ToolResult, ToolSpec},
 };
 
 pub(super) enum StreamScript {
@@ -19,7 +19,7 @@ pub(super) enum StreamScript {
 
 #[derive(Clone)]
 pub(super) struct ScriptedProvider {
-    kind: ModelProviderKind,
+    kind: ProviderId,
     models: Vec<ModelInfo>,
     scripts: Arc<Mutex<VecDeque<StreamScript>>>,
     requests: Arc<Mutex<Vec<Request<'static>>>>,
@@ -27,7 +27,7 @@ pub(super) struct ScriptedProvider {
 
 impl ScriptedProvider {
     pub(super) fn new(
-        kind: ModelProviderKind,
+        kind: ProviderId,
         models: Vec<ModelInfo>,
         scripts: Vec<StreamScript>,
     ) -> Self {
@@ -46,8 +46,8 @@ impl ScriptedProvider {
 
 #[async_trait]
 impl Provider for ScriptedProvider {
-    fn kind(&self) -> ModelProviderKind {
-        self.kind
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor::new(self.kind.clone())
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
@@ -71,7 +71,7 @@ impl Provider for ScriptedProvider {
     }
 }
 
-pub(super) fn model_info(id: &str, provider: ModelProviderKind) -> ModelInfo {
+pub(super) fn model_info(id: &str, provider: ProviderId) -> ModelInfo {
     ModelInfo {
         id: id.to_string(),
         provider,
@@ -121,7 +121,7 @@ impl StaticTool {
 }
 
 #[async_trait]
-impl ToolHandler for StaticTool {
+impl ExecutableTool for StaticTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: self.name.to_string(),
@@ -132,10 +132,13 @@ impl ToolHandler for StaticTool {
                     "value": { "type": "string" }
                 }
             }),
+            capabilities: vec![],
+            side_effect_level: crate::tool::ToolSideEffectLevel::None,
+            durability: crate::tool::ToolDurability::ReplaySafe,
         }
     }
 
-    async fn invoke(&self, _ctx: ToolContext, _input: Value) -> ToolResult {
+    async fn execute(&self, _ctx: ToolContext<'_>, _input: Value) -> ToolResult {
         self.result.clone()
     }
 }

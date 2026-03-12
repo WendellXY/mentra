@@ -1,8 +1,8 @@
-use crate::provider::{ModelProviderKind, ProviderError};
+use crate::provider::{ProviderError, ProviderId};
 
 #[derive(Debug)]
 pub enum RuntimeError {
-    ProviderNotFound(Option<ModelProviderKind>),
+    ProviderNotFound(Option<ProviderId>),
     FailedToSendRequest(ProviderError),
     FailedToListModels(ProviderError),
     FailedToStreamResponse(ProviderError),
@@ -19,6 +19,13 @@ pub enum RuntimeError {
     FailedToDeserializeTeam(serde_json::Error),
     InvalidTask(String),
     InvalidTeam(String),
+    OperationDenied(String),
+    Store(String),
+    LeaseUnavailable(String),
+    Cancelled,
+    DeadlineExceeded,
+    ToolBudgetExceeded(usize),
+    ModelBudgetExceeded(usize),
     MaxRoundsExceeded(usize),
     InvalidToolUseInput {
         id: String,

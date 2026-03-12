@@ -3,7 +3,7 @@ mod stream;
 
 use std::{borrow::Cow, collections::BTreeMap, fmt::Display};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::OffsetDateTime;
 
@@ -15,23 +15,81 @@ pub use stream::{
     provider_event_stream_from_response,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum ModelProviderKind {
-    Anthropic,
-    OpenAI,
-    Gemini,
-}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ProviderId(Cow<'static, str>);
 
-impl Display for ModelProviderKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+impl ProviderId {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(Cow::Owned(id.into()))
+    }
+
+    pub const fn from_static(id: &'static str) -> Self {
+        Self(Cow::Borrowed(id))
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_ref()
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl Display for ProviderId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for ProviderId {
+    fn from(value: &str) -> Self {
+        Self(Cow::Owned(value.to_string()))
+    }
+}
+
+impl From<String> for ProviderId {
+    fn from(value: String) -> Self {
+        Self(Cow::Owned(value))
+    }
+}
+
+impl From<&String> for ProviderId {
+    fn from(value: &String) -> Self {
+        Self(Cow::Owned(value.clone()))
+    }
+}
+
+#[allow(non_snake_case)]
+#[allow(non_upper_case_globals)]
+pub struct ModelProviderKind;
+
+impl ModelProviderKind {
+    #[allow(non_upper_case_globals)]
+    pub const Anthropic: ProviderId = ProviderId::from_static("anthropic");
+    #[allow(non_upper_case_globals)]
+    pub const OpenAI: ProviderId = ProviderId::from_static("openai");
+    #[allow(non_upper_case_globals)]
+    pub const Gemini: ProviderId = ProviderId::from_static("gemini");
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderDescriptor {
+    pub id: ProviderId,
+    pub display_name: Option<String>,
+    pub description: Option<String>,
+}
+
+impl ProviderDescriptor {
+    pub fn new(id: impl Into<ProviderId>) -> Self {
+        Self {
+            id: id.into(),
+            display_name: None,
+            description: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelInfo {
     pub id: String,
-    pub provider: ModelProviderKind,
+    pub provider: ProviderId,
     pub display_name: Option<String>,
     pub description: Option<String>,
     pub created_at: Option<OffsetDateTime>,
@@ -79,7 +137,7 @@ impl Request<'_> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Response {
     pub id: String,
     pub model: String,
@@ -88,20 +146,20 @@ pub struct Response {
     pub stop_reason: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Role {
     User,
     Assistant,
     Unknown(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
     pub content: Vec<ContentBlock>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContentBlock {
     Text {
         text: String,
@@ -139,7 +197,7 @@ impl ContentBlock {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ImageSource {
     Bytes { media_type: String, data: Vec<u8> },
     Url { url: String },
@@ -158,7 +216,7 @@ impl ImageSource {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ToolChoice {
     #[default]
     Auto,

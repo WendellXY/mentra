@@ -1,10 +1,12 @@
+use std::sync::{Arc, Mutex};
+
 use crate::{
     ContentBlock, Message, ModelProviderKind, Role,
     provider::{ContentBlockDelta, ContentBlockStart, ProviderError, ProviderEvent},
-    runtime::{AgentConfig, AgentEvent, AgentStatus, Runtime},
+    runtime::{AgentConfig, AgentEvent, AgentStatus, RunOptions, Runtime, RuntimeHook, RuntimeHookEvent, RuntimePolicy},
 };
 
-use super::support::{ScriptedProvider, erroring_stream, model_info, ok_stream};
+use super::support::{ScriptedProvider, StaticTool, erroring_stream, model_info, ok_stream};
 
 #[tokio::test]
 async fn send_streamed_text_turn_emits_events_and_commits_history() {
@@ -150,4 +152,186 @@ fn collect_events(receiver: &mut tokio::sync::broadcast::Receiver<AgentEvent>) -
         events.push(event);
     }
     events
+}
+
+#[tokio::test]
+async fn run_respects_tool_budget() {
+    let model = model_info("model", ModelProviderKind::Anthropic);
+    let provider = ScriptedProvider::new(
+        ModelProviderKind::Anthropic,
+        vec![model.clone()],
+        vec![tool_use_stream(&model.id, "tool-1", "test_tool", r#"{"value":"hi"}"#)],
+    );
+
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .with_tool(StaticTool::success("test_tool", "ok"))
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime.spawn("agent", model).unwrap();
+
+    let error = agent
+        .run(
+            vec![ContentBlock::Text {
+                text: "hi".to_string(),
+            }],
+            RunOptions {
+                tool_budget: Some(0),
+                ..RunOptions::default()
+            },
+        )
+        .await
+        .expect_err("tool budget should abort run");
+
+    assert!(matches!(error, crate::runtime::RuntimeError::ToolBudgetExceeded(0)));
+}
+
+#[tokio::test]
+async fn policy_can_deny_bash_tool_execution() {
+    let model = model_info("model", ModelProviderKind::Anthropic);
+    let provider = ScriptedProvider::new(
+        ModelProviderKind::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(&model.id, "pwd", "bash", r#"{"command":"pwd"}"#),
+            text_stream("done"),
+        ],
+    );
+
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .with_policy(
+            RuntimePolicy::permissive()
+                .allow_shell_commands(false)
+                .allow_background_commands(false),
+        )
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime.spawn("agent", model).unwrap();
+
+    agent
+        .send(vec![ContentBlock::Text {
+            text: "run pwd".to_string(),
+        }])
+        .await
+        .expect("send");
+
+    assert!(matches!(
+        &agent.history()[2].content[0],
+        ContentBlock::ToolResult { content, is_error: true, .. }
+            if content.contains("disabled by the runtime policy")
+    ));
+}
+
+#[tokio::test]
+async fn custom_hooks_observe_model_and_tool_execution() {
+    let model = model_info("model", ModelProviderKind::Anthropic);
+    let provider = ScriptedProvider::new(
+        ModelProviderKind::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(&model.id, "tool-1", "test_tool", r#"{"value":"hi"}"#),
+            text_stream("done"),
+        ],
+    );
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .with_tool(StaticTool::success("test_tool", "ok"))
+        .with_hook(RecordingHook {
+            events: recorded.clone(),
+        })
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime.spawn("agent", model).unwrap();
+
+    agent
+        .send(vec![ContentBlock::Text {
+            text: "hi".to_string(),
+        }])
+        .await
+        .expect("send");
+
+    let events = recorded.lock().expect("hook events poisoned").clone();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        RuntimeHookEvent::ModelRequestStarted { .. }
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        RuntimeHookEvent::ToolExecutionStarted { tool_name, .. } if tool_name == "test_tool"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        RuntimeHookEvent::ToolExecutionFinished { tool_name, is_error: false, .. }
+            if tool_name == "test_tool"
+    )));
+}
+
+#[derive(Clone)]
+struct RecordingHook {
+    events: Arc<Mutex<Vec<RuntimeHookEvent>>>,
+}
+
+impl RuntimeHook for RecordingHook {
+    fn on_event(
+        &self,
+        _store: &dyn crate::runtime::RuntimeStore,
+        event: &RuntimeHookEvent,
+    ) -> Result<(), crate::runtime::RuntimeError> {
+        self.events
+            .lock()
+            .expect("hook events poisoned")
+            .push(event.clone());
+        Ok(())
+    }
+}
+
+fn text_stream(text: &str) -> super::support::StreamScript {
+    ok_stream(vec![
+        ProviderEvent::MessageStarted {
+            id: "msg-text".to_string(),
+            model: "model".to_string(),
+            role: Role::Assistant,
+        },
+        ProviderEvent::ContentBlockStarted {
+            index: 0,
+            kind: ContentBlockStart::Text,
+        },
+        ProviderEvent::ContentBlockDelta {
+            index: 0,
+            delta: ContentBlockDelta::Text(text.to_string()),
+        },
+        ProviderEvent::ContentBlockStopped { index: 0 },
+        ProviderEvent::MessageStopped,
+    ])
+}
+
+fn tool_use_stream(
+    model: &str,
+    id: &str,
+    name: &str,
+    input_json: &str,
+) -> super::support::StreamScript {
+    ok_stream(vec![
+        ProviderEvent::MessageStarted {
+            id: format!("msg-{id}"),
+            model: model.to_string(),
+            role: Role::Assistant,
+        },
+        ProviderEvent::ContentBlockStarted {
+            index: 0,
+            kind: ContentBlockStart::ToolUse {
+                id: id.to_string(),
+                name: name.to_string(),
+            },
+        },
+        ProviderEvent::ContentBlockDelta {
+            index: 0,
+            delta: ContentBlockDelta::ToolUseInputJson(input_json.to_string()),
+        },
+        ProviderEvent::ContentBlockStopped { index: 0 },
+        ProviderEvent::MessageStopped,
+    ])
 }

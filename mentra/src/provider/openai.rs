@@ -7,7 +7,7 @@ mod sse;
 
 use crate::provider::{
     Provider,
-    model::{ModelInfo, ModelProviderKind, ProviderError, ProviderEventStream, Request},
+    model::{ModelInfo, ProviderDescriptor, ProviderError, ProviderEventStream, ProviderId, Request},
 };
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/";
@@ -41,8 +41,12 @@ impl OpenAIProvider {
 
 #[async_trait]
 impl Provider for OpenAIProvider {
-    fn kind(&self) -> ModelProviderKind {
-        ModelProviderKind::OpenAI
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            id: ProviderId::from("openai"),
+            display_name: Some("OpenAI".to_string()),
+            description: Some("OpenAI Responses API provider".to_string()),
+        }
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {

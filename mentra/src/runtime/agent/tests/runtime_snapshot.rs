@@ -3,7 +3,7 @@ use tokio::sync::watch;
 use crate::{
     ContentBlock, ModelProviderKind, Role,
     provider::{ContentBlockDelta, ContentBlockStart, ProviderEvent},
-    runtime::{AgentSnapshot, AgentStatus, BackgroundTaskStatus, Runtime},
+    runtime::{AgentSnapshot, AgentStatus, BackgroundTaskStatus, Runtime, RuntimePolicy},
 };
 
 use super::support::{ScriptedProvider, controlled_stream, model_info, ok_stream};
@@ -132,6 +132,11 @@ async fn snapshot_updates_when_background_task_finishes() {
     );
 
     let runtime = Runtime::builder()
+        .with_policy(
+            RuntimePolicy::default()
+                .allow_shell_commands(true)
+                .allow_background_commands(true),
+        )
         .with_provider_instance(provider)
         .build()
         .expect("build runtime");

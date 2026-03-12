@@ -2,24 +2,23 @@ use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 
-use crate::provider::{
-    anthropic::AnthropicProvider, gemini::GeminiProvider, openai::OpenAIProvider,
-};
-
 pub mod anthropic;
 pub mod gemini;
 mod model;
 pub mod openai;
 
+use self::{anthropic::AnthropicProvider, gemini::GeminiProvider, openai::OpenAIProvider};
+
 pub use model::{
     ContentBlock, ContentBlockDelta, ContentBlockStart, ImageSource, Message, ModelInfo,
-    ModelProviderKind, ProviderError, ProviderEvent, ProviderEventStream, Request, Response, Role,
-    ToolChoice, collect_response_from_stream, provider_event_stream_from_response,
+    ModelProviderKind, ProviderDescriptor, ProviderError, ProviderEvent, ProviderEventStream,
+    ProviderId, Request, Response, Role, ToolChoice, collect_response_from_stream,
+    provider_event_stream_from_response,
 };
 
 #[async_trait]
 pub trait Provider: Send + Sync {
-    fn kind(&self) -> ModelProviderKind;
+    fn descriptor(&self) -> ProviderDescriptor;
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError>;
 
@@ -32,55 +31,68 @@ pub trait Provider: Send + Sync {
 
 #[derive(Default)]
 pub struct ProviderRegistry {
-    default_provider: Option<ModelProviderKind>,
-    providers: HashMap<ModelProviderKind, Arc<dyn Provider>>,
+    default_provider: Option<ProviderId>,
+    providers: HashMap<ProviderId, Arc<dyn Provider>>,
 }
 
 impl ProviderRegistry {
-    pub(crate) fn register_provider(
+    pub(crate) fn register_builtin_provider(
         &mut self,
-        kind: ModelProviderKind,
+        id: impl Into<ProviderId>,
         api_key: impl Into<String>,
-    ) {
+    ) -> Result<(), String> {
+        let id = id.into();
         let api_key = api_key.into();
-        let provider: Arc<dyn Provider> = match kind {
-            ModelProviderKind::Anthropic => Arc::new(AnthropicProvider::new(api_key)),
-            ModelProviderKind::Gemini => Arc::new(GeminiProvider::new(api_key)),
-            ModelProviderKind::OpenAI => Arc::new(OpenAIProvider::new(api_key)),
+        let provider: Arc<dyn Provider> = match id.as_str() {
+            "anthropic" => Arc::new(AnthropicProvider::new(api_key)),
+            "gemini" => Arc::new(GeminiProvider::new(api_key)),
+            "openai" => Arc::new(OpenAIProvider::new(api_key)),
+            other => {
+                return Err(format!(
+                    "Unknown builtin provider '{other}'. Register a provider instance instead."
+                ));
+            }
         };
 
         if self.default_provider.is_none() {
-            self.default_provider = Some(kind);
+            self.default_provider = Some(id.clone());
         }
 
-        self.providers.insert(kind, provider);
+        self.providers.insert(id, provider);
+        Ok(())
     }
 
     pub(crate) fn register_provider_instance<P>(&mut self, provider: P)
     where
         P: Provider + 'static,
     {
-        let kind = provider.kind();
+        let descriptor = provider.descriptor();
+        let id = descriptor.id;
 
         if self.default_provider.is_none() {
-            self.default_provider = Some(kind);
+            self.default_provider = Some(id.clone());
         }
 
-        self.providers.insert(kind, Arc::new(provider));
+        self.providers.insert(id, Arc::new(provider));
     }
 
-    pub(crate) fn get_provider(
-        &self,
-        kind: Option<ModelProviderKind>,
-    ) -> Option<Arc<dyn Provider>> {
-        kind.and_then(|kind| self.providers.get(&kind).cloned())
+    pub(crate) fn get_provider(&self, id: Option<&ProviderId>) -> Option<Arc<dyn Provider>> {
+        id.and_then(|id| self.providers.get(id).cloned())
             .or_else(|| {
                 self.default_provider
-                    .and_then(|kind| self.providers.get(&kind).cloned())
+                    .as_ref()
+                    .and_then(|id| self.providers.get(id).cloned())
             })
     }
 
-    pub(crate) fn providers(&self) -> Vec<ModelProviderKind> {
-        self.providers.keys().cloned().collect()
+    pub(crate) fn descriptors(&self) -> Vec<ProviderDescriptor> {
+        self.providers
+            .values()
+            .map(|provider| provider.descriptor())
+            .collect()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.providers.is_empty()
     }
 }

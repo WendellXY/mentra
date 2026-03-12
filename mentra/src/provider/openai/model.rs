@@ -6,8 +6,8 @@ use time::OffsetDateTime;
 
 use crate::{
     provider::model::{
-        ContentBlock, ImageSource, Message, ModelInfo, ModelProviderKind, ProviderError, Request,
-        Role, ToolChoice,
+        ContentBlock, ImageSource, Message, ModelInfo, ProviderError, ProviderId, Request, Role,
+        ToolChoice,
     },
     tool::ToolSpec,
 };
@@ -30,7 +30,7 @@ impl From<OpenAIModel> for ModelInfo {
     fn from(model: OpenAIModel) -> Self {
         ModelInfo {
             id: model.id,
-            provider: ModelProviderKind::OpenAI,
+            provider: ProviderId::from("openai"),
             display_name: None,
             description: model.owned_by.map(|owner| format!("Owned by {owner}")),
             created_at: model
@@ -363,6 +363,9 @@ mod tests {
                         "path": { "type": "string" }
                     }
                 }),
+                capabilities: vec![],
+                side_effect_level: crate::tool::ToolSideEffectLevel::None,
+                durability: crate::tool::ToolDurability::ReplaySafe,
             }]),
             tool_choice: Some(ToolChoice::Tool {
                 name: "read_file".to_string(),

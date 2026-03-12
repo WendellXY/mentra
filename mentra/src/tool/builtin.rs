@@ -1,9 +1,10 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
 
-use crate::tool::{ToolContext, ToolHandler, ToolResult, ToolSpec};
+use crate::tool::{
+    ExecutableTool, ToolCapability, ToolContext, ToolDurability, ToolResult,
+    ToolSideEffectLevel, ToolSpec,
+};
 
 pub struct BashTool;
 pub struct BackgroundRunTool;
@@ -12,7 +13,7 @@ pub struct LoadSkillTool;
 pub struct ReadFileTool;
 
 #[async_trait]
-impl ToolHandler for BashTool {
+impl ExecutableTool for BashTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "bash".to_string(),
@@ -31,10 +32,13 @@ impl ToolHandler for BashTool {
                 },
                 "required": ["command"]
             }),
+            capabilities: vec![ToolCapability::ProcessExec, ToolCapability::FilesystemWrite],
+            side_effect_level: ToolSideEffectLevel::Process,
+            durability: ToolDurability::Ephemeral,
         }
     }
 
-    async fn invoke(&self, ctx: ToolContext, input: Value) -> ToolResult {
+    async fn execute(&self, ctx: ToolContext<'_>, input: Value) -> ToolResult {
         let command = input
             .get("command")
             .and_then(|value| value.as_str())
@@ -45,22 +49,24 @@ impl ToolHandler for BashTool {
             .and_then(|value| value.as_str());
         let working_directory = ctx.resolve_working_directory(working_directory)?;
 
-        let output = Command::new("bash")
-            .arg("-c")
-            .arg(command)
-            .current_dir(&working_directory)
-            .output()
+        let output = ctx
+            .execute_shell_command(command.to_string(), working_directory)
             .await
-            .map_err(|error| format!("Failed to execute command: {error}"))?;
+            ?;
 
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        if output.success() {
+            Ok(output.stdout)
         } else {
-            let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-            let message = if stderr.trim().is_empty() {
-                format!("Command exited with status {}", output.status)
+            let message = if output.stderr.trim().is_empty() {
+                format!(
+                    "Command exited with status {}",
+                    output
+                        .status_code
+                        .map(|code| code.to_string())
+                        .unwrap_or_else(|| "unknown".to_string())
+                )
             } else {
-                stderr
+                output.stderr
             };
             Err(message)
         }
@@ -68,7 +74,7 @@ impl ToolHandler for BashTool {
 }
 
 #[async_trait]
-impl ToolHandler for BackgroundRunTool {
+impl ExecutableTool for BackgroundRunTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "background_run".to_string(),
@@ -89,10 +95,13 @@ impl ToolHandler for BackgroundRunTool {
                 },
                 "required": ["command"]
             }),
+            capabilities: vec![ToolCapability::BackgroundExec, ToolCapability::FilesystemWrite],
+            side_effect_level: ToolSideEffectLevel::Process,
+            durability: ToolDurability::Persistent,
         }
     }
 
-    async fn invoke(&self, ctx: ToolContext, input: Value) -> ToolResult {
+    async fn execute(&self, ctx: ToolContext<'_>, input: Value) -> ToolResult {
         let command = input
             .get("command")
             .and_then(|value| value.as_str())
@@ -102,7 +111,7 @@ impl ToolHandler for BackgroundRunTool {
             .and_then(|value| value.as_str());
         let working_directory = ctx.resolve_working_directory(working_directory)?;
 
-        let task = ctx.start_background_task(command.to_string(), working_directory);
+        let task = ctx.start_background_task(command.to_string(), working_directory)?;
         Ok(format!(
             "Started background task {} in {} for `{}`",
             task.id,
@@ -113,7 +122,7 @@ impl ToolHandler for BackgroundRunTool {
 }
 
 #[async_trait]
-impl ToolHandler for CheckBackgroundTool {
+impl ExecutableTool for CheckBackgroundTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "check_background".to_string(),
@@ -130,17 +139,20 @@ impl ToolHandler for CheckBackgroundTool {
                     }
                 }
             }),
+            capabilities: vec![ToolCapability::ReadOnly],
+            side_effect_level: ToolSideEffectLevel::None,
+            durability: ToolDurability::ReplaySafe,
         }
     }
 
-    async fn invoke(&self, ctx: ToolContext, input: Value) -> ToolResult {
+    async fn execute(&self, ctx: ToolContext<'_>, input: Value) -> ToolResult {
         let task_id = input.get("task_id").and_then(|value| value.as_str());
         ctx.check_background_task(task_id)
     }
 }
 
 #[async_trait]
-impl ToolHandler for ReadFileTool {
+impl ExecutableTool for ReadFileTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "read_file".to_string(),
@@ -159,10 +171,13 @@ impl ToolHandler for ReadFileTool {
                 },
                 "required": ["path"]
             }),
+            capabilities: vec![ToolCapability::ReadOnly, ToolCapability::FilesystemRead],
+            side_effect_level: ToolSideEffectLevel::None,
+            durability: ToolDurability::ReplaySafe,
         }
     }
 
-    async fn invoke(&self, _ctx: ToolContext, input: Value) -> ToolResult {
+    async fn execute(&self, _ctx: ToolContext<'_>, input: Value) -> ToolResult {
         let path = input
             .get("path")
             .and_then(|value| value.as_str())
@@ -172,32 +187,12 @@ impl ToolHandler for ReadFileTool {
             .and_then(|value| value.as_u64())
             .map(|value| value as usize);
 
-        let file = tokio::fs::File::open(path)
-            .await
-            .map_err(|error| format!("Failed to open file: {error}"))?;
-        let mut reader = BufReader::new(file).lines();
-        let mut content = Vec::new();
-
-        loop {
-            if let Some(limit) = max_lines
-                && content.len() >= limit
-            {
-                break;
-            }
-
-            match reader.next_line().await {
-                Ok(Some(line)) => content.push(line),
-                Ok(None) => break,
-                Err(error) => return Err(format!("Failed to read file: {error}")),
-            }
-        }
-
-        Ok(content.join("\n"))
+        _ctx.read_file(path, max_lines).await
     }
 }
 
 #[async_trait]
-impl ToolHandler for LoadSkillTool {
+impl ExecutableTool for LoadSkillTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "load_skill".to_string(),
@@ -212,10 +207,13 @@ impl ToolHandler for LoadSkillTool {
                 },
                 "required": ["name"]
             }),
+            capabilities: vec![ToolCapability::SkillLoad, ToolCapability::ReadOnly],
+            side_effect_level: ToolSideEffectLevel::None,
+            durability: ToolDurability::ReplaySafe,
         }
     }
 
-    async fn invoke(&self, ctx: ToolContext, input: Value) -> ToolResult {
+    async fn execute(&self, ctx: ToolContext<'_>, input: Value) -> ToolResult {
         let name = input
             .get("name")
             .and_then(|value| value.as_str())

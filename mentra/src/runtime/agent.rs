@@ -20,12 +20,14 @@ use std::{
     },
 };
 
+use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, watch};
 
 use crate::{
     Message,
-    provider::{Provider, ToolChoice},
+    provider::{Provider, ProviderId, ToolChoice},
     runtime::{
+        LoadedAgentState,
         TaskItem,
         background::BackgroundNotification,
         error::RuntimeError,
@@ -52,6 +54,7 @@ pub struct Agent {
     id: String,
     runtime: RuntimeHandle,
     model: String,
+    provider_id: ProviderId,
     name: String,
     config: AgentConfig,
     history: Vec<Message>,
@@ -67,9 +70,10 @@ pub struct Agent {
     inflight_team_messages: Vec<TeamMessage>,
     teammate_identity: Option<TeammateIdentity>,
     idle_requested: bool,
+    current_run_id: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct TeammateIdentity {
     pub(crate) role: String,
     pub(crate) lead: String,
@@ -102,9 +106,17 @@ impl Agent {
         let (snapshot_tx, _) =
             watch::channel(snapshot.lock().expect("agent snapshot poisoned").clone());
         let mut agent = Self {
-            id: format!("agent-{}", NEXT_AGENT_ID.fetch_add(1, Ordering::Relaxed)),
+            id: format!(
+                "agent-{:x}-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos(),
+                NEXT_AGENT_ID.fetch_add(1, Ordering::Relaxed)
+            ),
             runtime,
             model,
+            provider_id: provider.descriptor().id,
             name,
             config,
             history: Vec::new(),
@@ -120,6 +132,79 @@ impl Agent {
             inflight_team_messages: Vec::new(),
             teammate_identity,
             idle_requested: false,
+            current_run_id: None,
+        };
+        agent.persist_state()?;
+        let execution_config = AgentExecutionConfig {
+            name: agent.name.clone(),
+            team_dir: agent.config.team.team_dir.clone(),
+            tasks_dir: agent.config.task.tasks_dir.clone(),
+            base_dir: agent.config.workspace.base_dir.clone(),
+            auto_route_shell: agent.config.workspace.auto_route_shell,
+            is_teammate: agent.teammate_identity.is_some(),
+        };
+        let observer = AgentObserver {
+            events: agent.event_tx.clone(),
+            snapshot_tx: agent.snapshot_tx.clone(),
+            snapshot: Arc::clone(&agent.snapshot),
+        };
+        agent
+            .runtime
+            .register_agent(&agent.id, &agent.name, execution_config, &observer)?;
+        agent.refresh_tasks_from_disk()?;
+        Ok(agent)
+    }
+
+    pub(crate) fn from_loaded(
+        runtime: RuntimeHandle,
+        state: LoadedAgentState,
+        provider: Arc<dyn Provider>,
+    ) -> Result<Self, RuntimeError> {
+        let snapshot = AgentSnapshot {
+            status: state.record.status.clone(),
+            history_len: state.history.len(),
+            current_text: state
+                .pending_turn
+                .as_ref()
+                .map(|pending| pending.current_text.clone())
+                .unwrap_or_default(),
+            pending_tool_uses: state
+                .pending_turn
+                .as_ref()
+                .map(|pending| pending.pending_tool_uses.clone())
+                .unwrap_or_default(),
+            pending_team_messages: 0,
+            tasks: Vec::new(),
+            subagents: state.record.subagents.clone(),
+            teammates: Vec::new(),
+            protocol_requests: Vec::new(),
+            background_tasks: Vec::new(),
+        };
+        let snapshot = Arc::new(Mutex::new(snapshot));
+        let (snapshot_tx, _) =
+            watch::channel(snapshot.lock().expect("agent snapshot poisoned").clone());
+        let (event_tx, _) = broadcast::channel(256);
+        let mut agent = Self {
+            id: state.record.id.clone(),
+            runtime,
+            model: state.record.model.clone(),
+            provider_id: state.record.provider_id.clone(),
+            name: state.record.name.clone(),
+            config: state.record.config.clone(),
+            history: state.history,
+            tasks: Vec::new(),
+            rounds_since_task: state.record.rounds_since_task,
+            event_tx,
+            snapshot,
+            snapshot_tx,
+            provider,
+            hidden_tools: state.record.hidden_tools,
+            max_rounds: state.record.max_rounds,
+            inflight_background_notifications: Vec::new(),
+            inflight_team_messages: Vec::new(),
+            teammate_identity: state.record.teammate_identity,
+            idle_requested: state.record.idle_requested,
+            current_run_id: None,
         };
         let execution_config = AgentExecutionConfig {
             name: agent.name.clone(),
@@ -161,6 +246,10 @@ impl Agent {
         &self.history
     }
 
+    pub(crate) fn tasks(&self) -> &[TaskItem] {
+        &self.tasks
+    }
+
     pub fn last_message(&self) -> Option<&Message> {
         self.history.last()
     }
@@ -174,20 +263,13 @@ impl Agent {
     }
 
     pub(crate) fn tools(&self) -> Arc<[crate::tool::ToolSpec]> {
-        let mut tools = if self.runtime.runtime_intrinsics_enabled() {
-            crate::runtime::intrinsic::specs()
-        } else {
-            Vec::new()
-        };
-        tools.extend(
-            self.runtime
-                .tools()
-                .iter()
-                .filter(|tool| self.can_use_tool(&tool.name))
-                .cloned(),
-        );
-        tools.retain(|tool| self.can_use_tool(&tool.name));
-        tools.into()
+        self.runtime
+            .tools()
+            .iter()
+            .filter(|tool| self.can_use_tool(&tool.name))
+            .cloned()
+            .collect::<Vec<_>>()
+            .into()
     }
 
     pub(crate) fn can_use_tool(&self, name: &str) -> bool {

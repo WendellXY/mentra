@@ -1,28 +1,33 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     path::PathBuf,
-    process::Stdio,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
 };
 
+use serde::{Deserialize, Serialize};
 use tokio::{
-    io::AsyncReadExt,
-    process::Command,
     sync::{broadcast, watch},
 };
 
-use crate::runtime::{AgentEvent, AgentSnapshot, handle::AgentObserver};
+use crate::runtime::{
+    AgentEvent, AgentSnapshot, RuntimeStore,
+    control::{CommandOutput, CommandRequest, RuntimeExecutor, RuntimeHookEvent, RuntimeHooks},
+    handle::AgentObserver,
+};
 
 const OUTPUT_PREVIEW_MAX_CHARS: usize = 500;
+const NOTIFICATION_PENDING: i64 = 0;
+const NOTIFICATION_ACKED: i64 = 2;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BackgroundTaskStatus {
     Running,
     Finished,
     Failed,
+    Interrupted,
 }
 
 impl BackgroundTaskStatus {
@@ -31,11 +36,12 @@ impl BackgroundTaskStatus {
             Self::Running => "running",
             Self::Finished => "finished",
             Self::Failed => "failed",
+            Self::Interrupted => "interrupted",
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BackgroundTaskSummary {
     pub id: String,
     pub command: String,
@@ -44,8 +50,8 @@ pub struct BackgroundTaskSummary {
     pub output_preview: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct BackgroundNotification {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackgroundNotification {
     pub task_id: String,
     pub command: String,
     pub cwd: PathBuf,
@@ -53,13 +59,15 @@ pub(crate) struct BackgroundNotification {
     pub output_preview: String,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct BackgroundTaskManager {
     inner: Arc<BackgroundTaskManagerInner>,
 }
 
-#[derive(Default)]
 struct BackgroundTaskManagerInner {
+    store: Arc<dyn RuntimeStore>,
+    executor: Arc<dyn RuntimeExecutor>,
+    hooks: RuntimeHooks,
     next_task_id: AtomicU64,
     state: Mutex<BackgroundTaskManagerState>,
 }
@@ -72,7 +80,6 @@ struct BackgroundTaskManagerState {
 #[derive(Default)]
 struct AgentBackgroundState {
     tasks: Vec<BackgroundTaskSummary>,
-    notifications: VecDeque<BackgroundNotification>,
     observer: Option<BackgroundObserver>,
 }
 
@@ -84,6 +91,22 @@ struct BackgroundObserver {
 }
 
 impl BackgroundTaskManager {
+    pub(crate) fn new(
+        store: Arc<dyn RuntimeStore>,
+        executor: Arc<dyn RuntimeExecutor>,
+        hooks: RuntimeHooks,
+    ) -> Self {
+        Self {
+            inner: Arc::new(BackgroundTaskManagerInner {
+                store,
+                executor,
+                hooks,
+                next_task_id: AtomicU64::default(),
+                state: Mutex::new(BackgroundTaskManagerState::default()),
+            }),
+        }
+    }
+
     pub(crate) fn register_agent(&self, agent_id: &str, observer: &AgentObserver) {
         let tasks = {
             let mut state = self
@@ -92,6 +115,11 @@ impl BackgroundTaskManager {
                 .lock()
                 .expect("background manager poisoned");
             let agent = state.agents.entry(agent_id.to_string()).or_default();
+            agent.tasks = self
+                .inner
+                .store
+                .load_background_tasks(agent_id)
+                .unwrap_or_default();
             agent.observer = Some(BackgroundObserver {
                 events: observer.events.clone(),
                 snapshot_tx: observer.snapshot_tx.clone(),
@@ -112,20 +140,23 @@ impl BackgroundTaskManager {
     pub(crate) fn start_task(
         &self,
         agent_id: &str,
-        command: String,
-        cwd: PathBuf,
-    ) -> BackgroundTaskSummary {
+        request: CommandRequest,
+    ) -> Result<BackgroundTaskSummary, String> {
         let task_id = format!(
             "bg-{}",
             self.inner.next_task_id.fetch_add(1, Ordering::Relaxed) + 1
         );
         let summary = BackgroundTaskSummary {
             id: task_id.clone(),
-            command: command.clone(),
-            cwd: cwd.clone(),
+            command: request.spec.display().to_string(),
+            cwd: request.cwd.clone(),
             status: BackgroundTaskStatus::Running,
             output_preview: None,
         };
+        let _ = self
+            .inner
+            .store
+            .upsert_background_task(agent_id, &summary, NOTIFICATION_ACKED);
 
         let (observer, tasks) = {
             let mut state = self
@@ -144,28 +175,47 @@ impl BackgroundTaskManager {
                 task: summary.clone(),
             },
         );
+        let _ = self.emit_hook(RuntimeHookEvent::BackgroundTaskStarted {
+            agent_id: agent_id.to_string(),
+            task_id: summary.id.clone(),
+            command: summary.command.clone(),
+            cwd: summary.cwd.clone(),
+        });
 
         let manager = self.clone();
         let agent_id = agent_id.to_string();
+        let executor = self.inner.executor.clone();
         tokio::spawn(async move {
-            let completed = execute_bash_task(task_id, command, cwd).await;
+            let completed = execute_task(task_id, request, executor).await;
             manager.finish_task(&agent_id, completed);
         });
 
-        summary
+        Ok(summary)
     }
 
-    pub(crate) fn drain_notifications(&self, agent_id: &str) -> Vec<BackgroundNotification> {
-        let mut state = self
+    pub(crate) fn running_task_count(&self, agent_id: &str) -> usize {
+        let state = self
             .inner
             .state
             .lock()
             .expect("background manager poisoned");
-        let Some(agent) = state.agents.get_mut(agent_id) else {
-            return Vec::new();
-        };
+        state
+            .agents
+            .get(agent_id)
+            .map(|agent| {
+                agent.tasks
+                    .iter()
+                    .filter(|task| task.status == BackgroundTaskStatus::Running)
+                    .count()
+            })
+            .unwrap_or(0)
+    }
 
-        agent.notifications.drain(..).collect()
+    pub(crate) fn drain_notifications(&self, agent_id: &str) -> Vec<BackgroundNotification> {
+        self.inner
+            .store
+            .drain_background_notifications(agent_id)
+            .unwrap_or_default()
     }
 
     pub(crate) fn requeue_notifications(
@@ -176,16 +226,11 @@ impl BackgroundTaskManager {
         if notifications.is_empty() {
             return;
         }
+        let _ = self.inner.store.requeue_background_notifications(agent_id);
+    }
 
-        let mut state = self
-            .inner
-            .state
-            .lock()
-            .expect("background manager poisoned");
-        let agent = state.agents.entry(agent_id.to_string()).or_default();
-        for notification in notifications.into_iter().rev() {
-            agent.notifications.push_front(notification);
-        }
+    pub(crate) fn acknowledge_notifications(&self, agent_id: &str) {
+        let _ = self.inner.store.ack_background_notifications(agent_id);
     }
 
     pub(crate) fn check_task(
@@ -231,14 +276,6 @@ impl BackgroundTaskManager {
             status: completed.status.clone(),
             output_preview: Some(completed.output_preview.clone()),
         };
-        let notification = BackgroundNotification {
-            task_id: completed.id,
-            command: completed.command,
-            cwd: completed.cwd,
-            status: completed.status,
-            output_preview: completed.output_preview,
-        };
-
         let (observer, tasks) = {
             let mut state = self
                 .inner
@@ -251,15 +288,27 @@ impl BackgroundTaskManager {
             } else {
                 agent.tasks.push(summary.clone());
             }
-            agent.notifications.push_back(notification);
             (agent.observer.clone(), agent.tasks.clone())
         };
+        let _ = self
+            .inner
+            .store
+            .upsert_background_task(agent_id, &summary, NOTIFICATION_PENDING);
+        let _ = self.emit_hook(RuntimeHookEvent::BackgroundTaskFinished {
+            agent_id: agent_id.to_string(),
+            task_id: summary.id.clone(),
+            status: summary.status.as_str().to_string(),
+        });
 
         self.publish_observer(
             observer,
             tasks,
             AgentEvent::BackgroundTaskFinished { task: summary },
         );
+    }
+
+    fn emit_hook(&self, event: RuntimeHookEvent) -> Result<(), crate::runtime::RuntimeError> {
+        self.inner.hooks.emit(self.inner.store.as_ref(), &event)
     }
 
     fn publish_observer(
@@ -296,68 +345,41 @@ struct CompletedBackgroundTask {
     output_preview: String,
 }
 
-async fn execute_bash_task(id: String, command: String, cwd: PathBuf) -> CompletedBackgroundTask {
-    let mut process = match Command::new("bash")
-        .arg("-c")
-        .arg(&command)
-        .current_dir(&cwd)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(error) => {
-            return CompletedBackgroundTask {
-                id,
-                command,
-                cwd,
-                status: BackgroundTaskStatus::Failed,
-                output_preview: truncate_preview(&format!("Failed to spawn command: {error}")),
-            };
-        }
-    };
+async fn execute_task(
+    id: String,
+    request: CommandRequest,
+    executor: Arc<dyn RuntimeExecutor>,
+) -> CompletedBackgroundTask {
+    let command = request.spec.display().to_string();
+    let cwd = request.cwd.clone();
+    match executor.run(request).await {
+        Ok(output) => completed_task_from_output(id, command, cwd, output),
+        Err(error) => CompletedBackgroundTask {
+            id,
+            command,
+            cwd,
+            status: BackgroundTaskStatus::Failed,
+            output_preview: truncate_preview(&error),
+        },
+    }
+}
 
-    let mut stdout = process.stdout.take();
-    let mut stderr = process.stderr.take();
-
-    let stdout_task = tokio::spawn(async move {
-        let mut bytes = Vec::new();
-        if let Some(mut stdout) = stdout.take() {
-            let _ = stdout.read_to_end(&mut bytes).await;
-        }
-        bytes
-    });
-    let stderr_task = tokio::spawn(async move {
-        let mut bytes = Vec::new();
-        if let Some(mut stderr) = stderr.take() {
-            let _ = stderr.read_to_end(&mut bytes).await;
-        }
-        bytes
-    });
-
-    let status = process.wait().await;
-    let stdout = stdout_task.await.unwrap_or_default();
-    let stderr = stderr_task.await.unwrap_or_default();
-
-    let combined = [stdout, stderr].into_iter().flatten().collect::<Vec<_>>();
-    let preview = if combined.is_empty() {
+fn completed_task_from_output(
+    id: String,
+    command: String,
+    cwd: PathBuf,
+    output: CommandOutput,
+) -> CompletedBackgroundTask {
+    let combined = format!("{} {}", output.stdout, output.stderr);
+    let preview = if combined.trim().is_empty() {
         "(no output)".to_string()
     } else {
-        truncate_preview(&String::from_utf8_lossy(&combined))
+        truncate_preview(&combined)
     };
-
-    let status = match status {
-        Ok(exit) if exit.success() => BackgroundTaskStatus::Finished,
-        Ok(_) => BackgroundTaskStatus::Failed,
-        Err(error) => {
-            return CompletedBackgroundTask {
-                id,
-                command,
-                cwd,
-                status: BackgroundTaskStatus::Failed,
-                output_preview: truncate_preview(&format!("Failed to wait for command: {error}")),
-            };
-        }
+    let status = if output.success() {
+        BackgroundTaskStatus::Finished
+    } else {
+        BackgroundTaskStatus::Failed
     };
 
     CompletedBackgroundTask {

@@ -1,19 +1,21 @@
 mod agent;
 mod background;
 mod builder;
+mod control;
 mod error;
 mod handle;
 mod intrinsic;
 mod skill;
+mod store;
 mod task;
 mod team;
 
 use std::{collections::HashSet, path::Path};
 
 use crate::{
-    provider::{ModelInfo, ModelProviderKind, Provider, ProviderRegistry},
-    runtime::{builder::RuntimeBuilder, error::RuntimeError, skill::SkillLoadError},
-    tool::ToolHandler,
+    provider::{ModelInfo, Provider, ProviderDescriptor, ProviderId, ProviderRegistry},
+    runtime::{builder::RuntimeBuilder, skill::SkillLoadError},
+    tool::ExecutableTool,
 };
 
 pub(crate) use agent::AgentSpawnOptions;
@@ -24,11 +26,20 @@ pub use agent::{
     TeamConfig, WorkspaceConfig,
 };
 pub use background::{BackgroundTaskStatus, BackgroundTaskSummary};
+pub use control::{
+    AuditHook, AuditLogHook, CancellationFlag, CancellationToken, CommandOutput, CommandRequest,
+    CommandSpec, RunOptions, RuntimeExecutor, RuntimeHook, RuntimeHookEvent, RuntimeHooks,
+    RuntimePolicy,
+};
+pub use error::RuntimeError;
 pub(crate) use handle::RuntimeHandle;
+pub use store::{RuntimeStore, SqliteRuntimeStore};
+pub(crate) use store::{
+    LoadedAgentState, PersistedAgentRecord, PersistedPendingTurn, TaskStateSnapshot,
+};
 pub(crate) use intrinsic::TASK_TOOL_NAME;
 pub(crate) use task::{
     TASK_CREATE_TOOL_NAME, TASK_GET_TOOL_NAME, TASK_LIST_TOOL_NAME, TASK_UPDATE_TOOL_NAME,
-    TaskDiskState, TaskError,
 };
 pub use task::{TaskItem, TaskStatus};
 pub use team::{
@@ -52,7 +63,7 @@ impl Runtime {
 
     pub fn register_tool<T>(&self, tool: T)
     where
-        T: ToolHandler + 'static,
+        T: ExecutableTool + 'static,
     {
         self.handle.register_tool(tool);
     }
@@ -79,23 +90,55 @@ impl Runtime {
             name.into(),
             config,
             self.provider_registry
-                .get_provider(Some(model.provider))
-                .ok_or_else(|| RuntimeError::ProviderNotFound(Some(model.provider)))?,
+                .get_provider(Some(&model.provider))
+                .ok_or_else(|| RuntimeError::ProviderNotFound(Some(model.provider.clone())))?,
             AgentSpawnOptions {
                 hidden_tools: HashSet::new(),
                 ..AgentSpawnOptions::default()
             },
         )
     }
+
+    pub fn resume_agent(&self, agent_id: &str) -> Result<Agent, RuntimeError> {
+        let Some(state) = self.handle.store().load_agent(agent_id)? else {
+            return Err(RuntimeError::Store(format!(
+                "No persisted agent with id '{agent_id}'"
+            )));
+        };
+        let provider = self
+            .provider_registry
+            .get_provider(Some(&state.record.provider_id))
+            .ok_or_else(|| RuntimeError::ProviderNotFound(Some(state.record.provider_id.clone())))?;
+        Agent::from_loaded(self.handle.clone(), state, provider)
+    }
+
+    pub fn resume_all(&self) -> Result<Vec<Agent>, RuntimeError> {
+        let states = self.handle.store().list_agents()?;
+        let mut agents = Vec::new();
+        for state in states {
+            let provider = self
+                .provider_registry
+                .get_provider(Some(&state.record.provider_id))
+                .ok_or_else(|| {
+                    RuntimeError::ProviderNotFound(Some(state.record.provider_id.clone()))
+                })?;
+            agents.push(Agent::from_loaded(self.handle.clone(), state, provider)?);
+        }
+        Ok(agents)
+    }
 }
 
 impl Runtime {
-    pub fn providers(&self) -> Vec<ModelProviderKind> {
-        self.provider_registry.providers()
+    pub fn providers(&self) -> Vec<ProviderDescriptor> {
+        self.provider_registry.descriptors()
     }
 
-    pub fn register_provider(&mut self, kind: ModelProviderKind, api_key: impl Into<String>) {
-        self.provider_registry.register_provider(kind, api_key);
+    pub fn register_provider(
+        &mut self,
+        id: impl Into<ProviderId>,
+        api_key: impl Into<String>,
+    ) -> Result<(), String> {
+        self.provider_registry.register_builtin_provider(id, api_key)
     }
 
     pub fn register_provider_instance<P>(&mut self, provider: P)
@@ -107,11 +150,11 @@ impl Runtime {
 
     pub async fn list_models(
         &self,
-        provider: Option<ModelProviderKind>,
+        provider: Option<&ProviderId>,
     ) -> Result<Vec<ModelInfo>, RuntimeError> {
         self.provider_registry
             .get_provider(provider)
-            .ok_or(RuntimeError::ProviderNotFound(provider))?
+            .ok_or_else(|| RuntimeError::ProviderNotFound(provider.cloned()))?
             .list_models()
             .await
             .map_err(RuntimeError::FailedToListModels)

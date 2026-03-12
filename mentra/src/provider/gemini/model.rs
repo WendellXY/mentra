@@ -6,8 +6,8 @@ use serde_json::{Value, json};
 
 use crate::{
     provider::model::{
-        ContentBlock, ImageSource, Message, ModelInfo, ModelProviderKind, ProviderError, Request,
-        Role, ToolChoice,
+        ContentBlock, ImageSource, Message, ModelInfo, ProviderError, ProviderId, Request, Role,
+        ToolChoice,
     },
     tool::ToolSpec,
 };
@@ -57,7 +57,7 @@ impl From<GeminiModel> for ModelInfo {
 
         ModelInfo {
             id,
-            provider: ModelProviderKind::Gemini,
+            provider: ProviderId::from("gemini"),
             display_name: model.display_name,
             description: model.description,
             created_at: None,
@@ -412,6 +412,9 @@ mod tests {
                         "path": { "type": "string" }
                     }
                 }),
+                capabilities: vec![],
+                side_effect_level: crate::tool::ToolSideEffectLevel::None,
+                durability: crate::tool::ToolDurability::ReplaySafe,
             }]),
             tool_choice: Some(ToolChoice::Tool {
                 name: "read_file".to_string(),
@@ -543,6 +546,9 @@ mod tests {
                 name: "echo".to_string(),
                 description: None,
                 input_schema: json!({"type":"object"}),
+                capabilities: vec![],
+                side_effect_level: crate::tool::ToolSideEffectLevel::None,
+                durability: crate::tool::ToolDurability::ReplaySafe,
             }]),
             tool_choice: Some(ToolChoice::Any),
             temperature: None,
@@ -568,6 +574,9 @@ mod tests {
                 name: "echo".to_string(),
                 description: None,
                 input_schema: json!({"type":"object"}),
+                capabilities: vec![],
+                side_effect_level: crate::tool::ToolSideEffectLevel::None,
+                durability: crate::tool::ToolDurability::ReplaySafe,
             }]),
             tool_choice: Some(ToolChoice::Auto),
             temperature: None,
@@ -596,6 +605,9 @@ mod tests {
                 name: "echo".to_string(),
                 description: None,
                 input_schema: json!({"type":"object"}),
+                capabilities: vec![],
+                side_effect_level: crate::tool::ToolSideEffectLevel::None,
+                durability: crate::tool::ToolDurability::ReplaySafe,
             }]),
             tool_choice: None,
             temperature: None,

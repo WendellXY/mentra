@@ -2,21 +2,26 @@ use std::{
     collections::{BTreeSet, HashMap},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, RwLock},
+    time::Duration,
 };
 
 use crate::{
-    ContentBlock,
     runtime::{
         AgentEvent, AgentSnapshot,
         background::{BackgroundNotification, BackgroundTaskManager, BackgroundTaskSummary},
+        control::{
+            AuditHook, CommandRequest, CommandSpec, CommandOutput, LocalRuntimeExecutor,
+            RuntimeExecutor, RuntimeHookEvent, RuntimeHooks, RuntimePolicy, read_limited_file,
+        },
         error::RuntimeError,
+        store::{RuntimeStore, SqliteRuntimeStore},
         task::{self, TaskAccess},
         team::{
             TeamDispatch, TeamManager, TeamMemberSummary, TeamMessage, TeamProtocolRequestSummary,
             TeamRequestFilter,
         },
     },
-    tool::{ToolCall, ToolContext, ToolHandler, ToolRegistry, ToolSpec},
+    tool::{ExecutableTool, ToolRegistry, ToolSpec},
 };
 use tokio::sync::{broadcast, watch};
 
@@ -28,8 +33,12 @@ pub struct RuntimeHandle {
     pub(crate) skill_loader: Arc<RwLock<Option<SkillLoader>>>,
     pub(crate) background_tasks: BackgroundTaskManager,
     pub(crate) team: TeamManager,
+    pub(crate) store: Arc<dyn RuntimeStore>,
+    pub(crate) executor: Arc<dyn RuntimeExecutor>,
+    pub(crate) policy: Arc<RuntimePolicy>,
+    pub(crate) hooks: RuntimeHooks,
     pub(crate) runtime_intrinsics_enabled: bool,
-    pub(crate) state_lock: Arc<Mutex<()>>,
+    runtime_instance_id: String,
     agent_contexts: Arc<RwLock<HashMap<String, AgentExecutionConfig>>>,
 }
 
@@ -52,32 +61,189 @@ pub(crate) struct AgentExecutionConfig {
 
 impl RuntimeHandle {
     pub fn new() -> Self {
-        Self {
-            tool_registry: Arc::new(RwLock::new(ToolRegistry::default())),
+        Self::with_components(
+            Arc::new(SqliteRuntimeStore::default()),
+            Arc::new(LocalRuntimeExecutor),
+            Arc::new(RuntimePolicy::default()),
+            RuntimeHooks::new().with_hook(AuditHook),
+            true,
+        )
+    }
+
+    pub fn new_empty() -> Self {
+        Self::with_components(
+            Arc::new(SqliteRuntimeStore::default()),
+            Arc::new(LocalRuntimeExecutor),
+            Arc::new(RuntimePolicy::default()),
+            RuntimeHooks::new().with_hook(AuditHook),
+            false,
+        )
+    }
+
+    fn with_components(
+        store: Arc<dyn RuntimeStore>,
+        executor: Arc<dyn RuntimeExecutor>,
+        policy: Arc<RuntimePolicy>,
+        hooks: RuntimeHooks,
+        runtime_intrinsics_enabled: bool,
+    ) -> Self {
+        let _ = store.prepare_recovery();
+        let runtime_instance_id = format!("runtime-{}", std::process::id());
+        let mut tool_registry = if runtime_intrinsics_enabled {
+            ToolRegistry::default()
+        } else {
+            ToolRegistry::new_empty()
+        };
+        if runtime_intrinsics_enabled {
+            crate::runtime::intrinsic::register_tools(&mut tool_registry);
+        }
+        let handle = Self {
+            tool_registry: Arc::new(RwLock::new(tool_registry)),
             skill_loader: Arc::new(RwLock::new(None)),
-            background_tasks: BackgroundTaskManager::default(),
-            team: TeamManager::default(),
-            runtime_intrinsics_enabled: true,
-            state_lock: Arc::new(Mutex::new(())),
+            background_tasks: BackgroundTaskManager::new(store.clone(), executor.clone(), hooks.clone()),
+            team: TeamManager::new(store.clone()),
+            store,
+            executor,
+            policy,
+            hooks,
+            runtime_intrinsics_enabled,
+            runtime_instance_id,
+            agent_contexts: Arc::new(RwLock::new(HashMap::new())),
+        };
+        let _ = handle.emit_hook(RuntimeHookEvent::RecoveryPrepared {
+            runtime_instance_id: handle.runtime_instance_id.clone(),
+        });
+        handle
+    }
+
+    pub fn rebind_store(&self, store: Arc<dyn RuntimeStore>) -> Self {
+        let _ = store.prepare_recovery();
+        let handle = Self {
+            tool_registry: Arc::new(RwLock::new(
+                self.tool_registry
+                    .read()
+                    .expect("tool registry poisoned")
+                    .clone(),
+            )),
+            skill_loader: Arc::new(RwLock::new(
+                self.skill_loader
+                    .read()
+                    .expect("skill loader poisoned")
+                    .clone(),
+            )),
+            background_tasks: BackgroundTaskManager::new(
+                store.clone(),
+                self.executor.clone(),
+                self.hooks.clone(),
+            ),
+            team: TeamManager::new(store.clone()),
+            store,
+            executor: self.executor.clone(),
+            policy: self.policy.clone(),
+            hooks: self.hooks.clone(),
+            runtime_intrinsics_enabled: self.runtime_intrinsics_enabled,
+            runtime_instance_id: format!("runtime-{}", std::process::id()),
+            agent_contexts: Arc::new(RwLock::new(HashMap::new())),
+        };
+        let _ = handle.emit_hook(RuntimeHookEvent::RecoveryPrepared {
+            runtime_instance_id: handle.runtime_instance_id.clone(),
+        });
+        handle
+    }
+
+    pub fn with_executor(&self, executor: Arc<dyn RuntimeExecutor>) -> Self {
+        Self {
+            tool_registry: Arc::new(RwLock::new(
+                self.tool_registry
+                    .read()
+                    .expect("tool registry poisoned")
+                    .clone(),
+            )),
+            skill_loader: Arc::new(RwLock::new(
+                self.skill_loader
+                    .read()
+                    .expect("skill loader poisoned")
+                    .clone(),
+            )),
+            background_tasks: BackgroundTaskManager::new(
+                self.store.clone(),
+                executor.clone(),
+                self.hooks.clone(),
+            ),
+            team: self.team.clone(),
+            store: self.store.clone(),
+            executor,
+            policy: self.policy.clone(),
+            hooks: self.hooks.clone(),
+            runtime_intrinsics_enabled: self.runtime_intrinsics_enabled,
+            runtime_instance_id: format!("runtime-{}", std::process::id()),
             agent_contexts: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    pub fn new_empty() -> Self {
+    pub fn with_policy(&self, policy: RuntimePolicy) -> Self {
         Self {
-            tool_registry: Arc::new(RwLock::new(ToolRegistry::new_empty())),
-            skill_loader: Arc::new(RwLock::new(None)),
-            background_tasks: BackgroundTaskManager::default(),
-            team: TeamManager::default(),
-            runtime_intrinsics_enabled: false,
-            state_lock: Arc::new(Mutex::new(())),
+            tool_registry: Arc::new(RwLock::new(
+                self.tool_registry
+                    .read()
+                    .expect("tool registry poisoned")
+                    .clone(),
+            )),
+            skill_loader: Arc::new(RwLock::new(
+                self.skill_loader
+                    .read()
+                    .expect("skill loader poisoned")
+                    .clone(),
+            )),
+            background_tasks: BackgroundTaskManager::new(
+                self.store.clone(),
+                self.executor.clone(),
+                self.hooks.clone(),
+            ),
+            team: self.team.clone(),
+            store: self.store.clone(),
+            executor: self.executor.clone(),
+            policy: Arc::new(policy),
+            hooks: self.hooks.clone(),
+            runtime_intrinsics_enabled: self.runtime_intrinsics_enabled,
+            runtime_instance_id: format!("runtime-{}", std::process::id()),
+            agent_contexts: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    pub fn with_hooks(&self, hooks: RuntimeHooks) -> Self {
+        Self {
+            tool_registry: Arc::new(RwLock::new(
+                self.tool_registry
+                    .read()
+                    .expect("tool registry poisoned")
+                    .clone(),
+            )),
+            skill_loader: Arc::new(RwLock::new(
+                self.skill_loader
+                    .read()
+                    .expect("skill loader poisoned")
+                    .clone(),
+            )),
+            background_tasks: BackgroundTaskManager::new(
+                self.store.clone(),
+                self.executor.clone(),
+                hooks.clone(),
+            ),
+            team: self.team.clone(),
+            store: self.store.clone(),
+            executor: self.executor.clone(),
+            policy: self.policy.clone(),
+            hooks,
+            runtime_intrinsics_enabled: self.runtime_intrinsics_enabled,
+            runtime_instance_id: format!("runtime-{}", std::process::id()),
             agent_contexts: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     pub fn register_tool<T>(&self, tool: T)
     where
-        T: ToolHandler + 'static,
+        T: ExecutableTool + 'static,
     {
         self.tool_registry
             .write()
@@ -100,8 +266,8 @@ impl RuntimeHandle {
             .tools()
     }
 
-    pub fn runtime_intrinsics_enabled(&self) -> bool {
-        self.runtime_intrinsics_enabled
+    pub fn store(&self) -> Arc<dyn RuntimeStore> {
+        self.store.clone()
     }
 
     pub fn skill_descriptions(&self) -> Option<String> {
@@ -129,6 +295,7 @@ impl RuntimeHandle {
         config: AgentExecutionConfig,
         observer: &AgentObserver,
     ) -> Result<(), RuntimeError> {
+        self.acquire_agent_lease(agent_id)?;
         self.background_tasks.register_agent(agent_id, observer);
         self.team.register_agent(agent_name, &config, observer)?;
         self.agent_contexts
@@ -143,8 +310,37 @@ impl RuntimeHandle {
         agent_id: &str,
         command: String,
         cwd: PathBuf,
-    ) -> BackgroundTaskSummary {
-        self.background_tasks.start_task(agent_id, command, cwd)
+    ) -> Result<BackgroundTaskSummary, String> {
+        let config = self.agent_config(agent_id)?;
+        if let Err(detail) = self.policy.authorize_command(&config.base_dir, &cwd, true) {
+            let _ = self.emit_hook(RuntimeHookEvent::AuthorizationDenied {
+                agent_id: agent_id.to_string(),
+                action: "background_command".to_string(),
+                detail: detail.clone(),
+            });
+            return Err(detail);
+        }
+
+        if let Some(limit) = self.policy.background_task_limit
+            && self.background_tasks.running_task_count(agent_id) >= limit
+        {
+            let detail = format!("Background task limit of {limit} reached");
+            let _ = self.emit_hook(RuntimeHookEvent::AuthorizationDenied {
+                agent_id: agent_id.to_string(),
+                action: "background_limit".to_string(),
+                detail: detail.clone(),
+            });
+            return Err(detail);
+        }
+
+        self.background_tasks.start_task(
+            agent_id,
+            CommandRequest {
+                spec: CommandSpec::Shell { command },
+                cwd,
+                timeout: self.policy.command_timeout,
+            },
+        )
     }
 
     pub fn check_background_task(
@@ -166,6 +362,10 @@ impl RuntimeHandle {
     ) {
         self.background_tasks
             .requeue_notifications(agent_id, notifications);
+    }
+
+    pub fn acknowledge_background_notifications(&self, agent_id: &str) {
+        self.background_tasks.acknowledge_notifications(agent_id);
     }
 
     pub fn team_manager(&self) -> TeamManager {
@@ -222,6 +422,14 @@ impl RuntimeHandle {
         self.team.requeue_messages(team_dir, agent_name, messages)
     }
 
+    pub fn acknowledge_team_messages(
+        &self,
+        team_dir: &Path,
+        agent_name: &str,
+    ) -> Result<(), RuntimeError> {
+        self.team.acknowledge_messages(team_dir, agent_name)
+    }
+
     pub fn create_team_request(
         &self,
         team_dir: &Path,
@@ -262,8 +470,57 @@ impl RuntimeHandle {
         dir: &Path,
         access: TaskAccess<'_>,
     ) -> Result<String, String> {
-        let _guard = self.state_lock.lock().expect("state lock poisoned");
-        task::execute(tool_name, input, dir, access)
+        task::execute_with_store(self.store.as_ref(), tool_name, input, dir, access)
+    }
+
+    pub async fn execute_shell_command(
+        &self,
+        agent_id: &str,
+        command: String,
+        cwd: PathBuf,
+    ) -> Result<CommandOutput, String> {
+        let config = self.agent_config(agent_id)?;
+        if let Err(detail) = self.policy.authorize_command(&config.base_dir, &cwd, false) {
+            let _ = self.emit_hook(RuntimeHookEvent::AuthorizationDenied {
+                agent_id: agent_id.to_string(),
+                action: "shell_command".to_string(),
+                detail: detail.clone(),
+            });
+            return Err(detail);
+        }
+
+        self.executor
+            .run(CommandRequest {
+                spec: CommandSpec::Shell { command },
+                cwd,
+                timeout: self.policy.command_timeout,
+            })
+            .await
+    }
+
+    pub async fn read_file(
+        &self,
+        agent_id: &str,
+        path: &str,
+        max_lines: Option<usize>,
+    ) -> Result<String, String> {
+        let config = self.agent_config(agent_id)?;
+        let resolved = match self
+            .policy
+            .authorize_file_read(&config.base_dir, Path::new(path))
+        {
+            Ok(path) => path,
+            Err(detail) => {
+                let _ = self.emit_hook(RuntimeHookEvent::AuthorizationDenied {
+                    agent_id: agent_id.to_string(),
+                    action: "read_file".to_string(),
+                    detail: detail.clone(),
+                });
+                return Err(detail);
+            }
+        };
+
+        read_limited_file(&resolved, max_lines).await
     }
 
     pub fn resolve_working_directory(
@@ -287,9 +544,10 @@ impl RuntimeHandle {
             return Ok(config.base_dir);
         }
 
-        let tasks = task::TaskStore::new(config.tasks_dir)
-            .load_all()
-            .map_err(|error| error.to_string())?;
+        let tasks = self
+            .store
+            .load_tasks(&config.tasks_dir)
+            .map_err(|error| format!("{error:?}"))?;
         let owned = tasks
             .into_iter()
             .filter(|task| {
@@ -328,47 +586,38 @@ impl RuntimeHandle {
             .unwrap_or_else(|| PathBuf::from("."))
     }
 
-    pub async fn execute_tool(&self, agent_id: &str, tool_call: ToolCall) -> ContentBlock {
-        let tool = self
-            .tool_registry
+    pub fn emit_hook(&self, event: RuntimeHookEvent) -> Result<(), RuntimeError> {
+        self.hooks.emit(self.store.as_ref(), &event)
+    }
+
+    pub fn get_tool(&self, name: &str) -> Option<std::sync::Arc<dyn ExecutableTool>> {
+        self.tool_registry
             .read()
             .expect("tool registry poisoned")
-            .get_tool(&tool_call.name);
+            .get_tool(name)
+    }
 
-        if let Some(tool) = tool {
-            match tool
-                .invoke(
-                    ToolContext {
-                        agent_id: agent_id.to_string(),
-                        tool_call_id: tool_call.id.clone(),
-                        tool_name: tool_call.name.clone(),
-                        working_directory: self
-                            .resolve_working_directory(agent_id, None)
-                            .unwrap_or_else(|_| self.default_working_directory(agent_id)),
-                        runtime: self.clone(),
-                    },
-                    tool_call.input,
-                )
-                .await
-            {
-                Ok(content) => ContentBlock::ToolResult {
-                    tool_use_id: tool_call.id,
-                    content,
-                    is_error: false,
-                },
-                Err(content) => ContentBlock::ToolResult {
-                    tool_use_id: tool_call.id,
-                    content,
-                    is_error: true,
-                },
-            }
+    pub fn acquire_agent_lease(&self, agent_id: &str) -> Result<(), RuntimeError> {
+        let key = format!("agent:{agent_id}");
+        let acquired = self
+            .store
+            .acquire_lease(&key, &self.runtime_instance_id, Duration::from_secs(3600))?;
+        if acquired {
+            Ok(())
         } else {
-            ContentBlock::ToolResult {
-                tool_use_id: tool_call.id,
-                content: "Tool not found".to_string(),
-                is_error: true,
-            }
+            Err(RuntimeError::LeaseUnavailable(format!(
+                "Agent '{agent_id}' is already leased by another runtime"
+            )))
         }
+    }
+
+    fn agent_config(&self, agent_id: &str) -> Result<AgentExecutionConfig, String> {
+        self.agent_contexts
+            .read()
+            .expect("agent context registry poisoned")
+            .get(agent_id)
+            .cloned()
+            .ok_or_else(|| format!("Unknown agent '{agent_id}'"))
     }
 }
 

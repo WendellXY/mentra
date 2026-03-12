@@ -3,12 +3,14 @@ use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 #[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use serde::{Deserialize, Serialize};
+
 use crate::provider::ToolChoice;
 
 #[cfg(test)]
 static NEXT_TEST_TRANSCRIPT_DIR_ID: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskConfig {
     pub tasks_dir: PathBuf,
     pub reminder_threshold: usize,
@@ -23,7 +25,7 @@ impl Default for TaskConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeamAutonomyConfig {
     pub enabled: bool,
     pub poll_interval: Duration,
@@ -40,7 +42,7 @@ impl Default for TeamAutonomyConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeamConfig {
     pub team_dir: PathBuf,
     pub autonomy: TeamAutonomyConfig,
@@ -55,7 +57,7 @@ impl Default for TeamConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextCompactionConfig {
     pub keep_recent_tool_results: usize,
     pub auto_compact_threshold_tokens: Option<usize>,
@@ -76,7 +78,7 @@ impl Default for ContextCompactionConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceConfig {
     pub base_dir: PathBuf,
     pub auto_route_shell: bool,
@@ -118,7 +120,7 @@ fn default_transcript_dir() -> PathBuf {
         .join(format!("process-{}-{suffix}", std::process::id()))
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     pub system: Option<String>,
     pub tool_choice: Option<ToolChoice>,

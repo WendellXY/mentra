@@ -6,7 +6,7 @@ mod sse;
 
 use crate::provider::{
     Provider,
-    model::{ModelInfo, ModelProviderKind, ProviderError, ProviderEventStream, Request},
+    model::{ModelInfo, ProviderDescriptor, ProviderError, ProviderEventStream, ProviderId, Request},
 };
 
 const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/";
@@ -40,8 +40,12 @@ impl GeminiProvider {
 
 #[async_trait]
 impl Provider for GeminiProvider {
-    fn kind(&self) -> ModelProviderKind {
-        ModelProviderKind::Gemini
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            id: ProviderId::from("gemini"),
+            display_name: Some("Gemini".to_string()),
+            description: Some("Google Gemini Developer API provider".to_string()),
+        }
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {

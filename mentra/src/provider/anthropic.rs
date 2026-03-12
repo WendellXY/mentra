@@ -9,7 +9,7 @@ mod stream_model;
 
 use crate::provider::{
     Provider,
-    model::{ModelInfo, ModelProviderKind, ProviderError, ProviderEventStream, Request},
+    model::{ModelInfo, ProviderDescriptor, ProviderError, ProviderEventStream, ProviderId, Request},
 };
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
@@ -47,8 +47,12 @@ impl AnthropicProvider {
 
 #[async_trait]
 impl Provider for AnthropicProvider {
-    fn kind(&self) -> ModelProviderKind {
-        ModelProviderKind::Anthropic
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            id: ProviderId::from("anthropic"),
+            display_name: Some("Anthropic".to_string()),
+            description: Some("Anthropic Messages API provider".to_string()),
+        }
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {

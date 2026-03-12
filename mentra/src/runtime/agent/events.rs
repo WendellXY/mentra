@@ -1,12 +1,14 @@
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     ContentBlock, Message,
     runtime::{BackgroundTaskSummary, TaskItem, TeamMemberSummary, TeamProtocolRequestSummary},
     tool::ToolCall,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum AgentStatus {
     #[default]
     Idle,
@@ -16,11 +18,12 @@ pub enum AgentStatus {
         id: String,
         name: String,
     },
+    Interrupted,
     Finished,
     Failed(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingToolUseSummary {
     pub id: String,
     pub name: String,
@@ -28,14 +31,14 @@ pub struct PendingToolUseSummary {
     pub complete: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SpawnedAgentStatus {
     Running,
     Finished,
     Failed(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpawnedAgentSummary {
     pub id: String,
     pub name: String,
@@ -43,13 +46,13 @@ pub struct SpawnedAgentSummary {
     pub status: SpawnedAgentStatus,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContextCompactionTrigger {
     Auto,
     Manual,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextCompactionDetails {
     pub trigger: ContextCompactionTrigger,
     pub transcript_path: PathBuf,
@@ -58,7 +61,7 @@ pub struct ContextCompactionDetails {
     pub resulting_history_len: usize,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AgentSnapshot {
     pub status: AgentStatus,
     pub history_len: usize,
