@@ -14,9 +14,8 @@ use crate::{
     },
     runtime::{
         Agent, AgentConfig, AgentEvent, BackgroundTaskStatus, CancellationToken, RunOptions,
-        Runtime, RuntimeError, RuntimePolicy, SpawnedAgentStatus, SqliteRuntimeStore,
-        TaskConfig, TeamAutonomyConfig, TeamConfig, TeamMemberStatus, TeamProtocolStatus,
-        WorkspaceConfig,
+        Runtime, RuntimeError, RuntimePolicy, SpawnedAgentStatus, SqliteRuntimeStore, TaskConfig,
+        TeamAutonomyConfig, TeamConfig, TeamMemberStatus, TeamProtocolStatus, WorkspaceConfig,
         task::{self, TaskAccess},
     },
 };
@@ -91,23 +90,15 @@ async fn send_tool_use_turn_executes_tool_and_commits_follow_up_response() {
     assert_eq!(agent.history().len(), 4);
     assert_eq!(
         agent.history()[2],
-        Message {
-            role: Role::User,
-            content: vec![ContentBlock::ToolResult {
-                tool_use_id: "tool-1".to_string(),
-                content: "tool output".to_string(),
-                is_error: false,
-            }],
-        }
+        Message::user(ContentBlock::ToolResult {
+            tool_use_id: "tool-1".to_string(),
+            content: "tool output".to_string(),
+            is_error: false,
+        })
     );
     assert_eq!(
         agent.last_message(),
-        Some(&Message {
-            role: Role::Assistant,
-            content: vec![ContentBlock::Text {
-                text: "done".to_string(),
-            }],
-        })
+        Some(&Message::assistant(ContentBlock::text("done")))
     );
 
     let events = collect_events(&mut events);
@@ -190,23 +181,15 @@ async fn tool_execution_error_is_wrapped_and_loop_continues() {
 
     assert_eq!(
         agent.history()[2],
-        Message {
-            role: Role::User,
-            content: vec![ContentBlock::ToolResult {
-                tool_use_id: "tool-1".to_string(),
-                content: "tool failed".to_string(),
-                is_error: true,
-            }],
-        }
+        Message::user(ContentBlock::ToolResult {
+            tool_use_id: "tool-1".to_string(),
+            content: "tool failed".to_string(),
+            is_error: true,
+        })
     );
     assert_eq!(
         agent.last_message(),
-        Some(&Message {
-            role: Role::Assistant,
-            content: vec![ContentBlock::Text {
-                text: "handled".to_string(),
-            }],
-        })
+        Some(&Message::assistant(ContentBlock::text("handled")))
     );
 }
 
@@ -249,25 +232,17 @@ async fn background_run_tool_starts_task_and_continues_the_turn() {
 
     assert_eq!(
         agent.history()[2],
-        Message {
-            role: Role::User,
-            content: vec![ContentBlock::ToolResult {
-                tool_use_id: "tool-bg".to_string(),
-                content: format!(
-                    "Started background task bg-1 in {cwd} for `sleep 0.2; printf bg-done`"
-                ),
-                is_error: false,
-            }],
-        }
+        Message::user(ContentBlock::ToolResult {
+            tool_use_id: "tool-bg".to_string(),
+            content: format!(
+                "Started background task bg-1 in {cwd} for `sleep 0.2; printf bg-done`"
+            ),
+            is_error: false,
+        })
     );
     assert_eq!(
         agent.last_message(),
-        Some(&Message {
-            role: Role::Assistant,
-            content: vec![ContentBlock::Text {
-                text: "continued".to_string(),
-            }],
-        })
+        Some(&Message::assistant(ContentBlock::text("continued")))
     );
 
     let background_tasks = agent.watch_snapshot().borrow().background_tasks.clone();
@@ -1073,15 +1048,12 @@ async fn registered_skills_are_exposed_and_load_skill_returns_wrapped_content() 
 
     assert_eq!(
         agent.history()[2],
-        Message {
-            role: Role::User,
-            content: vec![ContentBlock::ToolResult {
-                tool_use_id: "tool-skill".to_string(),
-                content: "<skill name=\"git\">\nUse feature branches.\nRun tests first.\n</skill>"
-                    .to_string(),
-                is_error: false,
-            }],
-        }
+        Message::user(ContentBlock::ToolResult {
+            tool_use_id: "tool-skill".to_string(),
+            content: "<skill name=\"git\">\nUse feature branches.\nRun tests first.\n</skill>"
+                .to_string(),
+            is_error: false,
+        })
     );
 
     let requests = provider_handle.recorded_requests().await;
@@ -1183,23 +1155,15 @@ async fn task_tool_runs_child_with_isolated_history_and_filtered_tools() {
     assert_eq!(agent.history().len(), 4);
     assert_eq!(
         agent.history()[2],
-        Message {
-            role: Role::User,
-            content: vec![ContentBlock::ToolResult {
-                tool_use_id: "tool-parent".to_string(),
-                content: "child summary".to_string(),
-                is_error: false,
-            }],
-        }
+        Message::user(ContentBlock::ToolResult {
+            tool_use_id: "tool-parent".to_string(),
+            content: "child summary".to_string(),
+            is_error: false,
+        })
     );
     assert_eq!(
         agent.last_message(),
-        Some(&Message {
-            role: Role::Assistant,
-            content: vec![ContentBlock::Text {
-                text: "parent done".to_string(),
-            }],
-        })
+        Some(&Message::assistant(ContentBlock::text("parent done")))
     );
 
     let requests = provider_handle.recorded_requests().await;
@@ -1332,24 +1296,16 @@ async fn task_tool_wraps_child_failure_and_parent_continues() {
 
     assert_eq!(
         agent.history()[2],
-        Message {
-            role: Role::User,
-            content: vec![ContentBlock::ToolResult {
-                tool_use_id: "tool-parent".to_string(),
-                content: "Subagent failed: FailedToStreamResponse(MalformedStream(\"boom\"))"
-                    .to_string(),
-                is_error: true,
-            }],
-        }
+        Message::user(ContentBlock::ToolResult {
+            tool_use_id: "tool-parent".to_string(),
+            content: "Subagent failed: FailedToStreamResponse(MalformedStream(\"boom\"))"
+                .to_string(),
+            is_error: true,
+        })
     );
     assert_eq!(
         agent.last_message(),
-        Some(&Message {
-            role: Role::Assistant,
-            content: vec![ContentBlock::Text {
-                text: "handled".to_string(),
-            }],
-        })
+        Some(&Message::assistant(ContentBlock::text("handled")))
     );
 
     let subagents = agent.watch_snapshot().borrow().subagents.clone();
@@ -1391,14 +1347,11 @@ async fn child_rejects_nested_task_requests_without_recursing() {
 
     assert_eq!(
         agent.history()[2],
-        Message {
-            role: Role::User,
-            content: vec![ContentBlock::ToolResult {
-                tool_use_id: "parent-task".to_string(),
-                content: "child recovered".to_string(),
-                is_error: false,
-            }],
-        }
+        Message::user(ContentBlock::ToolResult {
+            tool_use_id: "parent-task".to_string(),
+            content: "child recovered".to_string(),
+            is_error: false,
+        })
     );
 
     let requests = provider_handle.recorded_requests().await;
@@ -1407,14 +1360,11 @@ async fn child_rejects_nested_task_requests_without_recursing() {
     assert_eq!(requests[2].messages.len(), 3);
     assert_eq!(
         requests[2].messages[2],
-        Message {
-            role: Role::User,
-            content: vec![ContentBlock::ToolResult {
-                tool_use_id: "child-task".to_string(),
-                content: "Tool 'task' is not available for this agent".to_string(),
-                is_error: true,
-            }],
-        }
+        Message::user(ContentBlock::ToolResult {
+            tool_use_id: "child-task".to_string(),
+            content: "Tool 'task' is not available for this agent".to_string(),
+            is_error: true,
+        })
     );
 }
 
@@ -1437,8 +1387,7 @@ async fn task_tool_returns_error_when_child_hits_round_limit() {
     }
     scripts.push(text_stream(&model.id, "parent handled"));
 
-    let provider =
-        ScriptedProvider::new(ProviderId::ANTHROPIC, vec![model.clone()], scripts);
+    let provider = ScriptedProvider::new(ProviderId::ANTHROPIC, vec![model.clone()], scripts);
     let provider_handle = provider.clone();
 
     let runtime = Runtime::builder()
@@ -1457,25 +1406,16 @@ async fn task_tool_returns_error_when_child_hits_round_limit() {
 
     assert_eq!(
         agent.history()[2],
-        Message {
-            role: Role::User,
-            content: vec![ContentBlock::ToolResult {
-                tool_use_id: "parent-task".to_string(),
-                content: "Subagent failed: MaxRoundsExceeded(30)".to_string(),
-                is_error: true,
-            }],
-        }
+        Message::user(ContentBlock::ToolResult {
+            tool_use_id: "parent-task".to_string(),
+            content: "Subagent failed: MaxRoundsExceeded(30)".to_string(),
+            is_error: true,
+        })
     );
     assert_eq!(
         agent.last_message(),
-        Some(&Message {
-            role: Role::Assistant,
-            content: vec![ContentBlock::Text {
-                text: "parent handled".to_string(),
-            }],
-        })
+        Some(&Message::assistant(ContentBlock::text("parent handled")))
     );
-
     let requests = provider_handle.recorded_requests().await;
     assert_eq!(requests.len(), 32);
 }
@@ -2702,7 +2642,10 @@ async fn autonomous_teammate_does_not_claim_more_work_while_owning_unfinished_ta
     wait_for_snapshot_task_owner(&lead, 1, "alice").await;
     sleep(Duration::from_millis(120)).await;
 
-    assert_eq!(load_task(&store, &tasks_dir, 1)["owner"].as_str(), Some("alice"));
+    assert_eq!(
+        load_task(&store, &tasks_dir, 1)["owner"].as_str(),
+        Some("alice")
+    );
     assert_eq!(load_task(&store, &tasks_dir, 2)["owner"].as_str(), Some(""));
     assert_eq!(provider_handle.recorded_requests().await.len(), 1);
 }
@@ -2828,7 +2771,10 @@ async fn teammate_task_updates_are_limited_to_owned_tasks() {
         load_task(&store, &tasks_dir, 1)["status"].as_str(),
         Some("in_progress")
     );
-    assert_eq!(load_task(&store, &tasks_dir, 2)["status"].as_str(), Some("pending"));
+    assert_eq!(
+        load_task(&store, &tasks_dir, 2)["status"].as_str(),
+        Some("pending")
+    );
 }
 
 #[tokio::test]
@@ -2885,7 +2831,10 @@ async fn teammate_task_subagent_inherits_owner_restrictions() {
         .expect("spawn teammate");
     wait_for_teammate_status(&lead, TeamMemberStatus::Idle).await;
 
-    assert_eq!(load_task(&store, &tasks_dir, 2)["status"].as_str(), Some("pending"));
+    assert_eq!(
+        load_task(&store, &tasks_dir, 2)["status"].as_str(),
+        Some("pending")
+    );
 }
 
 #[tokio::test]
@@ -3233,11 +3182,9 @@ fn temp_store(label: &str) -> SqliteRuntimeStore {
         .duration_since(UNIX_EPOCH)
         .expect("system time")
         .as_nanos();
-    SqliteRuntimeStore::new(
-        std::env::temp_dir().join(format!(
-            "mentra-runtime-store-{label}-{timestamp}-{unique}.sqlite"
-        )),
-    )
+    SqliteRuntimeStore::new(std::env::temp_dir().join(format!(
+        "mentra-runtime-store-{label}-{timestamp}-{unique}.sqlite"
+    )))
 }
 
 fn team_config(team_dir: PathBuf) -> TeamConfig {

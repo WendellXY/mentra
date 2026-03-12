@@ -112,12 +112,9 @@ impl Agent {
         let replaced_messages = summary_target.len();
         let preserved_messages = self.history.len() - preserve_from;
         let mut next_history = Vec::with_capacity(self.history.len() - preserve_from + 1);
-        next_history.push(Message {
-            role: Role::User,
-            content: vec![ContentBlock::Text {
-                text: format!("[Compressed context]\n\n{summary}"),
-            }],
-        });
+        next_history.push(Message::user(ContentBlock::text(format!(
+            "[Compressed context]\n\n{summary}"
+        ))));
         next_history.extend_from_slice(&self.history[preserve_from..]);
         self.replace_history(next_history);
 
@@ -217,10 +214,7 @@ impl Agent {
             .send(Request {
                 model: self.model.as_str().into(),
                 system: Some(Cow::Borrowed(system)),
-                messages: Cow::Owned(vec![Message {
-                    role: Role::User,
-                    content: vec![ContentBlock::Text { text: prompt }],
-                }]),
+                messages: Cow::Owned(vec![Message::user(ContentBlock::Text { text: prompt })]),
                 tools: Cow::Owned(Vec::new()),
                 tool_choice: None,
                 temperature: Some(0.0),
@@ -268,24 +262,18 @@ impl Agent {
 
         messages.insert(
             0,
-            Message {
-                role: Role::User,
-                content: vec![ContentBlock::Text {
-                    text: format!(
-                        "<identity>You are teammate '{}' with role '{}' on the team led by '{}'. Continue your assigned work and stay in character.</identity>",
-                        self.name, identity.role, identity.lead
-                    ),
-                }],
-            },
+            Message::user(ContentBlock::Text {
+                text: format!(
+                    "<identity>You are teammate '{}' with role '{}' on the team led by '{}'. Continue your assigned work and stay in character.</identity>",
+                    self.name, identity.role, identity.lead
+                ),
+            }),
         );
         messages.insert(
             1,
-            Message {
-                role: Role::Assistant,
-                content: vec![ContentBlock::Text {
-                    text: format!("I am {}. Continuing.", self.name),
-                }],
-            },
+            Message::assistant(ContentBlock::Text {
+                text: format!("I am {}. Continuing.", self.name),
+            }),
         );
     }
 }

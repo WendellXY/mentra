@@ -68,12 +68,12 @@ impl<'a> TurnRunner<'a> {
                     .emit_event(AgentEvent::ToolExecutionStarted { call: call.clone() });
                 self.agent.update_run_state("executing_tool", None)?;
 
-                let (result, task_succeeded, should_end_turn) = if !self.agent.can_use_tool(&call.name)
-                {
-                    (self.unavailable_tool_result(call), false, false)
-                } else {
-                    self.execute_registered_tool(call).await
-                };
+                let (result, task_succeeded, should_end_turn) =
+                    if !self.agent.can_use_tool(&call.name) {
+                        (self.unavailable_tool_result(call), false, false)
+                    } else {
+                        self.execute_registered_tool(call).await
+                    };
                 self.agent.emit_event(AgentEvent::ToolExecutionFinished {
                     result: result.clone(),
                 });
@@ -111,7 +111,9 @@ impl<'a> TurnRunner<'a> {
         let mut request_history = self.agent.micro_compacted_history();
         self.agent.inject_teammate_identity(&mut request_history);
         if self.model_requests >= self.options.model_budget() {
-            return Err(RuntimeError::ModelBudgetExceeded(self.options.model_budget()));
+            return Err(RuntimeError::ModelBudgetExceeded(
+                self.options.model_budget(),
+            ));
         }
 
         let request = Request {
@@ -129,45 +131,56 @@ impl<'a> TurnRunner<'a> {
             self.options.check_limits()?;
             attempt += 1;
             self.model_requests += 1;
-            self.agent.runtime.emit_hook(RuntimeHookEvent::ModelRequestStarted {
-                agent_id: self.agent.id().to_string(),
-                model: self.agent.model().to_string(),
-                attempt,
-            })?;
+            self.agent
+                .runtime
+                .emit_hook(RuntimeHookEvent::ModelRequestStarted {
+                    agent_id: self.agent.id().to_string(),
+                    model: self.agent.model().to_string(),
+                    attempt,
+                })?;
             match provider.stream(request.clone()).await {
                 Ok(stream) => {
-                    self.agent.runtime.emit_hook(RuntimeHookEvent::ModelRequestFinished {
-                        agent_id: self.agent.id().to_string(),
-                        model: self.agent.model().to_string(),
-                        attempt,
-                        success: true,
-                        error: None,
-                    })?;
+                    self.agent
+                        .runtime
+                        .emit_hook(RuntimeHookEvent::ModelRequestFinished {
+                            agent_id: self.agent.id().to_string(),
+                            model: self.agent.model().to_string(),
+                            attempt,
+                            success: true,
+                            error: None,
+                        })?;
                     break stream;
                 }
                 Err(error)
-                    if attempt <= self.options.retry_budget && is_transient_provider_error(&error) =>
+                    if attempt <= self.options.retry_budget
+                        && is_transient_provider_error(&error) =>
                 {
-                    self.agent.runtime.emit_hook(RuntimeHookEvent::ModelRequestFinished {
-                        agent_id: self.agent.id().to_string(),
-                        model: self.agent.model().to_string(),
-                        attempt,
-                        success: false,
-                        error: Some(format!("{error:?}")),
-                    })?;
+                    self.agent
+                        .runtime
+                        .emit_hook(RuntimeHookEvent::ModelRequestFinished {
+                            agent_id: self.agent.id().to_string(),
+                            model: self.agent.model().to_string(),
+                            attempt,
+                            success: false,
+                            error: Some(format!("{error:?}")),
+                        })?;
                     if self.model_requests >= self.options.model_budget() {
-                        return Err(RuntimeError::ModelBudgetExceeded(self.options.model_budget()));
+                        return Err(RuntimeError::ModelBudgetExceeded(
+                            self.options.model_budget(),
+                        ));
                     }
                     continue;
                 }
                 Err(error) => {
-                    self.agent.runtime.emit_hook(RuntimeHookEvent::ModelRequestFinished {
-                        agent_id: self.agent.id().to_string(),
-                        model: self.agent.model().to_string(),
-                        attempt,
-                        success: false,
-                        error: Some(format!("{error:?}")),
-                    })?;
+                    self.agent
+                        .runtime
+                        .emit_hook(RuntimeHookEvent::ModelRequestFinished {
+                            agent_id: self.agent.id().to_string(),
+                            model: self.agent.model().to_string(),
+                            attempt,
+                            success: false,
+                            error: Some(format!("{error:?}")),
+                        })?;
                     return Err(RuntimeError::FailedToStreamResponse(error));
                 }
             }
@@ -238,12 +251,20 @@ impl<'a> TurnRunner<'a> {
             .agent
             .runtime
             .resolve_working_directory(self.agent.id(), None)
-            .unwrap_or_else(|_| self.agent.runtime.default_working_directory(self.agent.id()));
-        if let Err(error) = self.agent.runtime.emit_hook(RuntimeHookEvent::ToolExecutionStarted {
-            agent_id: self.agent.id().to_string(),
-            tool_name: call.name.clone(),
-            tool_call_id: call.id.clone(),
-        }) {
+            .unwrap_or_else(|_| {
+                self.agent
+                    .runtime
+                    .default_working_directory(self.agent.id())
+            });
+        if let Err(error) = self
+            .agent
+            .runtime
+            .emit_hook(RuntimeHookEvent::ToolExecutionStarted {
+                agent_id: self.agent.id().to_string(),
+                tool_name: call.name.clone(),
+                tool_call_id: call.id.clone(),
+            })
+        {
             return (
                 ContentBlock::ToolResult {
                     tool_use_id: call.id,
@@ -290,14 +311,17 @@ impl<'a> TurnRunner<'a> {
         } else {
             None
         };
-        let _ = self.agent.runtime.emit_hook(RuntimeHookEvent::ToolExecutionFinished {
-            agent_id: self.agent.id().to_string(),
-            tool_name: call.name,
-            tool_call_id: call.id,
-            is_error,
-            error,
-            output_preview,
-        });
+        let _ = self
+            .agent
+            .runtime
+            .emit_hook(RuntimeHookEvent::ToolExecutionFinished {
+                agent_id: self.agent.id().to_string(),
+                tool_name: call.name,
+                tool_call_id: call.id,
+                is_error,
+                error,
+                output_preview,
+            });
         let touched_task = !is_error
             && spec
                 .capabilities
@@ -318,12 +342,7 @@ impl Agent {
         }
 
         self.inflight_team_messages.extend(messages.iter().cloned());
-        self.push_history(Message {
-            role: Role::User,
-            content: vec![ContentBlock::Text {
-                text: format_inbox(&messages),
-            }],
-        });
+        self.push_history(Message::user(ContentBlock::text(format_inbox(&messages))));
         Ok(())
     }
 
@@ -351,17 +370,13 @@ impl Agent {
 
         self.inflight_background_notifications
             .extend(notifications.iter().cloned());
-        self.push_history(Message {
-            role: Role::User,
-            content: vec![ContentBlock::Text {
-                text: format_background_results(&notifications),
-            }],
-        });
+        self.push_history(Message::user(ContentBlock::text(
+            format_background_results(&notifications),
+        )));
     }
 
     pub(super) fn clear_inflight_background_notifications(&mut self) {
-        self.runtime
-            .acknowledge_background_notifications(&self.id);
+        self.runtime.acknowledge_background_notifications(&self.id);
         self.inflight_background_notifications.clear();
     }
 

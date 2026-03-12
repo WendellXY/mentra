@@ -61,14 +61,11 @@ async fn micro_compaction_only_rewrites_old_tool_results_in_requests() {
 
     assert_eq!(
         agent.history()[2],
-        Message {
-            role: Role::User,
-            content: vec![ContentBlock::ToolResult {
-                tool_use_id: "tool-1".to_string(),
-                content: long_output.clone(),
-                is_error: false,
-            }],
-        }
+        Message::user(ContentBlock::ToolResult {
+            tool_use_id: "tool-1".to_string(),
+            content: long_output.clone(),
+            is_error: false,
+        })
     );
 
     let requests = provider_handle.recorded_requests().await;

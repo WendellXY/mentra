@@ -52,12 +52,7 @@ fn text_turn_commits_after_message_stop() {
 
     assert_eq!(
         pending.to_message().unwrap(),
-        Message {
-            role: Role::Assistant,
-            content: vec![ContentBlock::Text {
-                text: "Hello".to_string(),
-            }],
-        }
+        Message::assistant(ContentBlock::text("Hello"))
     );
 }
 

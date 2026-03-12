@@ -383,26 +383,17 @@ mod tests {
             model: Cow::Borrowed("gemini-2.0-flash"),
             system: Some(Cow::Borrowed("Be helpful.")),
             messages: Cow::Owned(vec![
-                Message {
-                    role: Role::User,
-                    content: vec![ContentBlock::text("What files changed?")],
-                },
-                Message {
-                    role: Role::Assistant,
-                    content: vec![ContentBlock::ToolUse {
-                        id: "call_1".to_string(),
-                        name: "read_file".to_string(),
-                        input: json!({ "path": "README.md" }),
-                    }],
-                },
-                Message {
-                    role: Role::User,
-                    content: vec![ContentBlock::ToolResult {
-                        tool_use_id: "call_1".to_string(),
-                        content: "README contents".to_string(),
-                        is_error: false,
-                    }],
-                },
+                Message::user(ContentBlock::text("What files changed?")),
+                Message::assistant(ContentBlock::ToolUse {
+                    id: "call_1".to_string(),
+                    name: "read_file".to_string(),
+                    input: json!({ "path": "README.md" }),
+                }),
+                Message::user(ContentBlock::ToolResult {
+                    tool_use_id: "call_1".to_string(),
+                    content: "README contents".to_string(),
+                    is_error: false,
+                }),
             ]),
             tools: Cow::Owned(vec![ToolSpec {
                 name: "read_file".to_string(),
@@ -512,10 +503,9 @@ mod tests {
         let request = Request {
             model: Cow::Borrowed("gemini-2.0-flash"),
             system: None,
-            messages: Cow::Owned(vec![Message {
-                role: Role::User,
-                content: vec![ContentBlock::image_url("https://example.com/image.png")],
-            }]),
+            messages: Cow::Owned(vec![Message::user(ContentBlock::image_url(
+                "https://example.com/image.png",
+            ))]),
             tools: Cow::Owned(vec![]),
             tool_choice: None,
             temperature: None,
@@ -539,10 +529,7 @@ mod tests {
         let request = Request {
             model: Cow::Borrowed("gemini-2.0-flash"),
             system: None,
-            messages: Cow::Owned(vec![Message {
-                role: Role::User,
-                content: vec![ContentBlock::text("hi")],
-            }]),
+            messages: Cow::Owned(vec![Message::user(ContentBlock::text("hi"))]),
             tools: Cow::Owned(vec![ToolSpec {
                 name: "echo".to_string(),
                 description: None,
@@ -567,10 +554,7 @@ mod tests {
         let request = Request {
             model: Cow::Borrowed("gemini-2.0-flash"),
             system: None,
-            messages: Cow::Owned(vec![Message {
-                role: Role::User,
-                content: vec![ContentBlock::text("hi")],
-            }]),
+            messages: Cow::Owned(vec![Message::user(ContentBlock::text("hi"))]),
             tools: Cow::Owned(vec![ToolSpec {
                 name: "echo".to_string(),
                 description: None,
@@ -598,10 +582,7 @@ mod tests {
         let request = Request {
             model: Cow::Borrowed("gemini-2.0-flash"),
             system: None,
-            messages: Cow::Owned(vec![Message {
-                role: Role::User,
-                content: vec![ContentBlock::text("hi")],
-            }]),
+            messages: Cow::Owned(vec![Message::user(ContentBlock::text("hi"))]),
             tools: Cow::Owned(vec![ToolSpec {
                 name: "echo".to_string(),
                 description: None,

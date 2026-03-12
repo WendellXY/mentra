@@ -329,30 +329,18 @@ mod tests {
             model: Cow::Borrowed("gpt-5"),
             system: Some(Cow::Borrowed("Be helpful.")),
             messages: Cow::Owned(vec![
-                Message {
-                    role: Role::User,
-                    content: vec![ContentBlock::text("What files changed?")],
-                },
-                Message {
-                    role: Role::Assistant,
-                    content: vec![ContentBlock::text("I'll inspect that.")],
-                },
-                Message {
-                    role: Role::Assistant,
-                    content: vec![ContentBlock::ToolUse {
-                        id: "call_123".to_string(),
-                        name: "read_file".to_string(),
-                        input: json!({ "path": "README.md" }),
-                    }],
-                },
-                Message {
-                    role: Role::User,
-                    content: vec![ContentBlock::ToolResult {
-                        tool_use_id: "call_123".to_string(),
-                        content: "README contents".to_string(),
-                        is_error: false,
-                    }],
-                },
+                Message::user(ContentBlock::text("What files changed?")),
+                Message::assistant(ContentBlock::text("I'll inspect that.")),
+                Message::assistant(ContentBlock::ToolUse {
+                    id: "call_123".to_string(),
+                    name: "read_file".to_string(),
+                    input: json!({ "path": "README.md" }),
+                }),
+                Message::assistant(ContentBlock::ToolResult {
+                    tool_use_id: "call_123".to_string(),
+                    content: "README contents".to_string(),
+                    is_error: false,
+                }),
             ]),
             tools: Cow::Owned(vec![ToolSpec {
                 name: "read_file".to_string(),
@@ -416,14 +404,11 @@ mod tests {
         let request = Request {
             model: Cow::Borrowed("gpt-5"),
             system: None,
-            messages: Cow::Owned(vec![Message {
-                role: Role::User,
-                content: vec![ContentBlock::ToolResult {
-                    tool_use_id: "call_456".to_string(),
-                    content: "No such file".to_string(),
-                    is_error: true,
-                }],
-            }]),
+            messages: Cow::Owned(vec![Message::user(ContentBlock::ToolResult {
+                tool_use_id: "call_456".to_string(),
+                content: "No such file".to_string(),
+                is_error: true,
+            })]),
             tools: Cow::Owned(vec![]),
             tool_choice: Some(ToolChoice::Auto),
             temperature: None,
@@ -478,10 +463,7 @@ mod tests {
         let request = Request {
             model: Cow::Borrowed("gpt-5"),
             system: None,
-            messages: Cow::Owned(vec![Message {
-                role: Role::Assistant,
-                content: vec![ContentBlock::text("Done.")],
-            }]),
+            messages: Cow::Owned(vec![Message::assistant(ContentBlock::text("Done."))]),
             tools: Cow::Owned(vec![]),
             tool_choice: Some(ToolChoice::Auto),
             temperature: None,

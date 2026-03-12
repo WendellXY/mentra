@@ -176,6 +176,29 @@ pub struct Message {
     pub content: Vec<ContentBlock>,
 }
 
+impl Message {
+    pub fn user(content: ContentBlock) -> Self {
+        Self {
+            role: Role::User,
+            content: vec![content],
+        }
+    }
+
+    pub fn assistant(content: ContentBlock) -> Self {
+        Self {
+            role: Role::Assistant,
+            content: vec![content],
+        }
+    }
+
+    pub fn unknown(role: impl Into<String>, content: ContentBlock) -> Self {
+        Self {
+            role: Role::Unknown(role.into()),
+            content: vec![content],
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContentBlock {
     Text {

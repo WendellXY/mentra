@@ -65,12 +65,7 @@ async fn send_streamed_text_turn_emits_events_and_commits_history() {
     assert_eq!(agent.config().system.as_deref(), Some("system prompt"));
     assert_eq!(
         agent.last_message(),
-        Some(&Message {
-            role: Role::Assistant,
-            content: vec![ContentBlock::Text {
-                text: "Hello".to_string(),
-            }],
-        })
+        Some(&Message::assistant(ContentBlock::text("Hello")))
     );
 
     let events = collect_events(&mut events);
