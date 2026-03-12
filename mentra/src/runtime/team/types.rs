@@ -1,27 +1,18 @@
-use std::fmt::{self, Display, Formatter};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use strum::Display;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, Display)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum TeamMemberStatus {
     #[default]
     Idle,
     Working,
+    #[strum(to_string = "failed: {0}")]
     Failed(String),
     Shutdown,
-}
-
-impl Display for TeamMemberStatus {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Idle => f.write_str("idle"),
-            Self::Working => f.write_str("working"),
-            Self::Failed(reason) => write!(f, "failed: {reason}"),
-            Self::Shutdown => f.write_str("shutdown"),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,23 +24,14 @@ pub struct TeamMemberSummary {
     pub status: TeamMemberStatus,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, Display)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum TeamProtocolStatus {
     #[default]
     Pending,
     Approved,
     Rejected,
-}
-
-impl Display for TeamProtocolStatus {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Pending => f.write_str("pending"),
-            Self::Approved => f.write_str("approved"),
-            Self::Rejected => f.write_str("rejected"),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
