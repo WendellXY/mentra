@@ -1,15 +1,11 @@
 mod response_builder;
 mod stream;
 
-use std::{
-    borrow::Cow,
-    collections::BTreeMap,
-    error::Error,
-    fmt::{self, Display, Formatter},
-};
+use std::{borrow::Cow, collections::BTreeMap, fmt::Display};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use thiserror::Error;
 use time::OffsetDateTime;
 
 use crate::tool::ToolSpec;
@@ -114,48 +110,34 @@ pub struct ModelInfo {
 }
 
 /// Errors returned by provider implementations and stream adapters.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum ProviderError {
-    Transport(reqwest::Error),
+    #[error("provider transport error: {0}")]
+    Transport(#[source] reqwest::Error),
+    #[error("{message}", message = provider_http_error(.status, .body))]
     Http {
         status: reqwest::StatusCode,
         body: String,
     },
-    Decode(reqwest::Error),
-    Serialize(serde_json::Error),
-    Deserialize(serde_json::Error),
+    #[error("failed to decode provider response: {0}")]
+    Decode(#[source] reqwest::Error),
+    #[error("failed to serialize provider request: {0}")]
+    Serialize(#[source] serde_json::Error),
+    #[error("failed to deserialize provider payload: {0}")]
+    Deserialize(#[source] serde_json::Error),
+    #[error("invalid provider request: {0}")]
     InvalidRequest(String),
+    #[error("invalid provider response: {0}")]
     InvalidResponse(String),
+    #[error("malformed provider stream: {0}")]
     MalformedStream(String),
 }
 
-impl Display for ProviderError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Transport(error) => write!(f, "provider transport error: {error}"),
-            Self::Http { status, body } if body.trim().is_empty() => {
-                write!(f, "provider returned HTTP {status}")
-            }
-            Self::Http { status, body } => write!(f, "provider returned HTTP {status}: {body}"),
-            Self::Decode(error) => write!(f, "failed to decode provider response: {error}"),
-            Self::Serialize(error) => write!(f, "failed to serialize provider request: {error}"),
-            Self::Deserialize(error) => {
-                write!(f, "failed to deserialize provider payload: {error}")
-            }
-            Self::InvalidRequest(message) => write!(f, "invalid provider request: {message}"),
-            Self::InvalidResponse(message) => write!(f, "invalid provider response: {message}"),
-            Self::MalformedStream(message) => write!(f, "malformed provider stream: {message}"),
-        }
-    }
-}
-
-impl Error for ProviderError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Transport(error) | Self::Decode(error) => Some(error),
-            Self::Serialize(error) | Self::Deserialize(error) => Some(error),
-            _ => None,
-        }
+fn provider_http_error(status: &reqwest::StatusCode, body: &str) -> String {
+    if body.trim().is_empty() {
+        format!("provider returned HTTP {status}")
+    } else {
+        format!("provider returned HTTP {status}: {body}")
     }
 }
 
@@ -316,7 +298,7 @@ pub enum ToolChoice {
 
 #[cfg(test)]
 mod tests {
-    use std::error::Error as _;
+    use std::error::Error;
 
     use super::{ProviderError, ProviderId};
 

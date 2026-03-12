@@ -27,3 +27,4 @@ time = { version = "0.3", features = ["formatting", "parsing", "serde"] }
 base64 = "0.22.1"
 serde_yaml_ng = "0.10"
 rusqlite = { version = "0.32.1", features = ["bundled"] }
+thiserror = "2.0.18"

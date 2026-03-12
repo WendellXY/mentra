@@ -11,3 +11,8 @@ pub use provider::{
     BuiltinProvider, ContentBlock, ImageSource, Message, ModelInfo, ProviderDescriptor, ProviderId,
     Role,
 };
+
+pub mod error {
+    pub use crate::provider::ProviderError;
+    pub use crate::runtime::RuntimeError;
+}

@@ -1,129 +1,80 @@
-use std::{
-    error::Error,
-    fmt::{self, Display, Formatter},
-};
-
 use crate::provider::{ProviderError, ProviderId};
+use thiserror::Error;
 
 /// Errors produced while configuring, running, or recovering Mentra agents.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum RuntimeError {
+    #[error("{message}", message = provider_not_found_message(.0))]
     ProviderNotFound(Option<ProviderId>),
-    FailedToSendRequest(ProviderError),
-    FailedToListModels(ProviderError),
-    FailedToStreamResponse(ProviderError),
-    FailedToCompactHistory(ProviderError),
-    FailedToPersistTranscript(std::io::Error),
-    FailedToSerializeTranscript(serde_json::Error),
-    FailedToLoadTasks(std::io::Error),
-    FailedToWriteTasks(std::io::Error),
-    FailedToSerializeTasks(serde_json::Error),
-    FailedToRestoreTasks(std::io::Error),
-    FailedToLoadTeam(std::io::Error),
-    FailedToWriteTeam(std::io::Error),
-    FailedToSerializeTeam(serde_json::Error),
-    FailedToDeserializeTeam(serde_json::Error),
+    #[error("failed to send provider request: {0}")]
+    FailedToSendRequest(#[source] ProviderError),
+    #[error("failed to list provider models: {0}")]
+    FailedToListModels(#[source] ProviderError),
+    #[error("failed to stream provider response: {0}")]
+    FailedToStreamResponse(#[source] ProviderError),
+    #[error("failed to compact history: {0}")]
+    FailedToCompactHistory(#[source] ProviderError),
+    #[error("failed to persist transcript: {0}")]
+    FailedToPersistTranscript(#[source] std::io::Error),
+    #[error("failed to serialize transcript: {0}")]
+    FailedToSerializeTranscript(#[source] serde_json::Error),
+    #[error("failed to load tasks: {0}")]
+    FailedToLoadTasks(#[source] std::io::Error),
+    #[error("failed to write tasks: {0}")]
+    FailedToWriteTasks(#[source] std::io::Error),
+    #[error("failed to serialize tasks: {0}")]
+    FailedToSerializeTasks(#[source] serde_json::Error),
+    #[error("failed to restore tasks: {0}")]
+    FailedToRestoreTasks(#[source] std::io::Error),
+    #[error("failed to load team state: {0}")]
+    FailedToLoadTeam(#[source] std::io::Error),
+    #[error("failed to write team state: {0}")]
+    FailedToWriteTeam(#[source] std::io::Error),
+    #[error("failed to serialize team state: {0}")]
+    FailedToSerializeTeam(#[source] serde_json::Error),
+    #[error("failed to deserialize team state: {0}")]
+    FailedToDeserializeTeam(#[source] serde_json::Error),
+    #[error("invalid task state: {0}")]
     InvalidTask(String),
+    #[error("invalid team state: {0}")]
     InvalidTeam(String),
+    #[error("operation denied: {0}")]
     OperationDenied(String),
+    #[error("runtime store error: {0}")]
     Store(String),
+    #[error("lease unavailable: {0}")]
     LeaseUnavailable(String),
+    #[error("operation cancelled")]
     Cancelled,
+    #[error("deadline exceeded")]
     DeadlineExceeded,
+    #[error("tool budget exceeded at {0} call(s)")]
     ToolBudgetExceeded(usize),
+    #[error("model budget exceeded at {0} request(s)")]
     ModelBudgetExceeded(usize),
+    #[error("max rounds exceeded at {0}")]
     MaxRoundsExceeded(usize),
+    #[error("invalid tool input for '{name}' ({id}): {source}")]
     InvalidToolUseInput {
         id: String,
         name: String,
+        #[source]
         source: serde_json::Error,
     },
+    #[error("malformed provider event: {0}")]
     MalformedProviderEvent(String),
 }
 
-impl Display for RuntimeError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ProviderNotFound(Some(provider)) => {
-                write!(f, "provider '{provider}' is not registered")
-            }
-            Self::ProviderNotFound(None) => f.write_str("no providers are registered"),
-            Self::FailedToSendRequest(error) => {
-                write!(f, "failed to send provider request: {error}")
-            }
-            Self::FailedToListModels(error) => write!(f, "failed to list provider models: {error}"),
-            Self::FailedToStreamResponse(error) => {
-                write!(f, "failed to stream provider response: {error}")
-            }
-            Self::FailedToCompactHistory(error) => write!(f, "failed to compact history: {error}"),
-            Self::FailedToPersistTranscript(error) => {
-                write!(f, "failed to persist transcript: {error}")
-            }
-            Self::FailedToSerializeTranscript(error) => {
-                write!(f, "failed to serialize transcript: {error}")
-            }
-            Self::FailedToLoadTasks(error) => write!(f, "failed to load tasks: {error}"),
-            Self::FailedToWriteTasks(error) => write!(f, "failed to write tasks: {error}"),
-            Self::FailedToSerializeTasks(error) => {
-                write!(f, "failed to serialize tasks: {error}")
-            }
-            Self::FailedToRestoreTasks(error) => write!(f, "failed to restore tasks: {error}"),
-            Self::FailedToLoadTeam(error) => write!(f, "failed to load team state: {error}"),
-            Self::FailedToWriteTeam(error) => write!(f, "failed to write team state: {error}"),
-            Self::FailedToSerializeTeam(error) => {
-                write!(f, "failed to serialize team state: {error}")
-            }
-            Self::FailedToDeserializeTeam(error) => {
-                write!(f, "failed to deserialize team state: {error}")
-            }
-            Self::InvalidTask(message) => write!(f, "invalid task state: {message}"),
-            Self::InvalidTeam(message) => write!(f, "invalid team state: {message}"),
-            Self::OperationDenied(message) => write!(f, "operation denied: {message}"),
-            Self::Store(message) => write!(f, "runtime store error: {message}"),
-            Self::LeaseUnavailable(message) => write!(f, "lease unavailable: {message}"),
-            Self::Cancelled => f.write_str("operation cancelled"),
-            Self::DeadlineExceeded => f.write_str("deadline exceeded"),
-            Self::ToolBudgetExceeded(limit) => write!(f, "tool budget exceeded at {limit} call(s)"),
-            Self::ModelBudgetExceeded(limit) => {
-                write!(f, "model budget exceeded at {limit} request(s)")
-            }
-            Self::MaxRoundsExceeded(limit) => write!(f, "max rounds exceeded at {limit}"),
-            Self::InvalidToolUseInput { id, name, source } => {
-                write!(f, "invalid tool input for '{name}' ({id}): {source}")
-            }
-            Self::MalformedProviderEvent(message) => {
-                write!(f, "malformed provider event: {message}")
-            }
-        }
-    }
-}
-
-impl Error for RuntimeError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::FailedToSendRequest(error)
-            | Self::FailedToListModels(error)
-            | Self::FailedToStreamResponse(error)
-            | Self::FailedToCompactHistory(error) => Some(error),
-            Self::FailedToPersistTranscript(error)
-            | Self::FailedToLoadTasks(error)
-            | Self::FailedToWriteTasks(error)
-            | Self::FailedToRestoreTasks(error)
-            | Self::FailedToLoadTeam(error)
-            | Self::FailedToWriteTeam(error) => Some(error),
-            Self::FailedToSerializeTranscript(error)
-            | Self::FailedToSerializeTasks(error)
-            | Self::FailedToSerializeTeam(error)
-            | Self::FailedToDeserializeTeam(error) => Some(error),
-            Self::InvalidToolUseInput { source, .. } => Some(source),
-            _ => None,
-        }
+fn provider_not_found_message(provider: &Option<ProviderId>) -> String {
+    match provider {
+        Some(provider) => format!("provider '{provider}' is not registered"),
+        None => "no providers are registered".to_string(),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::error::Error as _;
+    use std::error::Error;
 
     use super::RuntimeError;
     use crate::provider::ProviderId;

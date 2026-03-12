@@ -1,12 +1,11 @@
 use std::{
     collections::BTreeMap,
-    error::Error,
-    fmt::{Display, Formatter},
     fs,
     path::{Path, PathBuf},
 };
 
 use serde::Deserialize;
+use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct SkillLoader {
@@ -19,60 +18,21 @@ struct SkillEntry {
     body: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum SkillLoadError {
-    ReadDir {
-        path: PathBuf,
-        message: String,
-    },
-    ReadFile {
-        path: PathBuf,
-        message: String,
-    },
-    InvalidFrontmatter {
-        path: PathBuf,
-        message: String,
-    },
+    #[error("failed to read skills directory {path}: {message}")]
+    ReadDir { path: PathBuf, message: String },
+    #[error("failed to read skill file {path}: {message}")]
+    ReadFile { path: PathBuf, message: String },
+    #[error("invalid skill frontmatter in {path}: {message}")]
+    InvalidFrontmatter { path: PathBuf, message: String },
+    #[error("duplicate skill name '{name}' in {first_path} and {second_path}")]
     DuplicateSkillName {
         name: String,
         first_path: PathBuf,
         second_path: PathBuf,
     },
 }
-
-impl Display for SkillLoadError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SkillLoadError::ReadDir { path, message } => {
-                write!(
-                    f,
-                    "Failed to read skills directory {}: {message}",
-                    path.display()
-                )
-            }
-            SkillLoadError::ReadFile { path, message } => {
-                write!(f, "Failed to read skill file {}: {message}", path.display())
-            }
-            SkillLoadError::InvalidFrontmatter { path, message } => write!(
-                f,
-                "Invalid skill frontmatter in {}: {message}",
-                path.display()
-            ),
-            SkillLoadError::DuplicateSkillName {
-                name,
-                first_path,
-                second_path,
-            } => write!(
-                f,
-                "Duplicate skill name '{name}' in {} and {}",
-                first_path.display(),
-                second_path.display()
-            ),
-        }
-    }
-}
-
-impl Error for SkillLoadError {}
 
 #[derive(Debug, Clone, Default, Deserialize)]
 struct SkillFrontmatter {
