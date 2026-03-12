@@ -24,6 +24,10 @@ impl RuntimeHandle {
             self.store
                 .acquire_lease(&key, &self.runtime_instance_id, Duration::from_secs(3600))?;
         if acquired {
+            self.lease_keys
+                .lock()
+                .expect("lease key registry poisoned")
+                .insert(key);
             Ok(())
         } else {
             Err(RuntimeError::LeaseUnavailable(format!(

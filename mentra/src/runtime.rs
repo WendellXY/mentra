@@ -9,10 +9,10 @@ mod store;
 pub(crate) mod task;
 pub(crate) mod team;
 
-use std::{collections::HashSet, path::Path};
+use std::path::Path;
 
 use crate::{
-    agent::{Agent, AgentConfig, AgentSpawnOptions},
+    agent::{Agent, AgentConfig, AgentSpawnOptions, AgentStatus},
     provider::{
         BuiltinProvider, ModelInfo, Provider, ProviderDescriptor, ProviderId, ProviderRegistry,
     },
@@ -29,9 +29,7 @@ pub use control::{
 pub use error::RuntimeError;
 pub(crate) use handle::RuntimeHandle;
 pub(crate) use intrinsic::RuntimeIntrinsicTool;
-pub(crate) use store::{
-    LoadedAgentState, PersistedAgentRecord, PersistedPendingTurn, TaskStateSnapshot,
-};
+pub(crate) use store::{LoadedAgentState, PersistedAgentRecord, TaskStateSnapshot};
 pub use store::{RuntimeStore, SqliteRuntimeStore};
 pub(crate) use task::TaskIntrinsicTool;
 pub use task::{TaskItem, TaskStatus};
@@ -44,6 +42,17 @@ pub use team::{
 pub struct Runtime {
     handle: RuntimeHandle,
     provider_registry: ProviderRegistry,
+}
+
+/// Read-only summary of a persisted agent record for a runtime identifier.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedAgentSummary {
+    pub id: String,
+    pub runtime_identifier: String,
+    pub name: String,
+    pub is_teammate: bool,
+    pub status: AgentStatus,
+    pub history_len: usize,
 }
 
 impl Runtime {
@@ -92,10 +101,7 @@ impl Runtime {
             self.provider_registry
                 .get_provider(Some(&model.provider))
                 .ok_or_else(|| RuntimeError::ProviderNotFound(Some(model.provider.clone())))?,
-            AgentSpawnOptions {
-                hidden_tools: HashSet::new(),
-                ..AgentSpawnOptions::default()
-            },
+            AgentSpawnOptions::default(),
         )
     }
 
@@ -113,6 +119,53 @@ impl Runtime {
                 RuntimeError::ProviderNotFound(Some(state.record.provider_id.clone()))
             })?;
         Agent::from_loaded(self.handle.clone(), state, provider)
+    }
+
+    /// Restores every persisted agent that belongs to the provided runtime identifier.
+    pub fn resume(&self, runtime_identifier: &str) -> Result<Vec<Agent>, RuntimeError> {
+        let states = self
+            .handle
+            .store()
+            .list_agents_by_runtime(runtime_identifier)?;
+        let mut agents = Vec::new();
+        for state in states {
+            let provider = self
+                .provider_registry
+                .get_provider(Some(&state.record.provider_id))
+                .ok_or_else(|| {
+                    RuntimeError::ProviderNotFound(Some(state.record.provider_id.clone()))
+                })?;
+            let agent = Agent::from_loaded(self.handle.clone(), state, provider)?;
+            if agent.is_teammate() {
+                agent.revive_teammate_actor()?;
+            } else {
+                agents.push(agent);
+            }
+        }
+        Ok(agents)
+    }
+
+    /// Lists persisted agents for a runtime identifier without reviving them.
+    pub fn list_persisted_agents(
+        &self,
+        runtime_identifier: &str,
+    ) -> Result<Vec<PersistedAgentSummary>, RuntimeError> {
+        self.handle
+            .store()
+            .list_agents_by_runtime(runtime_identifier)
+            .map(|states| {
+                states
+                    .into_iter()
+                    .map(|state| PersistedAgentSummary {
+                        id: state.record.id,
+                        runtime_identifier: state.record.runtime_identifier,
+                        name: state.record.name,
+                        is_teammate: state.record.teammate_identity.is_some(),
+                        status: state.record.status,
+                        history_len: state.memory.transcript.len(),
+                    })
+                    .collect()
+            })
     }
 
     /// Restores every persisted agent known to the runtime store.

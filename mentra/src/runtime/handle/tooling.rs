@@ -30,6 +30,10 @@ impl RuntimeHandle {
         self.store.clone()
     }
 
+    pub fn persisted_runtime_identifier(&self) -> &str {
+        &self.persisted_runtime_identifier
+    }
+
     pub fn skill_descriptions(&self) -> Option<String> {
         self.skill_loader
             .read()

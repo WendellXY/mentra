@@ -29,3 +29,4 @@ serde_yaml_ng = "0.10"
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 thiserror = "2.0.18"
 strum = { version = "0.27", features = ["derive"] }
+libc = "0.2"

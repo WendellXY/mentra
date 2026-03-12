@@ -72,6 +72,14 @@ impl RuntimeBuilder {
         }
     }
 
+    /// Sets the persisted runtime identifier used to group resumable agents.
+    pub fn with_runtime_identifier(self, runtime_identifier: impl Into<Arc<str>>) -> Self {
+        Self {
+            handle: self.handle.with_runtime_identifier(runtime_identifier),
+            provider_registry: self.provider_registry,
+        }
+    }
+
     /// Appends a single runtime hook.
     pub fn with_hook<H>(self, hook: H) -> Self
     where

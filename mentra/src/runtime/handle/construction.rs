@@ -8,6 +8,7 @@ impl RuntimeHandle {
             Arc::new(RuntimePolicy::default()),
             RuntimeHooks::new().with_hook(AuditHook),
             runtime_intrinsics_enabled,
+            Arc::<str>::from("default"),
         )
     }
 
@@ -17,6 +18,7 @@ impl RuntimeHandle {
         policy: Arc<RuntimePolicy>,
         hooks: RuntimeHooks,
         runtime_intrinsics_enabled: bool,
+        persisted_runtime_identifier: Arc<str>,
     ) -> Self {
         let _ = store.prepare_recovery();
         let runtime_instance_id = format!("runtime-{}", std::process::id());
@@ -43,6 +45,8 @@ impl RuntimeHandle {
             hooks,
             runtime_intrinsics_enabled,
             runtime_instance_id,
+            persisted_runtime_identifier,
+            lease_keys: Arc::new(Mutex::new(BTreeSet::new())),
             agent_contexts: Arc::new(RwLock::new(HashMap::new())),
         };
         let _ = handle.emit_hook(RuntimeHookEvent::RecoveryPrepared {
@@ -78,6 +82,8 @@ impl RuntimeHandle {
             hooks: self.hooks.clone(),
             runtime_intrinsics_enabled: self.runtime_intrinsics_enabled,
             runtime_instance_id: format!("runtime-{}", std::process::id()),
+            persisted_runtime_identifier: self.persisted_runtime_identifier.clone(),
+            lease_keys: Arc::new(Mutex::new(BTreeSet::new())),
             agent_contexts: Arc::new(RwLock::new(HashMap::new())),
         };
         let _ = handle.emit_hook(RuntimeHookEvent::RecoveryPrepared {
@@ -112,6 +118,8 @@ impl RuntimeHandle {
             hooks: self.hooks.clone(),
             runtime_intrinsics_enabled: self.runtime_intrinsics_enabled,
             runtime_instance_id: format!("runtime-{}", std::process::id()),
+            persisted_runtime_identifier: self.persisted_runtime_identifier.clone(),
+            lease_keys: Arc::new(Mutex::new(BTreeSet::new())),
             agent_contexts: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -142,6 +150,8 @@ impl RuntimeHandle {
             hooks: self.hooks.clone(),
             runtime_intrinsics_enabled: self.runtime_intrinsics_enabled,
             runtime_instance_id: format!("runtime-{}", std::process::id()),
+            persisted_runtime_identifier: self.persisted_runtime_identifier.clone(),
+            lease_keys: Arc::new(Mutex::new(BTreeSet::new())),
             agent_contexts: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -172,6 +182,40 @@ impl RuntimeHandle {
             hooks,
             runtime_intrinsics_enabled: self.runtime_intrinsics_enabled,
             runtime_instance_id: format!("runtime-{}", std::process::id()),
+            persisted_runtime_identifier: self.persisted_runtime_identifier.clone(),
+            lease_keys: Arc::new(Mutex::new(BTreeSet::new())),
+            agent_contexts: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    pub fn with_runtime_identifier(&self, runtime_identifier: impl Into<Arc<str>>) -> Self {
+        Self {
+            tool_registry: Arc::new(RwLock::new(
+                self.tool_registry
+                    .read()
+                    .expect("tool registry poisoned")
+                    .clone(),
+            )),
+            skill_loader: Arc::new(RwLock::new(
+                self.skill_loader
+                    .read()
+                    .expect("skill loader poisoned")
+                    .clone(),
+            )),
+            background_tasks: BackgroundTaskManager::new(
+                self.store.clone(),
+                self.executor.clone(),
+                self.hooks.clone(),
+            ),
+            team: self.team.clone(),
+            store: self.store.clone(),
+            executor: self.executor.clone(),
+            policy: self.policy.clone(),
+            hooks: self.hooks.clone(),
+            runtime_intrinsics_enabled: self.runtime_intrinsics_enabled,
+            runtime_instance_id: format!("runtime-{}", std::process::id()),
+            persisted_runtime_identifier: runtime_identifier.into(),
+            lease_keys: Arc::new(Mutex::new(BTreeSet::new())),
             agent_contexts: Arc::new(RwLock::new(HashMap::new())),
         }
     }

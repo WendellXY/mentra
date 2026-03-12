@@ -9,7 +9,7 @@ use crate::{
     ContentBlock, Message, Role, agent::AgentEvent, error::RuntimeError, provider::Request,
 };
 
-use super::{Agent, ContextCompactionDetails, ContextCompactionTrigger};
+use super::{Agent, ContextCompactionDetails, ContextCompactionTrigger, memory::CompactionOutcome};
 
 const MICRO_COMPACT_MIN_CONTENT_LEN: usize = 100;
 
@@ -17,10 +17,10 @@ impl Agent {
     pub(crate) fn micro_compacted_history(&self) -> Vec<Message> {
         let keep_recent = self.config.context_compaction.keep_recent_tool_results;
         if keep_recent == usize::MAX {
-            return self.history.clone();
+            return self.history().to_vec();
         }
 
-        let mut history = self.history.clone();
+        let mut history = self.history().to_vec();
         let tool_names = self.tool_name_index();
         let mut tool_results = Vec::new();
 
@@ -99,12 +99,12 @@ impl Agent {
         preserve_from: usize,
         trigger: ContextCompactionTrigger,
     ) -> Result<Option<ContextCompactionDetails>, RuntimeError> {
-        if self.history.is_empty() {
+        if self.history().is_empty() {
             return Ok(None);
         }
 
-        let preserve_from = preserve_from.min(self.history.len());
-        let summary_target = &self.history[..preserve_from];
+        let preserve_from = preserve_from.min(self.history().len());
+        let summary_target = &self.history()[..preserve_from];
         if summary_target.is_empty() {
             return Ok(None);
         }
@@ -112,20 +112,24 @@ impl Agent {
         let transcript_path = self.persist_transcript().await?;
         let summary = self.summarize_messages(summary_target).await?;
         let replaced_messages = summary_target.len();
-        let preserved_messages = self.history.len() - preserve_from;
-        let mut next_history = Vec::with_capacity(self.history.len() - preserve_from + 1);
+        let preserved_messages = self.history().len() - preserve_from;
+        let mut next_history = Vec::with_capacity(self.history().len() - preserve_from + 1);
         next_history.push(Message::user(ContentBlock::text(format!(
             "[Compressed context]\n\n{summary}"
         ))));
-        next_history.extend_from_slice(&self.history[preserve_from..]);
-        self.replace_history(next_history);
+        next_history.extend_from_slice(&self.history()[preserve_from..]);
+        self.memory.compact(CompactionOutcome {
+            transcript_path: transcript_path.clone(),
+            transcript: next_history,
+        })?;
+        self.sync_memory_snapshot();
 
         let details = ContextCompactionDetails {
             trigger,
             transcript_path,
             replaced_messages,
             preserved_messages,
-            resulting_history_len: self.history.len(),
+            resulting_history_len: self.history().len(),
         };
         self.emit_event(AgentEvent::ContextCompacted {
             details: details.clone(),
@@ -135,10 +139,10 @@ impl Agent {
     }
 
     fn required_tail_start_for_continuation(&self) -> usize {
-        let Some(last_index) = self.history.len().checked_sub(1) else {
+        let Some(last_index) = self.history().len().checked_sub(1) else {
             return 0;
         };
-        let last_message = &self.history[last_index];
+        let last_message = &self.history()[last_index];
 
         if last_message.role == Role::User
             && last_message
@@ -146,8 +150,8 @@ impl Agent {
                 .iter()
                 .any(|block| matches!(block, ContentBlock::ToolResult { .. }))
             && last_index > 0
-            && self.history[last_index - 1].role == Role::Assistant
-            && self.history[last_index - 1]
+            && self.history()[last_index - 1].role == Role::Assistant
+            && self.history()[last_index - 1]
                 .content
                 .iter()
                 .any(|block| matches!(block, ContentBlock::ToolUse { .. }))
@@ -161,7 +165,7 @@ impl Agent {
     fn tool_name_index(&self) -> HashMap<String, String> {
         let mut tool_names = HashMap::new();
 
-        for message in &self.history {
+        for message in self.history() {
             for block in &message.content {
                 if let ContentBlock::ToolUse { id, name, .. } = block {
                     tool_names.insert(id.clone(), name.clone());
@@ -185,7 +189,7 @@ impl Agent {
         let transcript_path = transcript_dir.join(format!("{timestamp}.jsonl"));
         let mut serialized = String::new();
 
-        for message in &self.history {
+        for message in self.history() {
             let line = serde_json::to_string(message)
                 .map_err(RuntimeError::FailedToSerializeTranscript)?;
             serialized.push_str(&line);

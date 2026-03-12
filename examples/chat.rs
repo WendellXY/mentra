@@ -3,7 +3,7 @@ use std::{io::Write, path::PathBuf};
 use dotenvy::dotenv;
 use mentra::{
     agent::{AgentEvent, ContextCompactionConfig, TeamAutonomyConfig},
-    runtime::{TaskItem, TaskStatus},
+    runtime::{SqliteRuntimeStore, TaskItem, TaskStatus},
     tool::ToolCall,
 };
 use time::format_description::well_known::Rfc3339;
@@ -12,7 +12,11 @@ use time::format_description::well_known::Rfc3339;
 async fn main() {
     dotenv().ok();
 
+    let runtime_identifier = example_runtime_identifier();
+    let store_path = example_store_path(&runtime_identifier);
     let runtime = mentra::Runtime::builder()
+        .with_runtime_identifier(runtime_identifier.clone())
+        .with_store(SqliteRuntimeStore::new(store_path.clone()))
         .with_optional_provider(
             mentra::BuiltinProvider::OpenAI,
             std::env::var("OPENAI_API_KEY").ok(),
@@ -35,27 +39,14 @@ async fn main() {
         .build()
         .expect("Failed to build runtime");
 
-    let mut agent = runtime
-        .spawn_with_config(
-            "Foo",
-            pick_model(&runtime).await,
-            mentra::AgentConfig {
-                system: Some(
-                    "You are a helpful CLI agent. When the user asks to spawn, manage, monitor, or keep working with a named persistent teammate across turns, you must use `team_spawn` and the team protocol tools rather than the disposable `task` tool or persisted task tools. Autonomous teammates can scan persisted tasks, claim ready unowned work themselves, and continue from the task board without manual assignment when team autonomy is enabled. Do not satisfy teammate-management requests by creating project tasks. For plan review workflows, send the teammate a normal message asking for the proposal, let the teammate submit a `plan_approval` request back to you, then use `team_respond` on that inbound request. Do not open a `plan_approval` request to the teammate yourself. Use `task` only for short-lived disposable delegation that does not need mailbox coordination, protocol review, or ongoing status tracking."
-                        .to_string(),
-                ),
-                context_compaction: example_compaction_config(),
-                team: mentra::agent::TeamConfig {
-                    autonomy: TeamAutonomyConfig {
-                        enabled: true,
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-        )
-        .expect("Failed to spawn agent");
+    println!("Using store: {}", store_path.display());
+    println!("Using runtime identifier: {runtime_identifier}");
+    print_persisted_runtime_identifiers();
+    let mut agent = load_or_create_agent(&runtime, &runtime_identifier).await;
+    println!("Active agent: {} ({})", agent.name(), agent.id());
+    println!(
+        "Type `exit` to quit. Re-running this example with the same store and runtime identifier restores the agent."
+    );
 
     let _cli_watcher = subscribe_events(&agent);
 
@@ -75,6 +66,111 @@ async fn main() {
             }])
             .await
             .expect("Failed to send message");
+    }
+}
+
+async fn load_or_create_agent(
+    runtime: &mentra::Runtime,
+    runtime_identifier: &str,
+) -> mentra::Agent {
+    let persisted = runtime
+        .list_persisted_agents(runtime_identifier)
+        .expect("Failed to list persisted agents");
+    if !persisted.is_empty() {
+        print_persisted_agents(&persisted, runtime_identifier);
+    }
+
+    let mut resumed = runtime
+        .resume(runtime_identifier)
+        .expect("Failed to resume persisted agents");
+    if !resumed.is_empty() {
+        let resumed_count = resumed.len();
+        if let Some(index) = resumed.iter().position(|agent| !agent.is_teammate()) {
+            let agent = resumed.swap_remove(index);
+            if resumed_count > 1 {
+                println!(
+                    "Resumed {resumed_count} persisted agents for runtime `{runtime_identifier}`; continuing with the lead agent."
+                );
+            } else {
+                println!("Resumed existing lead agent from persisted memory.");
+            }
+            return agent;
+        }
+
+        let agent = resumed.swap_remove(0);
+        println!(
+            "Resumed {resumed_count} persisted agents for runtime `{runtime_identifier}`, but no lead agent was found; continuing with teammate `{}`.",
+            agent.name()
+        );
+        return agent;
+    }
+
+    println!("No persisted agents found. Spawning a new one.");
+    runtime
+        .spawn_with_config(
+            "Lead",
+            pick_model(runtime).await,
+            mentra::AgentConfig {
+                system: Some(
+                    "You are a helpful CLI agent. When the user asks to spawn, manage, monitor, or keep working with a named persistent teammate across turns, you must use `team_spawn` and the team protocol tools rather than the disposable `task` tool or persisted task tools. Autonomous teammates can scan persisted tasks, claim ready unowned work themselves, and continue from the task board without manual assignment when team autonomy is enabled. Do not satisfy teammate-management requests by creating project tasks. For plan review workflows, send the teammate a normal message asking for the proposal, let the teammate submit a `plan_approval` request back to you, then use `team_respond` on that inbound request. Do not open a `plan_approval` request to the teammate yourself. Use `task` only for short-lived disposable delegation that does not need mailbox coordination, protocol review, or ongoing status tracking."
+                        .to_string(),
+                ),
+                context_compaction: example_compaction_config(),
+                team: mentra::agent::TeamConfig {
+                    autonomy: TeamAutonomyConfig {
+                        enabled: true,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .expect("Failed to spawn agent")
+}
+
+fn print_persisted_agents(
+    agents: &[mentra::runtime::PersistedAgentSummary],
+    runtime_identifier: &str,
+) {
+    println!("Persisted agents for runtime `{runtime_identifier}`:");
+    for agent in agents {
+        let role = if agent.is_teammate {
+            "teammate"
+        } else {
+            "lead"
+        };
+        println!(
+            "  - {} ({}) [{}] status={:?} history_len={}",
+            agent.name, agent.id, role, agent.status, agent.history_len
+        );
+    }
+}
+
+fn example_store_path(runtime_identifier: &str) -> PathBuf {
+    if let Ok(path) = std::env::var("MENTRA_CHAT_STORE") {
+        return PathBuf::from(path);
+    }
+
+    SqliteRuntimeStore::path_for_runtime_identifier(runtime_identifier)
+}
+
+fn example_runtime_identifier() -> String {
+    std::env::var("MENTRA_CHAT_RUNTIME_ID").unwrap_or_else(|_| "chat-example".to_string())
+}
+
+fn print_persisted_runtime_identifiers() {
+    match SqliteRuntimeStore::list_persisted_runtime_identifiers() {
+        Ok(runtime_ids) if !runtime_ids.is_empty() => {
+            println!("Persisted runtimes:");
+            for runtime_id in runtime_ids {
+                println!("  - {runtime_id}");
+            }
+        }
+        Ok(_) => {}
+        Err(error) => {
+            println!("Failed to list persisted runtimes: {error}");
+        }
     }
 }
 

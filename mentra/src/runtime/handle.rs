@@ -45,6 +45,8 @@ pub struct RuntimeHandle {
     pub(crate) hooks: RuntimeHooks,
     pub(crate) runtime_intrinsics_enabled: bool,
     runtime_instance_id: String,
+    persisted_runtime_identifier: Arc<str>,
+    lease_keys: Arc<Mutex<BTreeSet<String>>>,
     agent_contexts: Arc<RwLock<HashMap<String, AgentExecutionConfig>>>,
 }
 
@@ -63,4 +65,21 @@ pub(crate) struct AgentExecutionConfig {
     pub(crate) base_dir: PathBuf,
     pub(crate) auto_route_shell: bool,
     pub(crate) is_teammate: bool,
+}
+
+impl Drop for RuntimeHandle {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.lease_keys) != 1 {
+            return;
+        }
+
+        let lease_keys = {
+            let lease_keys = self.lease_keys.lock().expect("lease key registry poisoned");
+            lease_keys.iter().cloned().collect::<Vec<_>>()
+        };
+
+        for key in lease_keys {
+            let _ = self.store.release_lease(&key, &self.runtime_instance_id);
+        }
+    }
 }

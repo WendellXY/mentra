@@ -2,6 +2,7 @@ mod compact;
 mod config;
 mod events;
 mod lifecycle;
+pub(crate) mod memory;
 mod pending;
 mod pending_block;
 mod runner;
@@ -35,6 +36,7 @@ use crate::{
     },
 };
 
+pub(crate) use memory::AgentMemoryState;
 pub(crate) use team::parse_task_input;
 
 pub use config::{
@@ -45,6 +47,7 @@ pub use events::{
     AgentEvent, AgentSnapshot, AgentStatus, ContextCompactionDetails, ContextCompactionTrigger,
     PendingToolUseSummary, SpawnedAgentStatus, SpawnedAgentSummary,
 };
+use memory::{AgentMemory, AgentMemoryState as MemoryState};
 pub use pending::PendingAssistantTurn;
 use runner::TurnRunner;
 
@@ -58,7 +61,7 @@ pub struct Agent {
     provider_id: ProviderId,
     name: String,
     config: AgentConfig,
-    history: Vec<Message>,
+    memory: AgentMemory,
     tasks: Vec<TaskItem>,
     rounds_since_task: usize,
     event_tx: broadcast::Sender<AgentEvent>,
@@ -101,26 +104,35 @@ impl Agent {
             max_rounds,
             teammate_identity,
         } = options;
+        let store = runtime.store();
+        let agent_id = format!(
+            "agent-{:x}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos(),
+            NEXT_AGENT_ID.fetch_add(1, Ordering::Relaxed)
+        );
+        let memory = AgentMemory::new(agent_id.clone(), store.clone(), MemoryState::default());
         let (event_tx, _) = broadcast::channel(256);
-        let snapshot = AgentSnapshot::default();
+        let memory_view = memory.snapshot_view();
+        let snapshot = AgentSnapshot {
+            history_len: memory_view.history_len,
+            current_text: memory_view.current_text,
+            pending_tool_uses: memory_view.pending_tool_uses,
+            ..Default::default()
+        };
         let snapshot = Arc::new(Mutex::new(snapshot));
         let (snapshot_tx, _) =
             watch::channel(snapshot.lock().expect("agent snapshot poisoned").clone());
         let mut agent = Self {
-            id: format!(
-                "agent-{:x}-{}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos(),
-                NEXT_AGENT_ID.fetch_add(1, Ordering::Relaxed)
-            ),
+            id: agent_id,
             runtime,
             model,
             provider_id: provider.descriptor().id,
             name,
             config,
-            history: Vec::new(),
+            memory,
             tasks: Vec::new(),
             rounds_since_task: 0,
             event_tx,
@@ -135,7 +147,10 @@ impl Agent {
             idle_requested: false,
             current_run_id: None,
         };
-        agent.persist_state()?;
+        agent
+            .runtime
+            .store()
+            .create_agent(&agent.persisted_record(), agent.memory.state())?;
         let execution_config = AgentExecutionConfig {
             name: agent.name.clone(),
             team_dir: agent.config.team.team_dir.clone(),
@@ -158,28 +173,32 @@ impl Agent {
 
     pub(crate) fn from_loaded(
         runtime: RuntimeHandle,
-        state: LoadedAgentState,
+        mut state: LoadedAgentState,
         provider: Arc<dyn Provider>,
     ) -> Result<Self, RuntimeError> {
+        let mut memory = AgentMemory::new(state.record.id.clone(), runtime.store(), state.memory);
+        let recovery = memory.recover()?;
+        if recovery.interrupted {
+            state.record.status = AgentStatus::Interrupted;
+            runtime.store().update_run_state(
+                recovery
+                    .interrupted_run_id
+                    .as_deref()
+                    .expect("recovery should include run id"),
+                "interrupted",
+                Some("recovered after interruption"),
+            )?;
+            runtime.store().save_agent_record(&state.record)?;
+        }
+        let memory_view = memory.snapshot_view();
         let snapshot = AgentSnapshot {
             status: state.record.status.clone(),
-            history_len: state.history.len(),
-            current_text: state
-                .pending_turn
-                .as_ref()
-                .map(|pending| pending.current_text.clone())
-                .unwrap_or_default(),
-            pending_tool_uses: state
-                .pending_turn
-                .as_ref()
-                .map(|pending| pending.pending_tool_uses.clone())
-                .unwrap_or_default(),
+            history_len: memory_view.history_len,
+            current_text: memory_view.current_text,
+            pending_tool_uses: memory_view.pending_tool_uses,
             pending_team_messages: 0,
-            tasks: Vec::new(),
             subagents: state.record.subagents.clone(),
-            teammates: Vec::new(),
-            protocol_requests: Vec::new(),
-            background_tasks: Vec::new(),
+            ..Default::default()
         };
         let snapshot = Arc::new(Mutex::new(snapshot));
         let (snapshot_tx, _) =
@@ -192,7 +211,7 @@ impl Agent {
             provider_id: state.record.provider_id.clone(),
             name: state.record.name.clone(),
             config: state.record.config.clone(),
-            history: state.history,
+            memory,
             tasks: Vec::new(),
             rounds_since_task: state.record.rounds_since_task,
             event_tx,
@@ -249,7 +268,12 @@ impl Agent {
 
     /// Returns the committed transcript history.
     pub fn history(&self) -> &[Message] {
-        &self.history
+        self.memory.transcript()
+    }
+
+    /// Returns whether this agent is a persistent teammate rather than the lead agent.
+    pub fn is_teammate(&self) -> bool {
+        self.teammate_identity.is_some()
     }
 
     pub(crate) fn tasks(&self) -> &[TaskItem] {
@@ -258,7 +282,7 @@ impl Agent {
 
     /// Returns the most recent committed message, if any.
     pub fn last_message(&self) -> Option<&Message> {
-        self.history.last()
+        self.memory.last_message()
     }
 
     /// Subscribes to the agent's transient event stream.

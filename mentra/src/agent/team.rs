@@ -115,6 +115,47 @@ impl Agent {
         Ok(summary)
     }
 
+    pub(crate) fn revive_teammate_actor(self) -> Result<(), RuntimeError> {
+        let Some(identity) = self.teammate_identity.clone() else {
+            return Err(RuntimeError::InvalidTeam(
+                "Only teammate agents can be revived as teammate actors".to_string(),
+            ));
+        };
+
+        let summary = TeamMemberSummary {
+            id: self.id().to_string(),
+            name: self.name.clone(),
+            role: identity.role,
+            model: self.model.clone(),
+            status: TeamMemberStatus::Idle,
+        };
+
+        let runtime = self.runtime.clone();
+        let team_dir = self.config.team.team_dir.clone();
+        let (wake_tx, wake_rx) = mpsc::unbounded_channel();
+        let manager = runtime.team_manager();
+        let actor = Arc::new(AsyncMutex::new(self));
+        let actor_team_dir = team_dir.clone();
+        let actor_name = summary.name.clone();
+        let task = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("teammate runtime");
+            runtime.block_on(teammate_actor_loop(
+                manager,
+                actor_team_dir,
+                actor_name,
+                actor,
+                wake_rx,
+            ));
+        });
+
+        runtime.register_teammate(&team_dir, summary, wake_tx.clone(), task)?;
+        let _ = wake_tx.send(());
+        Ok(())
+    }
+
     pub fn send_team_message(
         &self,
         to: &str,

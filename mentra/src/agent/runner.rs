@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use crate::{
-    ContentBlock, Message, Role,
+    ContentBlock, Message,
     error::RuntimeError,
     provider::Request,
     runtime::{
@@ -11,7 +11,7 @@ use crate::{
     tool::{ToolCapability, ToolContext},
 };
 
-use super::{Agent, AgentEvent, AgentStatus, PendingAssistantTurn};
+use super::{Agent, AgentEvent, AgentStatus, PendingAssistantTurn, memory::PendingTurnState};
 
 pub(super) struct TurnRunner<'a> {
     agent: &'a mut Agent,
@@ -83,18 +83,14 @@ impl<'a> TurnRunner<'a> {
                 tool_results.push(result);
             }
 
-            self.agent.push_history(Message {
-                role: Role::User,
-                content: tool_results,
-            });
-            self.agent.persist_state()?;
+            self.agent.memory.append_tool_results(tool_results)?;
+            self.agent.sync_memory_snapshot();
             if successful_task {
                 self.agent.record_task_activity();
             } else {
                 self.agent.note_round_without_task();
             }
-            self.agent.clear_pending_turn();
-            self.agent.clear_persisted_pending_turn()?;
+            self.agent.persist_agent_record()?;
             if end_turn {
                 return Ok(());
             }
@@ -103,7 +99,7 @@ impl<'a> TurnRunner<'a> {
 
     async fn stream_turn(&mut self) -> Result<PendingAssistantTurn, RuntimeError> {
         self.agent.inject_team_inbox()?;
-        self.agent.inject_background_notifications();
+        self.agent.inject_background_notifications()?;
         self.agent.set_status(AgentStatus::AwaitingModel);
         self.agent.refresh_tasks_from_disk()?;
         self.agent.auto_compact_if_needed().await?;
@@ -189,15 +185,19 @@ impl<'a> TurnRunner<'a> {
 
         let mut pending = PendingAssistantTurn::default();
         self.agent.set_status(AgentStatus::Streaming);
-        self.agent.publish_pending_turn(&pending);
-        self.agent.persist_pending_turn(&pending)?;
+        self.agent
+            .memory
+            .update_pending_turn(Self::pending_state(&pending))?;
+        self.agent.sync_memory_snapshot();
 
         while let Some(event) = stream.recv().await {
             self.options.check_limits()?;
             let event = event.map_err(RuntimeError::FailedToStreamResponse)?;
             let derived_events = pending.apply(event)?;
-            self.agent.publish_pending_turn(&pending);
-            self.agent.persist_pending_turn(&pending)?;
+            self.agent
+                .memory
+                .update_pending_turn(Self::pending_state(&pending))?;
+            self.agent.sync_memory_snapshot();
 
             for event in derived_events {
                 self.agent.emit_event(event);
@@ -212,15 +212,22 @@ impl<'a> TurnRunner<'a> {
         pending: &PendingAssistantTurn,
     ) -> Result<(), RuntimeError> {
         let assistant_message = pending.to_message()?;
-        self.agent.push_history(assistant_message.clone());
-        self.agent.persist_state()?;
-        self.agent.clear_pending_turn();
-        self.agent.clear_persisted_pending_turn()?;
+        self.agent
+            .memory
+            .commit_assistant_message(assistant_message.clone())?;
+        self.agent.sync_memory_snapshot();
         self.agent
             .emit_event(AgentEvent::AssistantMessageCommitted {
                 message: assistant_message,
             });
         Ok(())
+    }
+
+    fn pending_state(pending: &PendingAssistantTurn) -> PendingTurnState {
+        PendingTurnState::new(
+            pending.current_text().to_string(),
+            pending.pending_tool_use_summaries(),
+        )
     }
 
     fn unavailable_tool_result(&self, call: crate::tool::ToolCall) -> ContentBlock {
@@ -343,7 +350,9 @@ impl Agent {
         }
 
         self.inflight_team_messages.extend(messages.iter().cloned());
-        self.push_history(Message::user(ContentBlock::text(format_inbox(&messages))));
+        self.memory
+            .append_message(Message::user(ContentBlock::text(format_inbox(&messages))))?;
+        self.sync_memory_snapshot();
         Ok(())
     }
 
@@ -363,17 +372,20 @@ impl Agent {
         )
     }
 
-    pub(super) fn inject_background_notifications(&mut self) {
+    pub(super) fn inject_background_notifications(&mut self) -> Result<(), RuntimeError> {
         let notifications = self.runtime.drain_background_notifications(&self.id);
         if notifications.is_empty() {
-            return;
+            return Ok(());
         }
 
         self.inflight_background_notifications
             .extend(notifications.iter().cloned());
-        self.push_history(Message::user(ContentBlock::text(
-            format_background_results(&notifications),
-        )));
+        self.memory
+            .append_message(Message::user(ContentBlock::text(
+                format_background_results(&notifications),
+            )))?;
+        self.sync_memory_snapshot();
+        Ok(())
     }
 
     pub(super) fn clear_inflight_background_notifications(&mut self) {

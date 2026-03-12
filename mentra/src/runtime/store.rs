@@ -9,10 +9,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{
-    Message,
-    agent::{
-        AgentConfig, AgentStatus, PendingToolUseSummary, SpawnedAgentSummary, TeammateIdentity,
-    },
+    agent::{AgentConfig, AgentMemoryState, AgentStatus, SpawnedAgentSummary, TeammateIdentity},
     provider::ProviderId,
     runtime::{
         BackgroundTaskStatus, BackgroundTaskSummary, TaskItem, TeamMemberStatus, TeamMemberSummary,
@@ -33,6 +30,7 @@ const DELIVERY_ACKED: i64 = 2;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedAgentRecord {
     pub(crate) id: String,
+    pub(crate) runtime_identifier: String,
     pub(crate) name: String,
     pub(crate) model: String,
     pub(crate) provider_id: ProviderId,
@@ -46,17 +44,10 @@ pub struct PersistedAgentRecord {
     pub(crate) subagents: Vec<SpawnedAgentSummary>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PersistedPendingTurn {
-    pub(crate) current_text: String,
-    pub(crate) pending_tool_uses: Vec<PendingToolUseSummary>,
-}
-
 #[derive(Debug, Clone)]
 pub struct LoadedAgentState {
     pub(crate) record: PersistedAgentRecord,
-    pub(crate) history: Vec<Message>,
-    pub(crate) pending_turn: Option<PersistedPendingTurn>,
+    pub(crate) memory: AgentMemoryState,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,21 +61,20 @@ pub trait RuntimeStore: Send + Sync {
     fn create_agent(
         &self,
         record: &PersistedAgentRecord,
-        history: &[Message],
+        memory: &AgentMemoryState,
     ) -> Result<(), RuntimeError>;
-    fn save_agent_checkpoint(
-        &self,
-        record: &PersistedAgentRecord,
-        history: &[Message],
-    ) -> Result<(), RuntimeError>;
-    fn save_pending_turn(
+    fn save_agent_record(&self, record: &PersistedAgentRecord) -> Result<(), RuntimeError>;
+    fn save_agent_memory(
         &self,
         agent_id: &str,
-        pending_turn: &PersistedPendingTurn,
+        memory: &AgentMemoryState,
     ) -> Result<(), RuntimeError>;
-    fn clear_pending_turn(&self, agent_id: &str) -> Result<(), RuntimeError>;
     fn load_agent(&self, agent_id: &str) -> Result<Option<LoadedAgentState>, RuntimeError>;
     fn list_agents(&self) -> Result<Vec<LoadedAgentState>, RuntimeError>;
+    fn list_agents_by_runtime(
+        &self,
+        runtime_identifier: &str,
+    ) -> Result<Vec<LoadedAgentState>, RuntimeError>;
     fn start_run(&self, agent_id: &str) -> Result<String, RuntimeError>;
     fn update_run_state(
         &self,
@@ -161,6 +151,7 @@ pub trait RuntimeStore: Send + Sync {
         payload: serde_json::Value,
     ) -> Result<(), RuntimeError>;
     fn acquire_lease(&self, key: &str, owner: &str, ttl: Duration) -> Result<bool, RuntimeError>;
+    fn release_lease(&self, key: &str, owner: &str) -> Result<(), RuntimeError>;
 }
 
 #[derive(Clone)]
@@ -171,14 +162,51 @@ pub struct SqliteRuntimeStore {
 
 impl Default for SqliteRuntimeStore {
     fn default() -> Self {
-        let base = default_store_dir();
-        Self {
-            path: base.join("runtime.sqlite"),
-        }
+        Self::new(Self::default_path())
     }
 }
 
 impl SqliteRuntimeStore {
+    /// Returns the default SQLite path used when no explicit store path is provided.
+    pub fn default_path() -> PathBuf {
+        default_store_dir().join("runtime.sqlite")
+    }
+
+    /// Returns the default directory used for Mentra runtime stores.
+    pub fn default_directory() -> PathBuf {
+        default_store_dir()
+    }
+
+    /// Creates a SQLite runtime store in the default directory using a runtime-scoped filename.
+    pub fn for_runtime_identifier(runtime_identifier: &str) -> Self {
+        Self::new(Self::path_for_runtime_identifier(runtime_identifier))
+    }
+
+    /// Returns the default SQLite path for a specific runtime identifier.
+    pub fn path_for_runtime_identifier(runtime_identifier: &str) -> PathBuf {
+        Self::default_directory().join(format!(
+            "runtime-{}.sqlite",
+            encode_runtime_identifier(runtime_identifier)
+        ))
+    }
+
+    /// Lists runtime identifiers that have persisted SQLite stores in the default directory.
+    pub fn list_persisted_runtime_identifiers() -> Result<Vec<String>, RuntimeError> {
+        let base = Self::default_directory();
+        let Ok(entries) = std::fs::read_dir(&base) else {
+            return Ok(Vec::new());
+        };
+
+        let mut runtime_identifiers = entries
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter_map(|filename| decode_runtime_store_filename(&filename))
+            .collect::<Vec<_>>();
+        runtime_identifiers.sort();
+        runtime_identifiers.dedup();
+        Ok(runtime_identifiers)
+    }
+
     /// Creates a SQLite runtime store at the provided path.
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self { path: path.into() }
@@ -210,6 +238,7 @@ impl SqliteRuntimeStore {
             r#"
             CREATE TABLE IF NOT EXISTS agents (
                 id TEXT PRIMARY KEY,
+                runtime_identifier TEXT NOT NULL,
                 name TEXT NOT NULL,
                 model TEXT NOT NULL,
                 provider_id TEXT NOT NULL,
@@ -227,11 +256,11 @@ impl SqliteRuntimeStore {
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS agent_messages (
-                agent_id TEXT NOT NULL,
-                seq INTEGER NOT NULL,
-                payload_json TEXT NOT NULL,
-                PRIMARY KEY (agent_id, seq)
+            CREATE TABLE IF NOT EXISTS agent_memory (
+                agent_id TEXT PRIMARY KEY,
+                revision INTEGER NOT NULL,
+                state_json TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
             );
             CREATE TABLE IF NOT EXISTS agent_runs (
                 id TEXT PRIMARY KEY,
@@ -240,11 +269,6 @@ impl SqliteRuntimeStore {
                 error TEXT,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS pending_turns (
-                agent_id TEXT PRIMARY KEY,
-                current_text TEXT NOT NULL,
-                pending_tool_uses_json TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS tasks (
                 namespace TEXT NOT NULL,
@@ -307,18 +331,18 @@ impl SqliteRuntimeStore {
         &self,
         conn: &Connection,
         record: &PersistedAgentRecord,
-        history: &[Message],
     ) -> Result<(), RuntimeError> {
         let now = now_secs();
         conn.execute(
             r#"
             INSERT INTO agents (
-                id, name, model, provider_id, team_dir, tasks_namespace, is_teammate, config_json,
+                id, runtime_identifier, name, model, provider_id, team_dir, tasks_namespace, is_teammate, config_json,
                 hidden_tools_json, max_rounds, teammate_identity_json, rounds_since_task,
                 idle_requested, status_json, subagents_json, created_at, updated_at
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
             ON CONFLICT(id) DO UPDATE SET
+                runtime_identifier = excluded.runtime_identifier,
                 name = excluded.name,
                 model = excluded.model,
                 provider_id = excluded.provider_id,
@@ -337,6 +361,7 @@ impl SqliteRuntimeStore {
             "#,
             params![
                 record.id,
+                record.runtime_identifier,
                 record.name,
                 record.model,
                 record.provider_id.as_str(),
@@ -356,19 +381,32 @@ impl SqliteRuntimeStore {
             ],
         )
         .map_err(sqlite_error)?;
+        Ok(())
+    }
 
+    fn write_agent_memory(
+        &self,
+        conn: &Connection,
+        agent_id: &str,
+        memory: &AgentMemoryState,
+    ) -> Result<(), RuntimeError> {
         conn.execute(
-            "DELETE FROM agent_messages WHERE agent_id = ?1",
-            params![record.id],
+            r#"
+            INSERT INTO agent_memory (agent_id, revision, state_json, updated_at)
+            VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(agent_id) DO UPDATE SET
+                revision = excluded.revision,
+                state_json = excluded.state_json,
+                updated_at = excluded.updated_at
+            "#,
+            params![
+                agent_id,
+                memory.revision as i64,
+                to_json(memory)?,
+                now_secs()
+            ],
         )
         .map_err(sqlite_error)?;
-        for (index, message) in history.iter().enumerate() {
-            conn.execute(
-                "INSERT INTO agent_messages (agent_id, seq, payload_json) VALUES (?1, ?2, ?3)",
-                params![record.id, index as i64, to_json(message)?],
-            )
-            .map_err(sqlite_error)?;
-        }
         Ok(())
     }
 
@@ -422,100 +460,49 @@ impl RuntimeStore for SqliteRuntimeStore {
             }
         }
 
-        {
-            let mut stmt = tx
-                .prepare(
-                    "SELECT id, agent_id FROM agent_runs WHERE state NOT IN ('finished', 'failed', 'interrupted')",
-                )
-                .map_err(sqlite_error)?;
-            let rows = stmt
-                .query_map([], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })
-                .map_err(sqlite_error)?;
-            for row in rows {
-                let (run_id, agent_id) = row.map_err(sqlite_error)?;
-                tx.execute(
-                    "UPDATE agent_runs SET state = 'interrupted', error = 'recovered after interruption', updated_at = ?2 WHERE id = ?1",
-                    params![run_id, now_secs()],
-                )
-                .map_err(sqlite_error)?;
-                tx.execute(
-                    "UPDATE agents SET status_json = ?2, updated_at = ?3 WHERE id = ?1",
-                    params![agent_id, to_json(&AgentStatus::Interrupted)?, now_secs()],
-                )
-                .map_err(sqlite_error)?;
-            }
-        }
-
-        tx.execute("DELETE FROM pending_turns", [])
-            .map_err(sqlite_error)?;
         tx.execute(
             "DELETE FROM leases WHERE expires_at <= ?1",
             params![now_secs()],
         )
         .map_err(sqlite_error)?;
+        prune_stale_runtime_leases(&tx)?;
         tx.commit().map_err(sqlite_error)
     }
 
     fn create_agent(
         &self,
         record: &PersistedAgentRecord,
-        history: &[Message],
+        memory: &AgentMemoryState,
     ) -> Result<(), RuntimeError> {
         let mut conn = self.open()?;
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sqlite_error)?;
-        self.write_agent(&tx, record, history)?;
+        self.write_agent(&tx, record)?;
+        self.write_agent_memory(&tx, &record.id, memory)?;
         tx.commit().map_err(sqlite_error)
     }
 
-    fn save_agent_checkpoint(
-        &self,
-        record: &PersistedAgentRecord,
-        history: &[Message],
-    ) -> Result<(), RuntimeError> {
+    fn save_agent_record(&self, record: &PersistedAgentRecord) -> Result<(), RuntimeError> {
         let mut conn = self.open()?;
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sqlite_error)?;
-        self.write_agent(&tx, record, history)?;
+        self.write_agent(&tx, record)?;
         tx.commit().map_err(sqlite_error)
     }
 
-    fn save_pending_turn(
+    fn save_agent_memory(
         &self,
         agent_id: &str,
-        pending_turn: &PersistedPendingTurn,
+        memory: &AgentMemoryState,
     ) -> Result<(), RuntimeError> {
-        let conn = self.open()?;
-        conn.execute(
-            r#"
-            INSERT INTO pending_turns (agent_id, current_text, pending_tool_uses_json)
-            VALUES (?1, ?2, ?3)
-            ON CONFLICT(agent_id) DO UPDATE SET
-                current_text = excluded.current_text,
-                pending_tool_uses_json = excluded.pending_tool_uses_json
-            "#,
-            params![
-                agent_id,
-                pending_turn.current_text,
-                to_json(&pending_turn.pending_tool_uses)?,
-            ],
-        )
-        .map_err(sqlite_error)?;
-        Ok(())
-    }
-
-    fn clear_pending_turn(&self, agent_id: &str) -> Result<(), RuntimeError> {
-        let conn = self.open()?;
-        conn.execute(
-            "DELETE FROM pending_turns WHERE agent_id = ?1",
-            params![agent_id],
-        )
-        .map_err(sqlite_error)?;
-        Ok(())
+        let mut conn = self.open()?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sqlite_error)?;
+        self.write_agent_memory(&tx, agent_id, memory)?;
+        tx.commit().map_err(sqlite_error)
     }
 
     fn load_agent(&self, agent_id: &str) -> Result<Option<LoadedAgentState>, RuntimeError> {
@@ -524,33 +511,34 @@ impl RuntimeStore for SqliteRuntimeStore {
             .query_row(
                 r#"
                 SELECT
-                    id, name, model, provider_id, config_json, hidden_tools_json, max_rounds,
-                    teammate_identity_json, rounds_since_task, idle_requested, status_json,
-                    subagents_json
+                    id, runtime_identifier, name, model, provider_id, config_json,
+                    hidden_tools_json, max_rounds, teammate_identity_json, rounds_since_task,
+                    idle_requested, status_json, subagents_json
                 FROM agents WHERE id = ?1
                 "#,
                 params![agent_id],
                 |row| {
-                    let provider_id: String = row.get(3)?;
-                    let config_json: String = row.get(4)?;
-                    let hidden_tools_json: String = row.get(5)?;
-                    let teammate_identity_json: Option<String> = row.get(7)?;
-                    let status_json: String = row.get(10)?;
-                    let subagents_json: String = row.get(11)?;
+                    let provider_id: String = row.get(4)?;
+                    let config_json: String = row.get(5)?;
+                    let hidden_tools_json: String = row.get(6)?;
+                    let teammate_identity_json: Option<String> = row.get(8)?;
+                    let status_json: String = row.get(11)?;
+                    let subagents_json: String = row.get(12)?;
                     Ok(PersistedAgentRecord {
                         id: row.get(0)?,
-                        name: row.get(1)?,
-                        model: row.get(2)?,
+                        runtime_identifier: row.get(1)?,
+                        name: row.get(2)?,
+                        model: row.get(3)?,
                         provider_id: ProviderId::from(provider_id),
                         config: from_json(&config_json).map_err(to_sql_error)?,
                         hidden_tools: from_json(&hidden_tools_json).map_err(to_sql_error)?,
-                        max_rounds: row.get::<_, Option<i64>>(6)?.map(|value| value as usize),
+                        max_rounds: row.get::<_, Option<i64>>(7)?.map(|value| value as usize),
                         teammate_identity: teammate_identity_json
                             .map(|json| from_json(&json))
                             .transpose()
                             .map_err(to_sql_error)?,
-                        rounds_since_task: row.get::<_, i64>(8)? as usize,
-                        idle_requested: row.get::<_, i64>(9)? != 0,
+                        rounds_since_task: row.get::<_, i64>(9)? as usize,
+                        idle_requested: row.get::<_, i64>(10)? != 0,
                         status: from_json(&status_json).map_err(to_sql_error)?,
                         subagents: from_json(&subagents_json).map_err(to_sql_error)?,
                     })
@@ -562,27 +550,24 @@ impl RuntimeStore for SqliteRuntimeStore {
             return Ok(None);
         };
 
-        let history = self.load_history(&conn, agent_id)?;
-        let pending_turn = conn
+        let memory = conn
             .query_row(
-                "SELECT current_text, pending_tool_uses_json FROM pending_turns WHERE agent_id = ?1",
+                "SELECT state_json FROM agent_memory WHERE agent_id = ?1",
                 params![agent_id],
                 |row| {
-                    let pending_json: String = row.get(1)?;
-                    Ok(PersistedPendingTurn {
-                        current_text: row.get(0)?,
-                        pending_tool_uses: from_json(&pending_json).map_err(to_sql_error)?,
-                    })
+                    let state_json: String = row.get(0)?;
+                    from_json(&state_json).map_err(to_sql_error)
                 },
             )
             .optional()
             .map_err(sqlite_error)?;
+        let Some(memory) = memory else {
+            return Err(RuntimeError::Store(format!(
+                "Agent '{agent_id}' is missing persisted memory"
+            )));
+        };
 
-        Ok(Some(LoadedAgentState {
-            record,
-            history,
-            pending_turn,
-        }))
+        Ok(Some(LoadedAgentState { record, memory }))
     }
 
     fn list_agents(&self) -> Result<Vec<LoadedAgentState>, RuntimeError> {
@@ -592,6 +577,27 @@ impl RuntimeStore for SqliteRuntimeStore {
             .map_err(sqlite_error)?;
         let ids = stmt
             .query_map([], |row| row.get::<_, String>(0))
+            .map_err(sqlite_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sqlite_error)?;
+        ids.into_iter()
+            .map(|id| {
+                self.load_agent(&id)?
+                    .ok_or_else(|| RuntimeError::Store(format!("Agent '{id}' disappeared")))
+            })
+            .collect()
+    }
+
+    fn list_agents_by_runtime(
+        &self,
+        runtime_identifier: &str,
+    ) -> Result<Vec<LoadedAgentState>, RuntimeError> {
+        let conn = self.open()?;
+        let mut stmt = conn
+            .prepare("SELECT id FROM agents WHERE runtime_identifier = ?1 ORDER BY created_at, id")
+            .map_err(sqlite_error)?;
+        let ids = stmt
+            .query_map(params![runtime_identifier], |row| row.get::<_, String>(0))
             .map_err(sqlite_error)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(sqlite_error)?;
@@ -1029,6 +1035,7 @@ impl RuntimeStore for SqliteRuntimeStore {
         let now = now_secs();
         tx.execute("DELETE FROM leases WHERE expires_at <= ?1", params![now])
             .map_err(sqlite_error)?;
+        prune_stale_runtime_leases(&tx)?;
         let inserted = tx
             .execute(
                 "INSERT OR IGNORE INTO leases (key, owner, expires_at) VALUES (?1, ?2, ?3)",
@@ -1038,27 +1045,19 @@ impl RuntimeStore for SqliteRuntimeStore {
         tx.commit().map_err(sqlite_error)?;
         Ok(inserted == 1)
     }
+
+    fn release_lease(&self, key: &str, owner: &str) -> Result<(), RuntimeError> {
+        let conn = self.open()?;
+        conn.execute(
+            "DELETE FROM leases WHERE key = ?1 AND owner = ?2",
+            params![key, owner],
+        )
+        .map_err(sqlite_error)?;
+        Ok(())
+    }
 }
 
 impl SqliteRuntimeStore {
-    fn load_history(
-        &self,
-        conn: &Connection,
-        agent_id: &str,
-    ) -> Result<Vec<Message>, RuntimeError> {
-        let mut stmt = conn
-            .prepare("SELECT payload_json FROM agent_messages WHERE agent_id = ?1 ORDER BY seq")
-            .map_err(sqlite_error)?;
-        let rows = stmt
-            .query_map(params![agent_id], |row| row.get::<_, String>(0))
-            .map_err(sqlite_error)?;
-        let mut history = Vec::new();
-        for row in rows {
-            history.push(from_json(&row.map_err(sqlite_error)?)?);
-        }
-        Ok(history)
-    }
-
     fn load_tasks_from_conn(
         &self,
         conn: &Connection,
@@ -1123,6 +1122,83 @@ fn now_nanos() -> u128 {
         .as_nanos()
 }
 
+fn prune_stale_runtime_leases(tx: &rusqlite::Transaction<'_>) -> Result<(), RuntimeError> {
+    let mut stmt = tx
+        .prepare("SELECT key, owner FROM leases")
+        .map_err(sqlite_error)?;
+    let leases = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(sqlite_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(sqlite_error)?;
+    drop(stmt);
+
+    for (key, owner) in leases {
+        if runtime_owner_is_stale(&owner) {
+            tx.execute("DELETE FROM leases WHERE key = ?1", params![key])
+                .map_err(sqlite_error)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn runtime_owner_is_stale(owner: &str) -> bool {
+    let Some(pid) = owner
+        .strip_prefix("runtime-")
+        .and_then(|value| value.parse::<i32>().ok())
+    else {
+        return false;
+    };
+
+    #[cfg(unix)]
+    {
+        let result = unsafe { libc::kill(pid, 0) };
+        if result == 0 {
+            return false;
+        }
+
+        match std::io::Error::last_os_error().raw_os_error() {
+            Some(code) if code == libc::ESRCH => true,
+            Some(code) if code == libc::EPERM => false,
+            _ => false,
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        false
+    }
+}
+
+fn encode_runtime_identifier(runtime_identifier: &str) -> String {
+    let mut encoded = String::with_capacity(runtime_identifier.len() * 2);
+    for byte in runtime_identifier.as_bytes() {
+        use std::fmt::Write as _;
+        let _ = write!(&mut encoded, "{byte:02x}");
+    }
+    encoded
+}
+
+fn decode_runtime_store_filename(filename: &str) -> Option<String> {
+    let encoded = filename.strip_prefix("runtime-")?.strip_suffix(".sqlite")?;
+    if encoded.len() % 2 != 0 || encoded.is_empty() {
+        return None;
+    }
+
+    let mut bytes = Vec::with_capacity(encoded.len() / 2);
+    let mut index = 0;
+    while index < encoded.len() {
+        let byte = u8::from_str_radix(&encoded[index..index + 2], 16).ok()?;
+        bytes.push(byte);
+        index += 2;
+    }
+    String::from_utf8(bytes).ok()
+}
+
 #[cfg(not(test))]
 fn default_store_dir() -> PathBuf {
     let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -1141,4 +1217,56 @@ fn default_store_dir() -> PathBuf {
     std::env::temp_dir()
         .join("mentra-test-runtime")
         .join(format!("process-{}-{suffix}", std::process::id()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_identifier_round_trips_through_filename_encoding() {
+        let runtime_identifier = "chat/example 01";
+        let filename = format!(
+            "runtime-{}.sqlite",
+            encode_runtime_identifier(runtime_identifier)
+        );
+        assert_eq!(
+            decode_runtime_store_filename(&filename).as_deref(),
+            Some(runtime_identifier)
+        );
+    }
+
+    #[test]
+    fn path_for_runtime_identifier_uses_runtime_specific_filename() {
+        let path = SqliteRuntimeStore::path_for_runtime_identifier("session-a");
+        assert!(
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("runtime-"))
+        );
+        assert!(
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".sqlite"))
+        );
+    }
+
+    #[test]
+    fn stale_runtime_owner_can_be_reclaimed() {
+        let store = SqliteRuntimeStore::new(
+            std::env::temp_dir().join(format!("mentra-store-lease-{}.sqlite", now_nanos())),
+        );
+        let conn = Connection::open(store.path()).expect("open store");
+        store.ensure_schema(&conn).expect("ensure schema");
+        conn.execute(
+            "INSERT INTO leases (key, owner, expires_at) VALUES (?1, ?2, ?3)",
+            params!["agent:test", "runtime-999999", now_secs() + 3600],
+        )
+        .expect("insert stale lease");
+
+        let acquired = store
+            .acquire_lease("agent:test", "runtime-123", Duration::from_secs(60))
+            .expect("acquire lease");
+        assert!(acquired);
+    }
 }

@@ -19,26 +19,28 @@ impl Agent {
     ) -> Result<(), RuntimeError> {
         self.idle_requested = false;
         self.refresh_tasks_from_disk()?;
-        let history_before_run = self.history.clone();
         let tasks_before_run = self.tasks.clone();
         let rounds_before_run = self.rounds_since_task;
         let task_disk_state = self.capture_task_disk_state()?;
-        self.start_run_checkpoint()?;
-        self.push_history(Message {
-            role: Role::User,
-            content: content.into(),
-        });
-        self.persist_state()?;
+        let run_id = self.start_run_checkpoint()?;
+        self.memory.begin_run(
+            run_id,
+            Message {
+                role: Role::User,
+                content: content.into(),
+            },
+        )?;
+        self.sync_memory_snapshot();
         self.emit_event(AgentEvent::RunStarted);
 
         match TurnRunner::new(self, options).run().await {
             Ok(()) => {
                 self.clear_inflight_team_messages();
                 self.clear_inflight_background_notifications();
-                self.clear_pending_turn();
-                self.clear_persisted_pending_turn()?;
+                self.memory.finish_run()?;
+                self.sync_memory_snapshot();
                 self.set_status(AgentStatus::Finished);
-                self.persist_state()?;
+                self.persist_agent_record()?;
                 self.finish_run_checkpoint()?;
                 self.emit_event(AgentEvent::RunFinished);
                 Ok(())
@@ -47,13 +49,12 @@ impl Agent {
                 self.idle_requested = false;
                 self.requeue_inflight_team_messages()?;
                 self.requeue_inflight_background_notifications();
-                self.restore_history(history_before_run);
                 self.restore_task_state(tasks_before_run, rounds_before_run, &task_disk_state)?;
-                self.clear_pending_turn();
-                self.clear_persisted_pending_turn()?;
+                self.memory.rollback_failed_run()?;
+                self.sync_memory_snapshot();
                 let message = error.to_string();
                 self.set_status(AgentStatus::Failed(message.clone()));
-                self.persist_state()?;
+                self.persist_agent_record()?;
                 self.fail_run_checkpoint(&message)?;
                 self.emit_event(AgentEvent::RunFailed { error: message });
                 Err(error)
