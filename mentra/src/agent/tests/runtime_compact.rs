@@ -7,10 +7,9 @@ use std::{
 
 use crate::{
     ContentBlock, Message, ProviderId, Role,
+    agent::{AgentConfig, AgentEvent, ContextCompactionConfig, ContextCompactionTrigger},
     provider::{ContentBlockDelta, ContentBlockStart, ProviderEvent, Request},
-    runtime::{
-        AgentConfig, AgentEvent, ContextCompactionConfig, ContextCompactionTrigger, Runtime,
-    },
+    runtime::Runtime,
 };
 
 use super::support::{ScriptedProvider, StaticTool, StreamScript, model_info, ok_stream};

@@ -1,4 +1,4 @@
-use crate::{Message, runtime::AgentEvent};
+use crate::{Message, agent::AgentEvent};
 
 use super::{Agent, AgentStatus, PendingAssistantTurn};
 
@@ -58,7 +58,7 @@ impl Agent {
         self.snapshot_tx.send_replace(snapshot);
     }
 
-    pub(super) fn mutate_snapshot(&self, update: impl FnOnce(&mut crate::runtime::AgentSnapshot)) {
+    pub(super) fn mutate_snapshot(&self, update: impl FnOnce(&mut crate::agent::AgentSnapshot)) {
         {
             let mut snapshot = self.snapshot.lock().expect("agent snapshot poisoned");
             update(&mut snapshot);
@@ -66,7 +66,7 @@ impl Agent {
         self.publish_snapshot();
     }
 
-    pub(crate) fn persist_state(&self) -> Result<(), crate::runtime::RuntimeError> {
+    pub(crate) fn persist_state(&self) -> Result<(), crate::error::RuntimeError> {
         self.runtime.store().save_agent_checkpoint(
             &crate::runtime::PersistedAgentRecord {
                 id: self.id.clone(),

@@ -9,14 +9,17 @@ use tokio::time::{Duration, sleep};
 
 use crate::{
     ContentBlock, Message, ProviderId, Role,
+    agent::{
+        Agent, AgentConfig, AgentEvent, SpawnedAgentStatus, TaskConfig, TeamAutonomyConfig,
+        TeamConfig, WorkspaceConfig,
+    },
     provider::{
         ContentBlockDelta, ContentBlockStart, ProviderError, ProviderEvent, Request, ToolChoice,
     },
     runtime::{
-        Agent, AgentConfig, AgentEvent, BackgroundTaskStatus, CancellationToken, RunOptions,
-        Runtime, RuntimeError, RuntimePolicy, SpawnedAgentStatus, SqliteRuntimeStore, TaskConfig,
-        TaskIntrinsicTool, TeamAutonomyConfig, TeamConfig, TeamMemberStatus, TeamMessageKind,
-        TeamProtocolStatus, WorkspaceConfig,
+        BackgroundTaskStatus, CancellationToken, RunOptions, Runtime, RuntimeError, RuntimePolicy,
+        SqliteRuntimeStore, TaskIntrinsicTool, TeamMemberStatus, TeamMessageKind,
+        TeamProtocolStatus,
         task::{self, TaskAccess},
     },
 };
@@ -2240,7 +2243,7 @@ async fn failed_run_requeues_protocol_messages_and_preserves_request_state() {
         .expect_err("run should fail");
     assert!(matches!(
         error,
-        crate::runtime::error::RuntimeError::FailedToStreamResponse(_)
+        crate::error::RuntimeError::FailedToStreamResponse(_)
     ));
     assert_eq!(lead.watch_snapshot().borrow().pending_team_messages, 1);
 
@@ -2934,11 +2937,11 @@ async fn teammate_identity_is_reinjected_after_compaction() {
             model,
             AgentConfig {
                 team: team_config(temp_team_dir("identity-compact-team")),
-                context_compaction: crate::runtime::ContextCompactionConfig {
+                context_compaction: crate::agent::ContextCompactionConfig {
                     auto_compact_threshold_tokens: Some(1),
-                    ..crate::runtime::ContextCompactionConfig::default()
+                    ..Default::default()
                 },
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();

@@ -2,5 +2,3 @@ target
 Cargo.lock
 
 .env
-
-.vscode

@@ -9,8 +9,9 @@ use std::{
 
 use tokio::sync::{broadcast, mpsc, watch};
 
+use crate::agent::{AgentEvent, AgentSnapshot};
+
 use crate::runtime::{
-    AgentEvent, AgentSnapshot,
     error::RuntimeError,
     handle::{AgentExecutionConfig, AgentObserver},
     store::RuntimeStore,

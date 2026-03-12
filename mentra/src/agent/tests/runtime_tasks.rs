@@ -7,10 +7,10 @@ use std::{
 
 use crate::{
     ContentBlock, Message, ProviderId, Role,
+    agent::{AgentConfig, ContextCompactionConfig, TaskConfig},
     provider::{ContentBlockDelta, ContentBlockStart, ProviderError, ProviderEvent},
     runtime::{
-        AgentConfig, ContextCompactionConfig, Runtime, RuntimeStore, SqliteRuntimeStore,
-        TaskConfig, TaskItem, TaskStatus, task::TASK_REMINDER_TEXT,
+        Runtime, RuntimeStore, SqliteRuntimeStore, TaskItem, TaskStatus, task::TASK_REMINDER_TEXT,
     },
 };
 

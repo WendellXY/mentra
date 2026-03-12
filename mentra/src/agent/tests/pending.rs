@@ -2,8 +2,8 @@ use serde_json::json;
 
 use crate::{
     ContentBlock, Message, Role,
+    agent::{AgentEvent, PendingAssistantTurn},
     provider::{ContentBlockDelta, ContentBlockStart, ProviderEvent},
-    runtime::{AgentEvent, PendingAssistantTurn},
     tool::ToolCall,
 };
 

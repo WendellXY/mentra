@@ -4,10 +4,10 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::{Mutex as AsyncMutex, mpsc};
 
+use crate::error::RuntimeError;
 use crate::runtime::{
     RuntimeIntrinsicTool, TeamDispatch, TeamMemberStatus, TeamMemberSummary,
     TeamProtocolRequestSummary, TeamProtocolStatus,
-    error::RuntimeError,
     task::TaskIntrinsicTool,
     team::{
         TEAMMATE_MAX_ROUNDS, TeamIntrinsicTool, TeamMessage, TeamRequestDirection,

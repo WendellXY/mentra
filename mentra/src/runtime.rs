@@ -1,18 +1,18 @@
-mod agent;
-mod background;
+pub(crate) mod background;
 mod builder;
-mod control;
+pub(crate) mod control;
 mod error;
-mod handle;
+pub(crate) mod handle;
 mod intrinsic;
 mod skill;
 mod store;
-mod task;
-mod team;
+pub(crate) mod task;
+pub(crate) mod team;
 
 use std::{collections::HashSet, path::Path};
 
 use crate::{
+    agent::{Agent, AgentConfig, AgentSpawnOptions},
     provider::{
         BuiltinProvider, ModelInfo, Provider, ProviderDescriptor, ProviderId, ProviderRegistry,
     },
@@ -20,13 +20,6 @@ use crate::{
     tool::ExecutableTool,
 };
 
-pub(crate) use agent::AgentSpawnOptions;
-pub use agent::{
-    Agent, AgentConfig, AgentEvent, AgentSnapshot, AgentStatus, ContextCompactionConfig,
-    ContextCompactionDetails, ContextCompactionTrigger, PendingAssistantTurn,
-    PendingToolUseSummary, SpawnedAgentStatus, SpawnedAgentSummary, TaskConfig, TeamAutonomyConfig,
-    TeamConfig, WorkspaceConfig,
-};
 pub use background::{BackgroundTaskStatus, BackgroundTaskSummary};
 pub use control::{
     AuditHook, AuditLogHook, CancellationFlag, CancellationToken, CommandOutput, CommandRequest,

@@ -4,7 +4,7 @@ use strum::Display;
 
 use crate::{
     ContentBlock,
-    runtime::{Agent, AgentEvent, ContextCompactionTrigger, SpawnedAgentStatus},
+    agent::{Agent, AgentEvent, ContextCompactionTrigger, SpawnedAgentStatus},
     tool::{
         ExecutableTool, ToolCall, ToolCapability, ToolContext, ToolDurability, ToolResult,
         ToolSideEffectLevel, ToolSpec,
@@ -166,7 +166,7 @@ async fn execute_compact(agent: &mut Agent, call: ToolCall) -> ContentBlock {
 }
 
 async fn execute_task(agent: &mut Agent, call: ToolCall) -> ContentBlock {
-    match crate::runtime::agent::parse_task_input(call.input) {
+    match crate::agent::parse_task_input(call.input) {
         Ok(prompt) => {
             let mut child = match agent.spawn_subagent() {
                 Ok(child) => child,

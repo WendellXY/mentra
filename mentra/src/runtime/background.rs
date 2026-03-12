@@ -11,8 +11,9 @@ use serde::{Deserialize, Serialize};
 use strum::Display;
 use tokio::sync::{broadcast, watch};
 
+use crate::agent::{AgentEvent, AgentSnapshot};
 use crate::runtime::{
-    AgentEvent, AgentSnapshot, RuntimeStore,
+    RuntimeStore,
     control::{CommandOutput, CommandRequest, RuntimeExecutor, RuntimeHookEvent, RuntimeHooks},
     handle::AgentObserver,
 };

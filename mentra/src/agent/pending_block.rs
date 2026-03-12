@@ -1,4 +1,4 @@
-use crate::{ContentBlock, ImageSource, provider::ContentBlockStart, runtime::error::RuntimeError};
+use crate::{ContentBlock, ImageSource, error::RuntimeError, provider::ContentBlockStart};
 
 use super::PendingToolUseSummary;
 

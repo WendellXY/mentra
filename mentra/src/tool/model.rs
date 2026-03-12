@@ -4,9 +4,12 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::agent::{
+    ContextCompactionDetails, ContextCompactionTrigger, SpawnedAgentStatus, SpawnedAgentSummary,
+};
+
 use crate::runtime::{
-    BackgroundTaskSummary, ContextCompactionDetails, ContextCompactionTrigger, SpawnedAgentStatus,
-    SpawnedAgentSummary, TaskItem, TeamDispatch, TeamMemberSummary, TeamMessage,
+    BackgroundTaskSummary, TaskItem, TeamDispatch, TeamMemberSummary, TeamMessage,
     TeamProtocolRequestSummary,
 };
 use crate::runtime::{RuntimeError, TaskIntrinsicTool};
@@ -72,7 +75,7 @@ pub struct ToolContext<'a> {
     pub tool_name: String,
     pub(crate) working_directory: PathBuf,
     pub(crate) runtime: crate::runtime::RuntimeHandle,
-    pub(crate) agent: &'a mut crate::runtime::Agent,
+    pub(crate) agent: &'a mut crate::agent::Agent,
 }
 
 impl ToolContext<'_> {
@@ -185,12 +188,12 @@ impl ToolContext<'_> {
     }
 
     /// Spawns a disposable subagent that inherits the current runtime.
-    pub fn spawn_subagent(&self) -> Result<crate::runtime::Agent, RuntimeError> {
+    pub fn spawn_subagent(&self) -> Result<crate::agent::Agent, RuntimeError> {
         self.agent.spawn_subagent()
     }
 
     /// Records a subagent in the current agent snapshot.
-    pub fn register_subagent(&mut self, agent: &crate::runtime::Agent) -> SpawnedAgentSummary {
+    pub fn register_subagent(&mut self, agent: &crate::agent::Agent) -> SpawnedAgentSummary {
         self.agent.register_subagent(agent)
     }
 

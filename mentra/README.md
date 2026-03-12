@@ -21,7 +21,7 @@ Mentra is an agent runtime for building tool-using LLM applications.
 Use `Runtime::builder()` when you want Mentra's builtin runtime tools, or `Runtime::empty_builder()` when you want to opt into every tool explicitly.
 
 ```rust,no_run
-use mentra::{BuiltinProvider, runtime::Runtime};
+use mentra::{BuiltinProvider, Runtime};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runtime = Runtime::builder()
@@ -42,10 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 `Runtime::builder()` registers Mentra's builtin tools, including `bash`, `background_run`, `check_background`, `read_file`, and the runtime/task/team intrinsics. Shell and background execution remain disabled by default, so coding-agent setups must opt in with a runtime policy.
 
 ```rust,no_run
-use mentra::{
-    BuiltinProvider,
-    runtime::{Runtime, RuntimePolicy},
-};
+use mentra::{BuiltinProvider, Runtime, RuntimePolicy};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runtime = Runtime::builder()
@@ -65,7 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 Registering a skills directory also makes the builtin `load_skill` tool available:
 
 ```rust,no_run
-use mentra::{BuiltinProvider, runtime::Runtime};
+use mentra::{BuiltinProvider, Runtime};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runtime = Runtime::builder()
@@ -83,7 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 You can attach image blocks alongside text when sending a user turn:
 
 ```rust,no_run
-# use mentra::{ContentBlock, runtime::Agent};
+# use mentra::{ContentBlock, Agent};
 # async fn demo(agent: &mut Agent) -> Result<(), Box<dyn std::error::Error>> {
 agent
     .send(vec![
@@ -108,14 +105,14 @@ Agents compact context by default:
 You can tune or disable this per-agent with `ContextCompactionConfig`:
 
 ```rust
-use mentra::runtime::{AgentConfig, ContextCompactionConfig};
+use mentra::agent::{AgentConfig, ContextCompactionConfig};
 
 let config = AgentConfig {
     context_compaction: ContextCompactionConfig {
         auto_compact_threshold_tokens: Some(75_000),
-        ..ContextCompactionConfig::default()
+        ..Default::default()
     },
-    ..AgentConfig::default()
+    ..Default::default()
 };
 ```
 

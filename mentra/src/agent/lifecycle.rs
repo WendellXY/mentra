@@ -1,7 +1,4 @@
-use crate::{
-    ContentBlock, Message, Role,
-    runtime::{RunOptions, error::RuntimeError},
-};
+use crate::{ContentBlock, Message, Role, error::RuntimeError, runtime::RunOptions};
 
 use super::{Agent, AgentEvent, AgentStatus, TurnRunner};
 

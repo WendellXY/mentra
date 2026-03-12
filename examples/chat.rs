@@ -2,11 +2,8 @@ use std::{io::Write, path::PathBuf};
 
 use dotenvy::dotenv;
 use mentra::{
-    BuiltinProvider, ContentBlock, ModelInfo, ProviderDescriptor,
-    runtime::{
-        Agent, AgentConfig, AgentEvent, ContextCompactionConfig, Runtime, RuntimePolicy, TaskItem,
-        TaskStatus, TeamAutonomyConfig,
-    },
+    agent::{AgentEvent, ContextCompactionConfig, TeamAutonomyConfig},
+    runtime::{TaskItem, TaskStatus},
     tool::ToolCall,
 };
 use time::format_description::well_known::Rfc3339;
@@ -15,21 +12,21 @@ use time::format_description::well_known::Rfc3339;
 async fn main() {
     dotenv().ok();
 
-    let runtime = Runtime::builder()
+    let runtime = mentra::Runtime::builder()
         .with_optional_provider(
-            BuiltinProvider::OpenAI,
+            mentra::BuiltinProvider::OpenAI,
             std::env::var("OPENAI_API_KEY").ok(),
         )
         .with_optional_provider(
-            BuiltinProvider::Anthropic,
+            mentra::BuiltinProvider::Anthropic,
             std::env::var("ANTHROPIC_API_KEY").ok(),
         )
         .with_optional_provider(
-            BuiltinProvider::Gemini,
+            mentra::BuiltinProvider::Gemini,
             std::env::var("GEMINI_API_KEY").ok(),
         )
         .with_policy(
-            RuntimePolicy::default()
+            mentra::RuntimePolicy::default()
                 .allow_shell_commands(true)
                 .allow_background_commands(true),
         )
@@ -42,20 +39,20 @@ async fn main() {
         .spawn_with_config(
             "Foo",
             pick_model(&runtime).await,
-            AgentConfig {
+            mentra::AgentConfig {
                 system: Some(
                     "You are a helpful CLI agent. When the user asks to spawn, manage, monitor, or keep working with a named persistent teammate across turns, you must use `team_spawn` and the team protocol tools rather than the disposable `task` tool or persisted task tools. Autonomous teammates can scan persisted tasks, claim ready unowned work themselves, and continue from the task board without manual assignment when team autonomy is enabled. Do not satisfy teammate-management requests by creating project tasks. For plan review workflows, send the teammate a normal message asking for the proposal, let the teammate submit a `plan_approval` request back to you, then use `team_respond` on that inbound request. Do not open a `plan_approval` request to the teammate yourself. Use `task` only for short-lived disposable delegation that does not need mailbox coordination, protocol review, or ongoing status tracking."
                         .to_string(),
                 ),
                 context_compaction: example_compaction_config(),
-                team: mentra::runtime::TeamConfig {
+                team: mentra::agent::TeamConfig {
                     autonomy: TeamAutonomyConfig {
                         enabled: true,
-                        ..TeamAutonomyConfig::default()
+                        ..Default::default()
                     },
-                    ..mentra::runtime::TeamConfig::default()
+                    ..Default::default()
                 },
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .expect("Failed to spawn agent");
@@ -73,7 +70,7 @@ async fn main() {
         }
 
         agent
-            .send(vec![ContentBlock::Text {
+            .send(vec![mentra::ContentBlock::Text {
                 text: input.to_string(),
             }])
             .await
@@ -89,11 +86,11 @@ fn example_compaction_config() -> ContextCompactionConfig {
 
     ContextCompactionConfig {
         auto_compact_threshold_tokens: (threshold > 0).then_some(threshold),
-        ..ContextCompactionConfig::default()
+        ..Default::default()
     }
 }
 
-async fn pick_model(runtime: &Runtime) -> ModelInfo {
+async fn pick_model(runtime: &mentra::Runtime) -> mentra::ModelInfo {
     let providers = runtime.providers();
     let provider = pick_provider(&providers);
     let provider_name = provider_name(&provider);
@@ -161,7 +158,7 @@ async fn pick_model(runtime: &Runtime) -> ModelInfo {
     }
 }
 
-fn prompt_manual_model(provider: &ProviderDescriptor) -> ModelInfo {
+fn prompt_manual_model(provider: &mentra::ProviderDescriptor) -> mentra::ModelInfo {
     println!("Enter a model ID manually for {}.", provider_name(provider));
 
     loop {
@@ -179,7 +176,7 @@ fn prompt_manual_model(provider: &ProviderDescriptor) -> ModelInfo {
             continue;
         }
 
-        return ModelInfo {
+        return mentra::ModelInfo {
             id: model_id.to_string(),
             provider: provider.id.clone(),
             display_name: None,
@@ -189,7 +186,7 @@ fn prompt_manual_model(provider: &ProviderDescriptor) -> ModelInfo {
     }
 }
 
-fn pick_provider(providers: &[ProviderDescriptor]) -> ProviderDescriptor {
+fn pick_provider(providers: &[mentra::ProviderDescriptor]) -> mentra::ProviderDescriptor {
     if providers.len() == 1 {
         let provider = providers[0].clone();
         println!("Using provider: {}", provider_name(&provider));
@@ -224,14 +221,14 @@ fn pick_provider(providers: &[ProviderDescriptor]) -> ProviderDescriptor {
     }
 }
 
-fn provider_name(provider: &ProviderDescriptor) -> &str {
+fn provider_name(provider: &mentra::ProviderDescriptor) -> &str {
     provider
         .display_name
         .as_deref()
         .unwrap_or(provider.id.as_str())
 }
 
-fn subscribe_events(agent: &Agent) -> tokio::task::JoinHandle<()> {
+fn subscribe_events(agent: &mentra::Agent) -> tokio::task::JoinHandle<()> {
     let mut events = agent.subscribe_events();
     let mut snapshot = agent.watch_snapshot();
 

@@ -25,15 +25,17 @@ use tokio::sync::{broadcast, watch};
 
 use crate::{
     Message,
+    error::RuntimeError,
     provider::{Provider, ProviderId, ToolChoice},
     runtime::{
         LoadedAgentState, RuntimeIntrinsicTool, TaskItem,
         background::BackgroundNotification,
-        error::RuntimeError,
         handle::{AgentExecutionConfig, AgentObserver, RuntimeHandle},
         team::TeamMessage,
     },
 };
+
+pub(crate) use team::parse_task_input;
 
 pub use config::{
     AgentConfig, ContextCompactionConfig, TaskConfig, TeamAutonomyConfig, TeamConfig,
@@ -45,11 +47,10 @@ pub use events::{
 };
 pub use pending::PendingAssistantTurn;
 use runner::TurnRunner;
-pub(crate) use team::parse_task_input;
 
 static NEXT_AGENT_ID: AtomicU64 = AtomicU64::new(1);
 
-/// Running or persisted agent managed by a [`crate::runtime::Runtime`].
+/// Running or persisted agent managed by a [`crate::Runtime`].
 pub struct Agent {
     id: String,
     runtime: RuntimeHandle,

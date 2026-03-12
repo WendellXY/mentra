@@ -5,13 +5,9 @@ use std::{
 
 use tokio::sync::{Mutex as AsyncMutex, mpsc};
 
-use crate::{
-    ContentBlock,
-    runtime::{TeamAutonomyConfig, error::RuntimeError},
-};
+use crate::{Agent, ContentBlock, agent::TeamAutonomyConfig, error::RuntimeError};
 
 use super::{TeamManager, TeamMemberStatus};
-use crate::runtime::Agent;
 
 const TEAM_WAKE_PROMPT: &str = "Process any new team inbox messages and continue your work.";
 

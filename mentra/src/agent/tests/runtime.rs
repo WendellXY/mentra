@@ -2,11 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use crate::{
     ContentBlock, Message, ProviderId, Role,
+    agent::{AgentConfig, AgentEvent, AgentStatus},
     provider::{ContentBlockDelta, ContentBlockStart, ProviderError, ProviderEvent},
-    runtime::{
-        AgentConfig, AgentEvent, AgentStatus, RunOptions, Runtime, RuntimeHook, RuntimeHookEvent,
-        RuntimePolicy,
-    },
+    runtime::{RunOptions, Runtime, RuntimeHook, RuntimeHookEvent, RuntimePolicy},
 };
 
 use super::support::{ScriptedProvider, StaticTool, erroring_stream, model_info, ok_stream};

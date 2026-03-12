@@ -5,7 +5,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::{ContentBlock, Message, Role, provider::Request, runtime::error::RuntimeError};
+use crate::{
+    ContentBlock, Message, Role, agent::AgentEvent, error::RuntimeError, provider::Request,
+};
 
 use super::{Agent, ContextCompactionDetails, ContextCompactionTrigger};
 
@@ -125,7 +127,7 @@ impl Agent {
             preserved_messages,
             resulting_history_len: self.history.len(),
         };
-        self.emit_event(crate::runtime::AgentEvent::ContextCompacted {
+        self.emit_event(AgentEvent::ContextCompacted {
             details: details.clone(),
         });
 

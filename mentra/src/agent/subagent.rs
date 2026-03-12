@@ -1,4 +1,4 @@
-use crate::{ContentBlock, Role, runtime::error::RuntimeError};
+use crate::{ContentBlock, Role, error::RuntimeError};
 
 use super::{Agent, SpawnedAgentStatus, SpawnedAgentSummary};
 

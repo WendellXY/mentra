@@ -13,8 +13,8 @@ use std::{
 use tokio::sync::{broadcast, watch};
 
 use crate::{
+    agent::{AgentEvent, AgentSnapshot},
     runtime::{
-        AgentEvent, AgentSnapshot,
         background::{BackgroundNotification, BackgroundTaskManager, BackgroundTaskSummary},
         control::{
             AuditHook, CommandOutput, CommandRequest, CommandSpec, LocalRuntimeExecutor,

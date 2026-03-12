@@ -10,15 +10,17 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{
     Message,
+    agent::{
+        AgentConfig, AgentStatus, PendingToolUseSummary, SpawnedAgentSummary, TeammateIdentity,
+    },
     provider::ProviderId,
     runtime::{
-        AgentConfig, AgentStatus, BackgroundTaskStatus, BackgroundTaskSummary,
-        PendingToolUseSummary, SpawnedAgentSummary, TaskItem, TeamMemberStatus, TeamMemberSummary,
+        BackgroundTaskStatus, BackgroundTaskSummary, TaskItem, TeamMemberStatus, TeamMemberSummary,
         TeamMessage, TeamProtocolRequestSummary,
     },
 };
 
-use super::{agent::TeammateIdentity, background::BackgroundNotification, error::RuntimeError};
+use super::{background::BackgroundNotification, error::RuntimeError};
 
 static NEXT_STORE_ID: AtomicU64 = AtomicU64::new(1);
 #[cfg(test)]
