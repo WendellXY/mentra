@@ -14,7 +14,6 @@ use super::Runtime;
 use super::skill::SkillLoader;
 
 /// Builder for constructing a [`Runtime`] with providers, tools, and policies.
-#[derive(Default)]
 pub struct RuntimeBuilder {
     handle: RuntimeHandle,
     provider_registry: ProviderRegistry,
@@ -22,14 +21,9 @@ pub struct RuntimeBuilder {
 
 impl RuntimeBuilder {
     /// Creates a builder with Mentra's builtin tools enabled.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Creates a builder without builtin tools.
-    pub fn new_empty() -> Self {
+    pub fn new(runtime_intrinsics_enabled: bool) -> Self {
         Self {
-            handle: RuntimeHandle::new_empty(),
+            handle: RuntimeHandle::new(runtime_intrinsics_enabled),
             provider_registry: ProviderRegistry::default(),
         }
     }

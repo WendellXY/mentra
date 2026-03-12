@@ -1,23 +1,13 @@
 use super::*;
 
 impl RuntimeHandle {
-    pub fn new() -> Self {
+    pub fn new(runtime_intrinsics_enabled: bool) -> Self {
         Self::with_components(
             Arc::new(SqliteRuntimeStore::default()),
             Arc::new(LocalRuntimeExecutor),
             Arc::new(RuntimePolicy::default()),
             RuntimeHooks::new().with_hook(AuditHook),
-            true,
-        )
-    }
-
-    pub fn new_empty() -> Self {
-        Self::with_components(
-            Arc::new(SqliteRuntimeStore::default()),
-            Arc::new(LocalRuntimeExecutor),
-            Arc::new(RuntimePolicy::default()),
-            RuntimeHooks::new().with_hook(AuditHook),
-            false,
+            runtime_intrinsics_enabled,
         )
     }
 
@@ -184,11 +174,5 @@ impl RuntimeHandle {
             runtime_instance_id: format!("runtime-{}", std::process::id()),
             agent_contexts: Arc::new(RwLock::new(HashMap::new())),
         }
-    }
-}
-
-impl Default for RuntimeHandle {
-    fn default() -> Self {
-        Self::new()
     }
 }

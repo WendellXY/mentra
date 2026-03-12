@@ -56,12 +56,12 @@ pub struct Runtime {
 impl Runtime {
     /// Returns a builder with Mentra's builtin tools enabled.
     pub fn builder() -> RuntimeBuilder {
-        RuntimeBuilder::new()
+        RuntimeBuilder::new(true)
     }
 
     /// Returns a builder with no builtin tools registered.
     pub fn empty_builder() -> RuntimeBuilder {
-        RuntimeBuilder::new_empty()
+        RuntimeBuilder::new(false)
     }
 
     /// Registers a custom tool on the runtime after construction.
