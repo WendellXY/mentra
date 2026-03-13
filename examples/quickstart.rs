@@ -1,11 +1,14 @@
 use std::io::{self, Read, Write};
 
+use dotenvy::dotenv;
 use mentra::{
     Agent, BuiltinProvider, ContentBlock, ModelInfo, ProviderId, Runtime, agent::AgentEvent,
 };
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenv().ok();
+
     let prompt = read_prompt()?;
     let api_key = std::env::var("OPENAI_API_KEY")
         .map_err(|_| "OPENAI_API_KEY must be set before running the quickstart example")?;

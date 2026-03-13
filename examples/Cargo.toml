@@ -12,3 +12,7 @@ time = { version = "0.3", features = ["formatting"] }
 [[example]]
 name = "chat"
 path = "chat.rs"
+
+[[example]]
+name = "quickstart"
+path = "quickstart.rs"

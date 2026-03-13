@@ -18,13 +18,12 @@ MSRV: Rust 1.85.
 - OpenAI provider support via the Responses API
 - image inputs for OpenAI and Anthropic, plus inline image bytes for Gemini
 
-## Crates.io Quickstart
+## Quickstart Example
 
-Install the packaged example from crates.io:
+Clone the repository and run the workspace quickstart example:
 
 ```bash
-cargo install mentra --example quickstart
-OPENAI_API_KEY=... quickstart "Summarize the benefits of tool-using agents."
+cargo run -p mentra-examples --example quickstart -- "Summarize the benefits of tool-using agents."
 ```
 
 The quickstart example accepts a prompt from CLI args or stdin. Set `MENTRA_MODEL` to skip model discovery and force a specific OpenAI model.
@@ -142,7 +141,7 @@ Override these defaults when needed:
 - use `Runtime::builder().with_store(...)` for the SQLite store
 - customize `AgentConfig::task.tasks_dir`, `AgentConfig::team.team_dir`, and `AgentConfig::context_compaction.transcript_dir` for task, team, and transcript storage
 
-## Repo Example
+## Interactive Repo Example
 
 Clone the repository when you want the richer interactive demo with provider selection, persisted runtime inspection, skills loading, and team/task visibility.
 

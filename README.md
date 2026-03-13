@@ -9,11 +9,10 @@ This repository is a small workspace:
 
 Consumer-facing crate docs live in [mentra/README.md](mentra/README.md).
 
-If you want the packaged crates.io quickstart, install the published example:
+If you want the lightweight quickstart example after cloning the repository:
 
 ```bash
-cargo install mentra --example quickstart
-OPENAI_API_KEY=... quickstart "Summarize the benefits of tool-using agents."
+cargo run -p mentra-examples --example quickstart -- "Summarize the benefits of tool-using agents."
 ```
 
 ## Workspace Commands
