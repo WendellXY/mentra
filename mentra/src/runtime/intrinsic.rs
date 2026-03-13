@@ -18,7 +18,7 @@ pub(crate) fn register_tools(registry: &mut crate::tool::ToolRegistry) {
     crate::runtime::task::TaskIntrinsicTool::ALL
         .iter()
         .for_each(|tool| registry.register_tool(*tool));
-    crate::runtime::team::TeamIntrinsicTool::ALL
+    crate::team::TeamIntrinsicTool::ALL
         .iter()
         .for_each(|tool| registry.register_tool(*tool));
 }

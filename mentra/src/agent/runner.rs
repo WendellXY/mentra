@@ -6,8 +6,9 @@ use crate::{
     provider::Request,
     runtime::{
         RunOptions, RuntimeHookEvent, background::BackgroundNotification,
-        control::is_transient_provider_error, team::format_inbox,
+        control::is_transient_provider_error,
     },
+    team::format_inbox,
     tool::{ToolCapability, ToolContext},
 };
 

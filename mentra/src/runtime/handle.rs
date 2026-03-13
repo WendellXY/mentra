@@ -23,10 +23,10 @@ use crate::{
         error::RuntimeError,
         store::{RuntimeStore, SqliteRuntimeStore},
         task::{self, TaskAccess},
-        team::{
-            TeamDispatch, TeamManager, TeamMemberSummary, TeamMessage, TeamProtocolRequestSummary,
-            TeamRequestFilter,
-        },
+    },
+    team::{
+        TeamDispatch, TeamManager, TeamMemberSummary, TeamMessage, TeamProtocolRequestSummary,
+        TeamRequestFilter,
     },
     tool::{ExecutableTool, ToolRegistry, ToolSpec},
 };

@@ -32,8 +32,8 @@ use crate::{
         LoadedAgentState, RuntimeIntrinsicTool, TaskItem,
         background::BackgroundNotification,
         handle::{AgentExecutionConfig, AgentObserver, RuntimeHandle},
-        team::TeamMessage,
     },
+    team::TeamMessage,
 };
 
 pub(crate) use memory::AgentMemoryState;

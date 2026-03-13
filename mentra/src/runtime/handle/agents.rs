@@ -1,4 +1,52 @@
 use super::*;
+use crate::{
+    agent::{AgentEvent, AgentSnapshot},
+    team::{TeamObserverSink, TeamRegistration},
+};
+
+struct AgentTeamObserver {
+    store: Arc<dyn RuntimeStore>,
+    tasks_dir: PathBuf,
+    events: broadcast::Sender<AgentEvent>,
+    snapshot_tx: watch::Sender<AgentSnapshot>,
+    snapshot: Arc<Mutex<AgentSnapshot>>,
+}
+
+impl AgentTeamObserver {
+    fn new(store: Arc<dyn RuntimeStore>, tasks_dir: PathBuf, observer: &AgentObserver) -> Self {
+        Self {
+            store,
+            tasks_dir,
+            events: observer.events.clone(),
+            snapshot_tx: observer.snapshot_tx.clone(),
+            snapshot: Arc::clone(&observer.snapshot),
+        }
+    }
+}
+
+impl TeamObserverSink for AgentTeamObserver {
+    fn publish_snapshot(
+        &self,
+        members: &[crate::team::TeamMemberSummary],
+        requests: &[crate::team::TeamProtocolRequestSummary],
+        unread_count: usize,
+    ) {
+        let mut snapshot = self.snapshot.lock().expect("agent snapshot poisoned");
+        if let Ok(tasks) = self.store.load_tasks(self.tasks_dir.as_path()) {
+            snapshot.tasks = tasks;
+        }
+        snapshot.teammates = members.to_vec();
+        snapshot.protocol_requests = requests.to_vec();
+        snapshot.pending_team_messages = unread_count;
+        let next_snapshot = snapshot.clone();
+        drop(snapshot);
+        self.snapshot_tx.send_replace(next_snapshot);
+    }
+
+    fn publish_event(&self, event: AgentEvent) {
+        let _ = self.events.send(event);
+    }
+}
 
 impl RuntimeHandle {
     pub fn register_agent(
@@ -10,7 +58,15 @@ impl RuntimeHandle {
     ) -> Result<(), RuntimeError> {
         self.acquire_agent_lease(agent_id)?;
         self.background_tasks.register_agent(agent_id, observer);
-        self.team.register_agent(agent_name, &config, observer)?;
+        self.team.register_agent(TeamRegistration {
+            agent_name: agent_name.to_string(),
+            team_dir: config.team_dir.clone(),
+            observer: Arc::new(AgentTeamObserver::new(
+                self.store.clone(),
+                config.tasks_dir.clone(),
+                observer,
+            )),
+        })?;
         self.agent_contexts
             .write()
             .expect("agent context registry poisoned")

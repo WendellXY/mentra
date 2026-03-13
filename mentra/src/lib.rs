@@ -4,6 +4,8 @@
 pub mod agent;
 /// Provider integrations and transport-neutral request/response types.
 pub mod provider;
+/// Team coordination types and collaboration services.
+pub mod team;
 /// Runtime orchestration, persistence, policies, and agent APIs.
 pub mod runtime;
 /// Tool traits, metadata, and builtin tools.
@@ -16,6 +18,10 @@ pub use provider::{
 
 pub use agent::{Agent, AgentConfig};
 pub use runtime::{Runtime, RuntimePolicy};
+pub use team::{
+    TeamDispatch, TeamMemberStatus, TeamMemberSummary, TeamMessage, TeamMessageKind,
+    TeamProtocolRequestSummary, TeamProtocolStatus,
+};
 
 pub mod error {
     pub use crate::provider::ProviderError;

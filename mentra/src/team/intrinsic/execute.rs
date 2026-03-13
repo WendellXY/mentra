@@ -1,6 +1,8 @@
 use crate::{
     ContentBlock,
-    runtime::{Agent, TeamProtocolStatus, error::RuntimeError, team::TeamRequestDirection},
+    agent::Agent,
+    error::RuntimeError,
+    team::{TeamProtocolStatus, TeamRequestDirection},
     tool::ToolCall,
 };
 

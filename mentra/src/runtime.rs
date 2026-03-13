@@ -7,7 +7,6 @@ mod intrinsic;
 mod skill;
 mod store;
 pub(crate) mod task;
-pub(crate) mod team;
 
 use std::path::Path;
 
@@ -33,7 +32,7 @@ pub(crate) use store::{LoadedAgentState, PersistedAgentRecord, TaskStateSnapshot
 pub use store::{RuntimeStore, SqliteRuntimeStore};
 pub(crate) use task::TaskIntrinsicTool;
 pub use task::{TaskItem, TaskStatus};
-pub use team::{
+pub use crate::team::{
     TeamDispatch, TeamMemberStatus, TeamMemberSummary, TeamMessage, TeamMessageKind,
     TeamProtocolRequestSummary, TeamProtocolStatus,
 };

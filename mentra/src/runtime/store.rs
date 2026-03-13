@@ -12,9 +12,9 @@ use crate::{
     agent::{AgentConfig, AgentMemoryState, AgentStatus, SpawnedAgentSummary, TeammateIdentity},
     provider::ProviderId,
     runtime::{
-        BackgroundTaskStatus, BackgroundTaskSummary, TaskItem, TeamMemberStatus, TeamMemberSummary,
-        TeamMessage, TeamProtocolRequestSummary,
+        BackgroundTaskStatus, BackgroundTaskSummary, TaskItem,
     },
+    team::{TeamMemberSummary, TeamMessage, TeamProtocolRequestSummary, TeamStore},
 };
 
 use super::{background::BackgroundNotification, error::RuntimeError};
@@ -56,7 +56,7 @@ pub struct TaskStateSnapshot {
 }
 
 /// Persistence backend used for agents, team state, tasks, and audit events.
-pub trait RuntimeStore: Send + Sync {
+pub trait RuntimeStore: TeamStore + Send + Sync {
     fn prepare_recovery(&self) -> Result<(), RuntimeError>;
     fn create_agent(
         &self,
@@ -92,42 +92,6 @@ pub trait RuntimeStore: Send + Sync {
         snapshot: &TaskStateSnapshot,
     ) -> Result<(), RuntimeError>;
     fn replace_tasks(&self, namespace: &Path, tasks: &[TaskItem]) -> Result<(), RuntimeError>;
-    fn unread_team_count(&self, team_dir: &Path, agent_name: &str) -> Result<usize, RuntimeError>;
-    fn load_team_members(&self, team_dir: &Path) -> Result<Vec<TeamMemberSummary>, RuntimeError>;
-    fn upsert_team_member(
-        &self,
-        team_dir: &Path,
-        summary: &TeamMemberSummary,
-    ) -> Result<(), RuntimeError>;
-    fn update_team_member_status(
-        &self,
-        team_dir: &Path,
-        name: &str,
-        status: &TeamMemberStatus,
-    ) -> Result<TeamMemberSummary, RuntimeError>;
-    fn read_team_inbox(
-        &self,
-        team_dir: &Path,
-        agent_name: &str,
-    ) -> Result<Vec<TeamMessage>, RuntimeError>;
-    fn ack_team_inbox(&self, team_dir: &Path, agent_name: &str) -> Result<(), RuntimeError>;
-    fn requeue_team_inbox(&self, team_dir: &Path, agent_name: &str) -> Result<(), RuntimeError>;
-    fn append_team_message(
-        &self,
-        team_dir: &Path,
-        recipient: &str,
-        message: &TeamMessage,
-    ) -> Result<(), RuntimeError>;
-    fn load_team_requests(
-        &self,
-        team_dir: &Path,
-    ) -> Result<Vec<TeamProtocolRequestSummary>, RuntimeError>;
-    fn upsert_team_request(
-        &self,
-        team_dir: &Path,
-        request: &TeamProtocolRequestSummary,
-    ) -> Result<(), RuntimeError>;
-    fn list_team_agent_names(&self, team_dir: &Path) -> Result<Vec<String>, RuntimeError>;
     fn load_background_tasks(
         &self,
         agent_id: &str,
@@ -152,6 +116,196 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<(), RuntimeError>;
     fn acquire_lease(&self, key: &str, owner: &str, ttl: Duration) -> Result<bool, RuntimeError>;
     fn release_lease(&self, key: &str, owner: &str) -> Result<(), RuntimeError>;
+}
+
+impl TeamStore for SqliteRuntimeStore {
+    fn unread_team_count(&self, team_dir: &Path, agent_name: &str) -> Result<usize, RuntimeError> {
+        let conn = self.open()?;
+        let count = conn
+            .query_row(
+                "SELECT COUNT(*) FROM team_inbox WHERE team_dir = ?1 AND recipient = ?2 AND delivery_state = ?3",
+                params![Self::team_key(team_dir), agent_name, DELIVERY_PENDING],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(sqlite_error)?;
+        Ok(count as usize)
+    }
+
+    fn load_team_members(&self, team_dir: &Path) -> Result<Vec<TeamMemberSummary>, RuntimeError> {
+        let conn = self.open()?;
+        let mut stmt = conn
+            .prepare("SELECT summary_json FROM team_members WHERE team_dir = ?1 ORDER BY name")
+            .map_err(sqlite_error)?;
+        let rows = stmt
+            .query_map(params![Self::team_key(team_dir)], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(sqlite_error)?;
+        let mut members = Vec::new();
+        for row in rows {
+            members.push(from_json(&row.map_err(sqlite_error)?)?);
+        }
+        Ok(members)
+    }
+
+    fn upsert_team_member(
+        &self,
+        team_dir: &Path,
+        summary: &TeamMemberSummary,
+    ) -> Result<(), RuntimeError> {
+        let conn = self.open()?;
+        conn.execute(
+            r#"
+            INSERT INTO team_members (team_dir, name, summary_json)
+            VALUES (?1, ?2, ?3)
+            ON CONFLICT(team_dir, name) DO UPDATE SET summary_json = excluded.summary_json
+            "#,
+            params![Self::team_key(team_dir), summary.name, to_json(summary)?],
+        )
+        .map_err(sqlite_error)?;
+        Ok(())
+    }
+
+    fn read_team_inbox(
+        &self,
+        team_dir: &Path,
+        agent_name: &str,
+    ) -> Result<Vec<TeamMessage>, RuntimeError> {
+        let mut conn = self.open()?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sqlite_error)?;
+        let team_key = Self::team_key(team_dir);
+        let ids_and_payloads = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT id, payload_json FROM team_inbox WHERE team_dir = ?1 AND recipient = ?2 AND delivery_state = ?3 ORDER BY created_at, id",
+                )
+                .map_err(sqlite_error)?;
+            stmt.query_map(params![team_key, agent_name, DELIVERY_PENDING], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(sqlite_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sqlite_error)?
+        };
+
+        for (id, _) in &ids_and_payloads {
+            tx.execute(
+                "UPDATE team_inbox SET delivery_state = ?2 WHERE id = ?1",
+                params![id, DELIVERY_INFLIGHT],
+            )
+            .map_err(sqlite_error)?;
+        }
+        tx.commit().map_err(sqlite_error)?;
+
+        ids_and_payloads
+            .into_iter()
+            .map(|(_, payload)| from_json(&payload))
+            .collect()
+    }
+
+    fn ack_team_inbox(&self, team_dir: &Path, agent_name: &str) -> Result<(), RuntimeError> {
+        let conn = self.open()?;
+        conn.execute(
+            "UPDATE team_inbox SET delivery_state = ?3 WHERE team_dir = ?1 AND recipient = ?2 AND delivery_state = ?4",
+            params![Self::team_key(team_dir), agent_name, DELIVERY_ACKED, DELIVERY_INFLIGHT],
+        )
+        .map_err(sqlite_error)?;
+        Ok(())
+    }
+
+    fn requeue_team_inbox(&self, team_dir: &Path, agent_name: &str) -> Result<(), RuntimeError> {
+        let conn = self.open()?;
+        conn.execute(
+            "UPDATE team_inbox SET delivery_state = ?3 WHERE team_dir = ?1 AND recipient = ?2 AND delivery_state = ?4",
+            params![Self::team_key(team_dir), agent_name, DELIVERY_PENDING, DELIVERY_INFLIGHT],
+        )
+        .map_err(sqlite_error)?;
+        Ok(())
+    }
+
+    fn append_team_message(
+        &self,
+        team_dir: &Path,
+        recipient: &str,
+        message: &TeamMessage,
+    ) -> Result<(), RuntimeError> {
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO team_inbox (id, team_dir, recipient, payload_json, delivery_state, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                next_id("teammsg"),
+                Self::team_key(team_dir),
+                recipient,
+                to_json(message)?,
+                DELIVERY_PENDING,
+                now_secs(),
+            ],
+        )
+        .map_err(sqlite_error)?;
+        Ok(())
+    }
+
+    fn load_team_requests(
+        &self,
+        team_dir: &Path,
+    ) -> Result<Vec<TeamProtocolRequestSummary>, RuntimeError> {
+        let conn = self.open()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT payload_json FROM team_requests WHERE team_dir = ?1 ORDER BY created_at, request_id",
+            )
+            .map_err(sqlite_error)?;
+        let rows = stmt
+            .query_map(params![Self::team_key(team_dir)], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(sqlite_error)?;
+        let mut requests = Vec::new();
+        for row in rows {
+            requests.push(from_json(&row.map_err(sqlite_error)?)?);
+        }
+        Ok(requests)
+    }
+
+    fn upsert_team_request(
+        &self,
+        team_dir: &Path,
+        request: &TeamProtocolRequestSummary,
+    ) -> Result<(), RuntimeError> {
+        let conn = self.open()?;
+        conn.execute(
+            r#"
+            INSERT INTO team_requests (request_id, team_dir, payload_json, created_at)
+            VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(request_id) DO UPDATE SET
+                team_dir = excluded.team_dir,
+                payload_json = excluded.payload_json
+            "#,
+            params![
+                request.request_id,
+                Self::team_key(team_dir),
+                to_json(request)?,
+                request.created_at as i64,
+            ],
+        )
+        .map_err(sqlite_error)?;
+        Ok(())
+    }
+
+    fn list_team_agent_names(&self, team_dir: &Path) -> Result<Vec<String>, RuntimeError> {
+        let conn = self.open()?;
+        let mut stmt = conn
+            .prepare("SELECT name FROM agents WHERE team_dir = ?1 ORDER BY name")
+            .map_err(sqlite_error)?;
+        stmt.query_map(params![Self::team_key(team_dir)], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(sqlite_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(sqlite_error)
+    }
 }
 
 #[derive(Clone)]
@@ -693,214 +847,6 @@ impl RuntimeStore for SqliteRuntimeStore {
             }
         }
         tx.commit().map_err(sqlite_error)
-    }
-
-    fn unread_team_count(&self, team_dir: &Path, agent_name: &str) -> Result<usize, RuntimeError> {
-        let conn = self.open()?;
-        let count = conn
-            .query_row(
-                "SELECT COUNT(*) FROM team_inbox WHERE team_dir = ?1 AND recipient = ?2 AND delivery_state = ?3",
-                params![Self::team_key(team_dir), agent_name, DELIVERY_PENDING],
-                |row| row.get::<_, i64>(0),
-            )
-            .map_err(sqlite_error)?;
-        Ok(count as usize)
-    }
-
-    fn load_team_members(&self, team_dir: &Path) -> Result<Vec<TeamMemberSummary>, RuntimeError> {
-        let conn = self.open()?;
-        let mut stmt = conn
-            .prepare("SELECT summary_json FROM team_members WHERE team_dir = ?1 ORDER BY name")
-            .map_err(sqlite_error)?;
-        let rows = stmt
-            .query_map(params![Self::team_key(team_dir)], |row| {
-                row.get::<_, String>(0)
-            })
-            .map_err(sqlite_error)?;
-        let mut members = Vec::new();
-        for row in rows {
-            members.push(from_json(&row.map_err(sqlite_error)?)?);
-        }
-        Ok(members)
-    }
-
-    fn upsert_team_member(
-        &self,
-        team_dir: &Path,
-        summary: &TeamMemberSummary,
-    ) -> Result<(), RuntimeError> {
-        let conn = self.open()?;
-        conn.execute(
-            r#"
-            INSERT INTO team_members (team_dir, name, summary_json)
-            VALUES (?1, ?2, ?3)
-            ON CONFLICT(team_dir, name) DO UPDATE SET summary_json = excluded.summary_json
-            "#,
-            params![Self::team_key(team_dir), summary.name, to_json(summary)?],
-        )
-        .map_err(sqlite_error)?;
-        Ok(())
-    }
-
-    fn update_team_member_status(
-        &self,
-        team_dir: &Path,
-        name: &str,
-        status: &TeamMemberStatus,
-    ) -> Result<TeamMemberSummary, RuntimeError> {
-        let conn = self.open()?;
-        let summary_json: String = conn
-            .query_row(
-                "SELECT summary_json FROM team_members WHERE team_dir = ?1 AND name = ?2",
-                params![Self::team_key(team_dir), name],
-                |row| row.get(0),
-            )
-            .map_err(sqlite_error)?;
-        let mut summary: TeamMemberSummary = from_json(&summary_json)?;
-        summary.status = status.clone();
-        self.upsert_team_member(team_dir, &summary)?;
-        Ok(summary)
-    }
-
-    fn read_team_inbox(
-        &self,
-        team_dir: &Path,
-        agent_name: &str,
-    ) -> Result<Vec<TeamMessage>, RuntimeError> {
-        let mut conn = self.open()?;
-        let tx = conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(sqlite_error)?;
-        let team_key = Self::team_key(team_dir);
-        let ids_and_payloads = {
-            let mut stmt = tx
-                .prepare(
-                    "SELECT id, payload_json FROM team_inbox WHERE team_dir = ?1 AND recipient = ?2 AND delivery_state = ?3 ORDER BY created_at, id",
-                )
-                .map_err(sqlite_error)?;
-            stmt.query_map(params![team_key, agent_name, DELIVERY_PENDING], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })
-            .map_err(sqlite_error)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(sqlite_error)?
-        };
-
-        for (id, _) in &ids_and_payloads {
-            tx.execute(
-                "UPDATE team_inbox SET delivery_state = ?2 WHERE id = ?1",
-                params![id, DELIVERY_INFLIGHT],
-            )
-            .map_err(sqlite_error)?;
-        }
-        tx.commit().map_err(sqlite_error)?;
-
-        ids_and_payloads
-            .into_iter()
-            .map(|(_, payload)| from_json(&payload))
-            .collect()
-    }
-
-    fn ack_team_inbox(&self, team_dir: &Path, agent_name: &str) -> Result<(), RuntimeError> {
-        let conn = self.open()?;
-        conn.execute(
-            "UPDATE team_inbox SET delivery_state = ?3 WHERE team_dir = ?1 AND recipient = ?2 AND delivery_state = ?4",
-            params![Self::team_key(team_dir), agent_name, DELIVERY_ACKED, DELIVERY_INFLIGHT],
-        )
-        .map_err(sqlite_error)?;
-        Ok(())
-    }
-
-    fn requeue_team_inbox(&self, team_dir: &Path, agent_name: &str) -> Result<(), RuntimeError> {
-        let conn = self.open()?;
-        conn.execute(
-            "UPDATE team_inbox SET delivery_state = ?3 WHERE team_dir = ?1 AND recipient = ?2 AND delivery_state = ?4",
-            params![Self::team_key(team_dir), agent_name, DELIVERY_PENDING, DELIVERY_INFLIGHT],
-        )
-        .map_err(sqlite_error)?;
-        Ok(())
-    }
-
-    fn append_team_message(
-        &self,
-        team_dir: &Path,
-        recipient: &str,
-        message: &TeamMessage,
-    ) -> Result<(), RuntimeError> {
-        let conn = self.open()?;
-        conn.execute(
-            "INSERT INTO team_inbox (id, team_dir, recipient, payload_json, delivery_state, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                next_id("teammsg"),
-                Self::team_key(team_dir),
-                recipient,
-                to_json(message)?,
-                DELIVERY_PENDING,
-                now_secs(),
-            ],
-        )
-        .map_err(sqlite_error)?;
-        Ok(())
-    }
-
-    fn load_team_requests(
-        &self,
-        team_dir: &Path,
-    ) -> Result<Vec<TeamProtocolRequestSummary>, RuntimeError> {
-        let conn = self.open()?;
-        let mut stmt = conn
-            .prepare(
-                "SELECT payload_json FROM team_requests WHERE team_dir = ?1 ORDER BY created_at, request_id",
-            )
-            .map_err(sqlite_error)?;
-        let rows = stmt
-            .query_map(params![Self::team_key(team_dir)], |row| {
-                row.get::<_, String>(0)
-            })
-            .map_err(sqlite_error)?;
-        let mut requests = Vec::new();
-        for row in rows {
-            requests.push(from_json(&row.map_err(sqlite_error)?)?);
-        }
-        Ok(requests)
-    }
-
-    fn upsert_team_request(
-        &self,
-        team_dir: &Path,
-        request: &TeamProtocolRequestSummary,
-    ) -> Result<(), RuntimeError> {
-        let conn = self.open()?;
-        conn.execute(
-            r#"
-            INSERT INTO team_requests (request_id, team_dir, payload_json, created_at)
-            VALUES (?1, ?2, ?3, ?4)
-            ON CONFLICT(request_id) DO UPDATE SET
-                team_dir = excluded.team_dir,
-                payload_json = excluded.payload_json
-            "#,
-            params![
-                request.request_id,
-                Self::team_key(team_dir),
-                to_json(request)?,
-                request.created_at as i64,
-            ],
-        )
-        .map_err(sqlite_error)?;
-        Ok(())
-    }
-
-    fn list_team_agent_names(&self, team_dir: &Path) -> Result<Vec<String>, RuntimeError> {
-        let conn = self.open()?;
-        let mut stmt = conn
-            .prepare("SELECT name FROM agents WHERE team_dir = ?1 ORDER BY name")
-            .map_err(sqlite_error)?;
-        stmt.query_map(params![Self::team_key(team_dir)], |row| {
-            row.get::<_, String>(0)
-        })
-        .map_err(sqlite_error)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(sqlite_error)
     }
 
     fn load_background_tasks(

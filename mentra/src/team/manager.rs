@@ -7,20 +7,17 @@ use std::{
     },
 };
 
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::mpsc;
 
-use crate::agent::{AgentEvent, AgentSnapshot};
-
-use crate::runtime::{
+use crate::{
+    agent::AgentEvent,
     error::RuntimeError,
-    handle::{AgentExecutionConfig, AgentObserver},
-    store::RuntimeStore,
-    task::TaskItem,
 };
 
 use super::{
-    TeamDispatch, TeamMemberStatus, TeamMemberSummary, TeamMessage, TeamProtocolRequestSummary,
-    TeamProtocolStatus, TeamRequestFilter,
+    TeamDispatch, TeamMemberStatus, TeamMemberSummary, TeamMessage, TeamObserverSink,
+    TeamProtocolRequestSummary, TeamProtocolStatus, TeamRegistration, TeamRequestFilter,
+    TeamStore,
 };
 
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
@@ -31,7 +28,7 @@ pub(crate) struct TeamManager {
 }
 
 struct TeamManagerInner {
-    store: Arc<dyn RuntimeStore>,
+    store: Arc<dyn TeamStore>,
     state: Mutex<TeamManagerState>,
 }
 
@@ -55,10 +52,13 @@ struct TeamState {
 #[derive(Clone)]
 struct TeamObserver {
     agent_name: String,
-    tasks_dir: PathBuf,
-    events: broadcast::Sender<AgentEvent>,
-    snapshot_tx: watch::Sender<AgentSnapshot>,
-    snapshot: Arc<Mutex<AgentSnapshot>>,
+    sink: Arc<dyn TeamObserverSink>,
+}
+
+#[derive(Clone)]
+struct ObserverUpdate {
+    observer: TeamObserver,
+    unread_count: usize,
 }
 
 struct TeammateActorHandle {
@@ -67,7 +67,7 @@ struct TeammateActorHandle {
 }
 
 impl TeamManager {
-    pub(crate) fn new(store: Arc<dyn RuntimeStore>) -> Self {
+    pub(crate) fn new(store: Arc<dyn TeamStore>) -> Self {
         Self {
             inner: Arc::new(TeamManagerInner {
                 store,
@@ -76,55 +76,37 @@ impl TeamManager {
         }
     }
 
-    pub(crate) fn register_agent(
-        &self,
-        agent_name: &str,
-        config: &AgentExecutionConfig,
-        observer: &AgentObserver,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn register_agent(&self, registration: TeamRegistration) -> Result<(), RuntimeError> {
+        let TeamRegistration {
+            agent_name,
+            team_dir,
+            observer,
+        } = registration;
         let (members, requests, unread_count) = {
             let mut state = self.inner.state.lock().expect("team manager poisoned");
-            let team = ensure_team_state(&self.inner.store, &mut state, config.team_dir.as_path())?;
-            team.known_agents.insert(agent_name.to_string());
+            let team = ensure_team_state(&self.inner.store, &mut state, team_dir.as_path())?;
+            team.known_agents.insert(agent_name.clone());
             team.unread_counts.insert(
-                agent_name.to_string(),
-                self.inner
-                    .store
-                    .unread_team_count(config.team_dir.as_path(), agent_name)?,
+                agent_name.clone(),
+                self.inner.store.unread_team_count(team_dir.as_path(), &agent_name)?,
             );
             team.observers
-                .retain(|observer| observer.agent_name != agent_name);
+                .retain(|existing| existing.agent_name != agent_name);
             team.observers.push(TeamObserver {
-                agent_name: agent_name.to_string(),
-                tasks_dir: config.tasks_dir.clone(),
-                events: observer.events.clone(),
-                snapshot_tx: observer.snapshot_tx.clone(),
-                snapshot: Arc::clone(&observer.snapshot),
+                agent_name: agent_name.clone(),
+                sink: observer.clone(),
             });
             (
                 team.members.clone(),
                 team.requests.clone(),
                 team.unread_counts
-                    .get(agent_name)
+                    .get(&agent_name)
                     .copied()
                     .unwrap_or_default(),
             )
         };
 
-        Self::publish_snapshot(
-            Arc::clone(&observer.snapshot),
-            self.inner.store.as_ref(),
-            config.tasks_dir.as_path(),
-            &members,
-            &requests,
-            unread_count,
-        );
-        let snapshot = observer
-            .snapshot
-            .lock()
-            .expect("agent snapshot poisoned")
-            .clone();
-        observer.snapshot_tx.send_replace(snapshot);
+        observer.publish_snapshot(&members, &requests, unread_count);
         Ok(())
     }
 
@@ -135,7 +117,7 @@ impl TeamManager {
         wake_tx: mpsc::UnboundedSender<()>,
         task: std::thread::JoinHandle<()>,
     ) -> Result<TeamMemberSummary, RuntimeError> {
-        let (observers, members, requests) = {
+        let (observer_updates, members, requests) = {
             let mut state = self.inner.state.lock().expect("team manager poisoned");
             let team = ensure_team_state(&self.inner.store, &mut state, team_dir)?;
             if let Some(index) = team
@@ -166,14 +148,14 @@ impl TeamManager {
                 .store
                 .upsert_team_member(&team.team_dir, &summary)?;
             (
-                team.observers.clone(),
+                observer_updates(team),
                 team.members.clone(),
                 team.requests.clone(),
             )
         };
 
         self.publish_to_observers(
-            observers,
+            observer_updates,
             members,
             requests,
             AgentEvent::TeammateSpawned {
@@ -211,7 +193,7 @@ impl TeamManager {
         name: &str,
         status: TeamMemberStatus,
     ) -> Result<(), RuntimeError> {
-        let (observers, members, requests, teammate) = {
+        let (observer_updates, members, requests, teammate) = {
             let mut state = self.inner.state.lock().expect("team manager poisoned");
             let team = ensure_team_state(&self.inner.store, &mut state, team_dir)?;
             let teammate = team
@@ -227,7 +209,7 @@ impl TeamManager {
                 .upsert_team_member(&team.team_dir, teammate)?;
             let teammate = teammate.clone();
             (
-                team.observers.clone(),
+                observer_updates(team),
                 team.members.clone(),
                 team.requests.clone(),
                 teammate,
@@ -235,7 +217,7 @@ impl TeamManager {
         };
 
         self.publish_to_observers(
-            observers,
+            observer_updates,
             members,
             requests,
             AgentEvent::TeammateUpdated { teammate },
@@ -408,7 +390,7 @@ impl TeamManager {
         protocol: String,
         content: String,
     ) -> Result<TeamProtocolRequestSummary, RuntimeError> {
-        let (observers, members, requests, request, wake_tx, notification) = {
+        let (observer_updates, members, requests, request, wake_tx, notification) = {
             let mut state = self.inner.state.lock().expect("team manager poisoned");
             let team = ensure_team_state(&self.inner.store, &mut state, team_dir)?;
             if !team.known_agents.contains(to)
@@ -443,7 +425,7 @@ impl TeamManager {
                 .store
                 .upsert_team_request(&team.team_dir, &request)?;
             (
-                team.observers.clone(),
+                observer_updates(team),
                 team.members.clone(),
                 team.requests.clone(),
                 request,
@@ -458,7 +440,7 @@ impl TeamManager {
         self.publish_inbox_notification(notification);
 
         self.publish_to_observers(
-            observers,
+            observer_updates,
             members,
             requests,
             AgentEvent::TeamProtocolRequested {
@@ -476,7 +458,7 @@ impl TeamManager {
         approve: bool,
         reason: Option<String>,
     ) -> Result<TeamProtocolRequestSummary, RuntimeError> {
-        let (observers, members, requests, request, wake_tx, notification) = {
+        let (observer_updates, members, requests, request, wake_tx, notification) = {
             let mut state = self.inner.state.lock().expect("team manager poisoned");
             let team = ensure_team_state(&self.inner.store, &mut state, team_dir)?;
             let request = team
@@ -529,7 +511,7 @@ impl TeamManager {
                 .map(|actor| actor.wake_tx.clone());
             let notification = inbox_notification(team, &request.from);
             (
-                team.observers.clone(),
+                observer_updates(team),
                 team.members.clone(),
                 team.requests.clone(),
                 request,
@@ -544,7 +526,7 @@ impl TeamManager {
         self.publish_inbox_notification(notification);
 
         self.publish_to_observers(
-            observers,
+            observer_updates,
             members,
             requests,
             AgentEvent::TeamProtocolResolved {
@@ -600,49 +582,18 @@ impl TeamManager {
 
     fn publish_to_observers(
         &self,
-        observers: Vec<TeamObserver>,
+        observer_updates: Vec<ObserverUpdate>,
         members: Vec<TeamMemberSummary>,
         requests: Vec<TeamProtocolRequestSummary>,
         event: AgentEvent,
     ) {
-        for observer in observers {
-            let unread_count = observer
-                .snapshot
-                .lock()
-                .expect("agent snapshot poisoned")
-                .pending_team_messages;
-            Self::publish_snapshot(
-                Arc::clone(&observer.snapshot),
-                self.inner.store.as_ref(),
-                observer.tasks_dir.as_path(),
-                &members,
-                &requests,
-                unread_count,
-            );
-            let snapshot = observer
-                .snapshot
-                .lock()
-                .expect("agent snapshot poisoned")
-                .clone();
-            observer.snapshot_tx.send_replace(snapshot);
-            let _ = observer.events.send(event.clone());
+        for update in observer_updates {
+            let observer = update.observer;
+            observer
+                .sink
+                .publish_snapshot(&members, &requests, update.unread_count);
+            observer.sink.publish_event(event.clone());
         }
-    }
-
-    fn publish_snapshot(
-        snapshot: Arc<Mutex<AgentSnapshot>>,
-        store: &dyn RuntimeStore,
-        tasks_dir: &Path,
-        members: &[TeamMemberSummary],
-        requests: &[TeamProtocolRequestSummary],
-        unread_count: usize,
-    ) {
-        let tasks = load_tasks(store, tasks_dir, &snapshot);
-        let mut guard = snapshot.lock().expect("agent snapshot poisoned");
-        guard.tasks = tasks;
-        guard.teammates = members.to_vec();
-        guard.protocol_requests = requests.to_vec();
-        guard.pending_team_messages = unread_count;
     }
 
     fn publish_inbox_notification(&self, notification: Option<InboxNotification>) {
@@ -651,44 +602,20 @@ impl TeamManager {
         };
 
         for observer in notification.observers {
-            Self::publish_snapshot(
-                Arc::clone(&observer.snapshot),
-                self.inner.store.as_ref(),
-                observer.tasks_dir.as_path(),
+            observer.sink.publish_snapshot(
                 &notification.members,
                 &notification.requests,
                 notification.unread_count,
             );
-            let snapshot = observer
-                .snapshot
-                .lock()
-                .expect("agent snapshot poisoned")
-                .clone();
-            observer.snapshot_tx.send_replace(snapshot);
-            let _ = observer.events.send(AgentEvent::TeamInboxUpdated {
+            observer.sink.publish_event(AgentEvent::TeamInboxUpdated {
                 unread_count: notification.unread_count,
             });
         }
     }
 }
 
-fn load_tasks(
-    store: &dyn RuntimeStore,
-    tasks_dir: &Path,
-    snapshot: &Arc<Mutex<AgentSnapshot>>,
-) -> Vec<TaskItem> {
-    match store.load_tasks(tasks_dir) {
-        Ok(tasks) => tasks,
-        Err(_) => snapshot
-            .lock()
-            .expect("agent snapshot poisoned")
-            .tasks
-            .clone(),
-    }
-}
-
 fn ensure_team_state<'a>(
-    store: &Arc<dyn RuntimeStore>,
+    store: &Arc<dyn TeamStore>,
     state: &'a mut TeamManagerState,
     team_dir: &Path,
 ) -> Result<&'a mut TeamState, RuntimeError> {
@@ -750,6 +677,21 @@ fn inbox_notification(team: &TeamState, agent_name: &str) -> Option<InboxNotific
         requests: team.requests.clone(),
         unread_count,
     })
+}
+
+fn observer_updates(team: &TeamState) -> Vec<ObserverUpdate> {
+    team.observers
+        .iter()
+        .cloned()
+        .map(|observer| ObserverUpdate {
+            unread_count: team
+                .unread_counts
+                .get(&observer.agent_name)
+                .copied()
+                .unwrap_or_default(),
+            observer,
+        })
+        .collect()
 }
 
 fn next_request_id() -> String {
