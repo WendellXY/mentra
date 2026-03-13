@@ -10,6 +10,7 @@ pub struct RuntimePolicy {
     allow_background_commands: bool,
     allowed_working_roots: Vec<PathBuf>,
     allowed_read_roots: Vec<PathBuf>,
+    allowed_write_roots: Vec<PathBuf>,
     allowed_env_vars: Vec<String>,
     pub(crate) background_task_limit: Option<usize>,
     pub(crate) command_timeout: Option<Duration>,
@@ -22,6 +23,7 @@ impl Default for RuntimePolicy {
             allow_background_commands: false,
             allowed_working_roots: Vec::new(),
             allowed_read_roots: Vec::new(),
+            allowed_write_roots: Vec::new(),
             allowed_env_vars: Vec::new(),
             background_task_limit: Some(8),
             command_timeout: Some(Duration::from_secs(30)),
@@ -60,6 +62,12 @@ impl RuntimePolicy {
     /// Adds an extra root allowed for builtin file reads.
     pub fn with_allowed_read_root(mut self, path: impl Into<PathBuf>) -> Self {
         self.allowed_read_roots.push(path.into());
+        self
+    }
+
+    /// Adds an extra root allowed for builtin file writes.
+    pub fn with_allowed_write_root(mut self, path: impl Into<PathBuf>) -> Self {
+        self.allowed_write_roots.push(path.into());
         self
     }
 
@@ -129,6 +137,31 @@ impl RuntimePolicy {
         } else {
             Err(format!(
                 "Path '{}' is outside the runtime policy read roots",
+                resolved.display()
+            ))
+        }
+    }
+
+    pub(crate) fn authorize_file_write(
+        &self,
+        base_dir: &Path,
+        path: &Path,
+    ) -> Result<PathBuf, String> {
+        let resolved = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            base_dir.join(path)
+        };
+
+        if path_is_allowed(
+            resolved.as_path(),
+            base_dir,
+            self.allowed_write_roots.as_slice(),
+        ) {
+            Ok(resolved)
+        } else {
+            Err(format!(
+                "Path '{}' is outside the runtime policy write roots",
                 resolved.display()
             ))
         }
