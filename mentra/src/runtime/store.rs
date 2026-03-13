@@ -10,11 +10,11 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{
     agent::{AgentConfig, AgentMemoryState, AgentStatus, SpawnedAgentSummary, TeammateIdentity},
-    background::{BackgroundNotification, BackgroundStore, BackgroundTaskStatus, BackgroundTaskSummary},
-    provider::ProviderId,
-    runtime::{
-        TaskItem,
+    background::{
+        BackgroundNotification, BackgroundStore, BackgroundTaskStatus, BackgroundTaskSummary,
     },
+    provider::ProviderId,
+    runtime::TaskItem,
     team::{TeamMemberSummary, TeamMessage, TeamProtocolRequestSummary, TeamStore},
 };
 

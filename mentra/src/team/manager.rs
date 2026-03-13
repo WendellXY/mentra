@@ -9,15 +9,11 @@ use std::{
 
 use tokio::sync::mpsc;
 
-use crate::{
-    agent::AgentEvent,
-    error::RuntimeError,
-};
+use crate::{agent::AgentEvent, error::RuntimeError};
 
 use super::{
     TeamDispatch, TeamMemberStatus, TeamMemberSummary, TeamMessage, TeamObserverSink,
-    TeamProtocolRequestSummary, TeamProtocolStatus, TeamRegistration, TeamRequestFilter,
-    TeamStore,
+    TeamProtocolRequestSummary, TeamProtocolStatus, TeamRegistration, TeamRequestFilter, TeamStore,
 };
 
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
@@ -76,7 +72,10 @@ impl TeamManager {
         }
     }
 
-    pub(crate) fn register_agent(&self, registration: TeamRegistration) -> Result<(), RuntimeError> {
+    pub(crate) fn register_agent(
+        &self,
+        registration: TeamRegistration,
+    ) -> Result<(), RuntimeError> {
         let TeamRegistration {
             agent_name,
             team_dir,
@@ -88,7 +87,9 @@ impl TeamManager {
             team.known_agents.insert(agent_name.clone());
             team.unread_counts.insert(
                 agent_name.clone(),
-                self.inner.store.unread_team_count(team_dir.as_path(), &agent_name)?,
+                self.inner
+                    .store
+                    .unread_team_count(team_dir.as_path(), &agent_name)?,
             );
             team.observers
                 .retain(|existing| existing.agent_name != agent_name);

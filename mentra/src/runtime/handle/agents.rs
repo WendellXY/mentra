@@ -88,10 +88,11 @@ impl RuntimeHandle {
         observer: &AgentObserver,
     ) -> Result<(), RuntimeError> {
         self.acquire_agent_lease(agent_id)?;
-        self.background_tasks.register_agent(BackgroundRegistration {
-            agent_id: agent_id.to_string(),
-            observer: Arc::new(AgentBackgroundObserver::new(observer)),
-        });
+        self.background_tasks
+            .register_agent(BackgroundRegistration {
+                agent_id: agent_id.to_string(),
+                observer: Arc::new(AgentBackgroundObserver::new(observer)),
+            });
         self.team.register_agent(TeamRegistration {
             agent_name: agent_name.to_string(),
             team_dir: config.team_dir.clone(),

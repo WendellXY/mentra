@@ -6,10 +6,10 @@ pub mod agent;
 pub mod background;
 /// Provider integrations and transport-neutral request/response types.
 pub mod provider;
-/// Team coordination types and collaboration services.
-pub mod team;
 /// Runtime orchestration, persistence, policies, and agent APIs.
 pub mod runtime;
+/// Team coordination types and collaboration services.
+pub mod team;
 /// Tool traits, metadata, and builtin tools.
 pub mod tool;
 
@@ -19,8 +19,8 @@ pub use provider::{
 };
 
 pub use agent::{Agent, AgentConfig};
-pub use runtime::{Runtime, RuntimePolicy};
 pub use background::{BackgroundNotification, BackgroundTaskStatus, BackgroundTaskSummary};
+pub use runtime::{Runtime, RuntimePolicy};
 pub use team::{
     TeamDispatch, TeamMemberStatus, TeamMemberSummary, TeamMessage, TeamMessageKind,
     TeamProtocolRequestSummary, TeamProtocolStatus,

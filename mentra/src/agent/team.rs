@@ -5,10 +5,7 @@ use serde_json::Value;
 use tokio::sync::{Mutex as AsyncMutex, mpsc};
 
 use crate::error::RuntimeError;
-use crate::runtime::{
-    RuntimeIntrinsicTool,
-    task::TaskIntrinsicTool,
-};
+use crate::runtime::{RuntimeIntrinsicTool, task::TaskIntrinsicTool};
 use crate::team::{
     TEAMMATE_MAX_ROUNDS, TeamDispatch, TeamIntrinsicTool, TeamMemberStatus, TeamMemberSummary,
     TeamMessage, TeamProtocolRequestSummary, TeamProtocolStatus, TeamRequestDirection,

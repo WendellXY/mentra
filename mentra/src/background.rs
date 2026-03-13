@@ -160,10 +160,10 @@ impl BackgroundTaskManager {
                 task: summary.clone(),
             },
         );
-        let _ = self
-            .inner
-            .hooks
-            .task_started(agent_id, &summary.id, &summary.command, &summary.cwd);
+        let _ =
+            self.inner
+                .hooks
+                .task_started(agent_id, &summary.id, &summary.command, &summary.cwd);
 
         let manager = self.clone();
         let agent_id = agent_id.to_string();
