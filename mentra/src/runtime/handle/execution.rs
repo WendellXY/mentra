@@ -118,6 +118,10 @@ impl RuntimeHandle {
         self.background_tasks.drain_notifications(agent_id)
     }
 
+    pub fn has_pending_background_notifications(&self, agent_id: &str) -> bool {
+        self.background_tasks.has_pending_notifications(agent_id)
+    }
+
     pub fn requeue_background_notifications(
         &self,
         agent_id: &str,

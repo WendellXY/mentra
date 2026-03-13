@@ -310,6 +310,71 @@ async fn completed_background_results_are_injected_on_next_send() {
 }
 
 #[tokio::test]
+async fn teammate_auto_wakes_after_background_task_finishes() {
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(
+                &model.id,
+                "tool-bg",
+                "background_run",
+                r#"{"command":"sleep 0.05; printf bg-done"}"#,
+            ),
+            text_stream(&model.id, "started"),
+            text_stream(&model.id, "processed background result"),
+        ],
+    );
+    let provider_handle = provider.clone();
+
+    let workspace_dir = temp_team_dir("teammate-background-autowake");
+    let workspace_dir = fs::canonicalize(&workspace_dir).expect("canonicalize workspace dir");
+    let team_dir = temp_team_dir("teammate-background-autowake-team");
+    let store = temp_store("teammate-background-autowake");
+    let runtime = Runtime::builder()
+        .with_store(store.clone())
+        .with_policy(RuntimePolicy::permissive().with_allowed_working_root(std::env::temp_dir()))
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut lead = runtime
+        .spawn_with_config(
+            "lead",
+            model,
+            AgentConfig {
+                team: team_config(team_dir),
+                workspace: workspace_config(&workspace_dir),
+                ..Default::default()
+            },
+        )
+        .expect("spawn lead");
+
+    lead.spawn_teammate(
+        "alice",
+        "coder",
+        Some("Start a background command, then keep going when it finishes.".to_string()),
+    )
+    .await
+    .expect("spawn teammate");
+
+    let teammate_id = lead.watch_snapshot().borrow().teammates[0].id.clone();
+    wait_for_recorded_requests(&provider_handle, 2).await;
+    wait_for_background_task_record(&store, &teammate_id, 1).await;
+    wait_for_background_notification(&store, &teammate_id).await;
+    wait_for_recorded_requests(&provider_handle, 3).await;
+    wait_for_teammate_status(&lead, TeamMemberStatus::Idle).await;
+
+    let requests = provider_handle.recorded_requests().await;
+    let injected = latest_background_results_text(&requests[2]).expect("background results");
+    assert!(injected.contains("[bg:bg-1] status=finished"));
+    assert!(request_contains_text(
+        &requests[2],
+        "Review any completed background task results"
+    ));
+}
+
+#[tokio::test]
 async fn check_background_reports_single_task_and_lists_all_tasks() {
     let model = model_info("model", BuiltinProvider::Anthropic);
     let provider = ScriptedProvider::new(
@@ -3958,6 +4023,41 @@ async fn wait_for_recorded_requests(provider: &ScriptedProvider, expected: usize
     }
 
     panic!("timed out waiting for {expected} recorded requests");
+}
+
+async fn wait_for_background_notification(store: &SqliteRuntimeStore, agent_id: &str) {
+    for _ in 0..200 {
+        if <SqliteRuntimeStore as crate::background::BackgroundStore>::has_pending_background_notifications(
+            store, agent_id,
+        )
+        .expect("check pending background notifications")
+        {
+            return;
+        }
+        sleep(Duration::from_millis(10)).await;
+    }
+
+    panic!("timed out waiting for pending background notification");
+}
+
+async fn wait_for_background_task_record(
+    store: &SqliteRuntimeStore,
+    agent_id: &str,
+    expected_count: usize,
+) {
+    for _ in 0..200 {
+        let tasks =
+            <SqliteRuntimeStore as crate::background::BackgroundStore>::load_background_tasks(
+                store, agent_id,
+            )
+            .expect("load background tasks");
+        if tasks.len() == expected_count {
+            return;
+        }
+        sleep(Duration::from_millis(10)).await;
+    }
+
+    panic!("timed out waiting for {expected_count} background task records");
 }
 
 async fn wait_for_teammate_status(agent: &Agent, expected: TeamMemberStatus) {

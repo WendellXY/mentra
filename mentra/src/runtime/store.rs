@@ -383,6 +383,18 @@ impl BackgroundStore for SqliteRuntimeStore {
             .collect()
     }
 
+    fn has_pending_background_notifications(&self, agent_id: &str) -> Result<bool, RuntimeError> {
+        let conn = self.open()?;
+        let exists = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM background_jobs WHERE agent_id = ?1 AND notification_state = ?2)",
+                params![agent_id, DELIVERY_PENDING],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(sqlite_error)?;
+        Ok(exists != 0)
+    }
+
     fn ack_background_notifications(&self, agent_id: &str) -> Result<(), RuntimeError> {
         let conn = self.open()?;
         conn.execute(

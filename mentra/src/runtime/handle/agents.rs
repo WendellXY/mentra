@@ -50,14 +50,32 @@ impl TeamObserverSink for AgentTeamObserver {
 }
 
 struct AgentBackgroundObserver {
+    background_tasks: crate::background::BackgroundTaskManager,
+    team: crate::team::TeamManager,
+    agent_id: String,
+    team_dir: PathBuf,
+    agent_name: String,
+    is_teammate: bool,
     snapshot_tx: watch::Sender<AgentSnapshot>,
     snapshot: Arc<Mutex<AgentSnapshot>>,
     events: broadcast::Sender<AgentEvent>,
 }
 
 impl AgentBackgroundObserver {
-    fn new(observer: &AgentObserver) -> Self {
+    fn new(
+        background_tasks: crate::background::BackgroundTaskManager,
+        team: crate::team::TeamManager,
+        agent_id: String,
+        config: &AgentExecutionConfig,
+        observer: &AgentObserver,
+    ) -> Self {
         Self {
+            background_tasks,
+            team,
+            agent_id,
+            team_dir: config.team_dir.clone(),
+            agent_name: config.name.clone(),
+            is_teammate: config.is_teammate,
             snapshot_tx: observer.snapshot_tx.clone(),
             snapshot: Arc::clone(&observer.snapshot),
             events: observer.events.clone(),
@@ -72,10 +90,18 @@ impl BackgroundObserverSink for AgentBackgroundObserver {
         let next_snapshot = snapshot.clone();
         drop(snapshot);
         self.snapshot_tx.send_replace(next_snapshot);
+        if self.is_teammate && self.background_tasks.has_pending_notifications(&self.agent_id) {
+            let _ = self.team.wake_teammate(self.team_dir.as_path(), &self.agent_name);
+        }
     }
 
     fn publish_event(&self, event: AgentEvent) {
+        let should_wake_teammate =
+            self.is_teammate && matches!(event, AgentEvent::BackgroundTaskFinished { .. });
         let _ = self.events.send(event);
+        if should_wake_teammate {
+            let _ = self.team.wake_teammate(self.team_dir.as_path(), &self.agent_name);
+        }
     }
 }
 
@@ -91,7 +117,13 @@ impl RuntimeHandle {
         self.background_tasks
             .register_agent(BackgroundRegistration {
                 agent_id: agent_id.to_string(),
-                observer: Arc::new(AgentBackgroundObserver::new(observer)),
+                observer: Arc::new(AgentBackgroundObserver::new(
+                    self.background_tasks.clone(),
+                    self.team.clone(),
+                    agent_id.to_string(),
+                    &config,
+                    observer,
+                )),
             });
         self.team.register_agent(TeamRegistration {
             agent_name: agent_name.to_string(),
