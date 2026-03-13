@@ -44,9 +44,9 @@ async fn micro_compaction_only_rewrites_old_tool_results_in_requests() {
                 context_compaction: ContextCompactionConfig {
                     keep_recent_tool_results: 2,
                     auto_compact_threshold_tokens: None,
-                    ..ContextCompactionConfig::default()
+                    ..Default::default()
                 },
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -108,9 +108,9 @@ async fn auto_compaction_persists_transcript_and_rewrites_history() {
                 context_compaction: ContextCompactionConfig {
                     auto_compact_threshold_tokens: Some(1),
                     transcript_dir: transcript_dir.clone(),
-                    ..ContextCompactionConfig::default()
+                    ..Default::default()
                 },
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -195,9 +195,9 @@ async fn compact_tool_compacts_history_and_continues() {
                 context_compaction: ContextCompactionConfig {
                     auto_compact_threshold_tokens: None,
                     transcript_dir,
-                    ..ContextCompactionConfig::default()
+                    ..Default::default()
                 },
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();

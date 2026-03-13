@@ -120,7 +120,7 @@ async fn task_reminder_is_injected_after_three_rounds_without_task_tools() {
                     tasks_dir,
                     reminder_threshold: 3,
                 },
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .expect("spawn agent");
@@ -236,7 +236,7 @@ async fn task_survives_auto_compaction() {
                     auto_compact_threshold_tokens: Some(500),
                     ..ContextCompactionConfig::default()
                 },
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .expect("spawn agent");
@@ -270,7 +270,7 @@ fn task_config(tasks_dir: PathBuf) -> AgentConfig {
             tasks_dir,
             reminder_threshold: 3,
         },
-        ..AgentConfig::default()
+        ..Default::default()
     }
 }
 

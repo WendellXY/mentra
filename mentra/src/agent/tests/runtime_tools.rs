@@ -435,7 +435,7 @@ async fn task_working_directory_routes_shell_for_teammate() {
                     reminder_threshold: 3,
                 },
                 workspace: workspace_config(&repo_dir),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .expect("spawn lead");
@@ -501,7 +501,7 @@ async fn teammate_shell_without_working_directory_uses_base_dir() {
                     reminder_threshold: 3,
                 },
                 workspace: workspace_config(&repo_dir),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .expect("spawn lead");
@@ -559,7 +559,7 @@ async fn bash_working_directory_overrides_default_routing() {
                     tasks_dir: repo_dir.join(".tasks"),
                     reminder_threshold: 3,
                 },
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .expect("spawn agent");
@@ -644,7 +644,7 @@ async fn run_options_tool_budget_blocks_second_tool_call() {
             model,
             AgentConfig {
                 workspace: workspace_config(&repo_dir),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .expect("spawn agent");
@@ -690,7 +690,7 @@ async fn run_options_model_budget_blocks_follow_up_round() {
             model,
             AgentConfig {
                 workspace: workspace_config(&repo_dir),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .expect("spawn agent");
@@ -702,7 +702,7 @@ async fn run_options_model_budget_blocks_follow_up_round() {
             }],
             RunOptions {
                 model_budget: Some(1),
-                ..RunOptions::default()
+                ..Default::default()
             },
         )
         .await
@@ -736,7 +736,7 @@ async fn run_options_cancelled_run_stops_before_provider_request() {
             }],
             RunOptions {
                 cancellation: Some(cancellation),
-                ..RunOptions::default()
+                ..Default::default()
             },
         )
         .await
@@ -1038,7 +1038,7 @@ async fn registered_skills_are_exposed_and_load_skill_returns_wrapped_content() 
             model,
             AgentConfig {
                 system: Some("Base system prompt".to_string()),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1237,7 +1237,7 @@ async fn task_subagent_does_not_force_hidden_task_tool_choice() {
                 tool_choice: Some(ToolChoice::Tool {
                     name: "task".to_string(),
                 }),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1452,7 +1452,7 @@ async fn team_spawn_tool_registers_persistent_teammate() {
             model,
             AgentConfig {
                 team: team_config(temp_team_dir("spawn-tool")),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1523,7 +1523,7 @@ async fn persistent_teammate_processes_mail_and_reports_back_to_lead() {
             model,
             AgentConfig {
                 team: team_config(temp_team_dir("mailbox")),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1597,7 +1597,7 @@ async fn broadcast_tool_sends_to_every_other_known_agent() {
             model.clone(),
             AgentConfig {
                 team: team_config(team_dir.clone()),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1607,7 +1607,7 @@ async fn broadcast_tool_sends_to_every_other_known_agent() {
             model.clone(),
             AgentConfig {
                 team: team_config(team_dir.clone()),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1617,7 +1617,7 @@ async fn broadcast_tool_sends_to_every_other_known_agent() {
             model,
             AgentConfig {
                 team: team_config(team_dir),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1686,7 +1686,7 @@ async fn teammate_message_updates_lead_unread_count_before_next_turn() {
             model,
             AgentConfig {
                 team: team_config(temp_team_dir("lead-unread-message")),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1743,7 +1743,7 @@ async fn protocol_messages_update_lead_unread_count_and_clear_on_drain() {
             model,
             AgentConfig {
                 team: team_config(temp_team_dir("lead-unread-protocol")),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1813,7 +1813,7 @@ async fn team_request_tool_persists_pending_request_and_updates_snapshot() {
             model,
             AgentConfig {
                 team: team_config(team_dir.clone()),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1860,7 +1860,7 @@ async fn team_respond_tool_resolves_request_and_sends_correlated_response() {
             model.clone(),
             AgentConfig {
                 team: team_config(team_dir.clone()),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1870,7 +1870,7 @@ async fn team_respond_tool_resolves_request_and_sends_correlated_response() {
             model.clone(),
             AgentConfig {
                 team: team_config(team_dir.clone()),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1908,7 +1908,7 @@ async fn team_respond_tool_resolves_request_and_sends_correlated_response() {
             model.clone(),
             AgentConfig {
                 team: team_config(team_dir.clone()),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1918,7 +1918,7 @@ async fn team_respond_tool_resolves_request_and_sends_correlated_response() {
             model,
             AgentConfig {
                 team: team_config(team_dir.clone()),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1982,7 +1982,7 @@ async fn team_list_requests_tool_filters_visible_requests() {
             model.clone(),
             AgentConfig {
                 team: team_config(team_dir.clone()),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1992,7 +1992,7 @@ async fn team_list_requests_tool_filters_visible_requests() {
             model.clone(),
             AgentConfig {
                 team: team_config(team_dir.clone()),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2002,7 +2002,7 @@ async fn team_list_requests_tool_filters_visible_requests() {
             model,
             AgentConfig {
                 team: team_config(team_dir.clone()),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2071,7 +2071,7 @@ async fn plan_approval_request_response_keeps_teammate_alive() {
             model,
             AgentConfig {
                 team: team_config(team_dir.clone()),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2123,7 +2123,7 @@ async fn shutdown_approval_shuts_down_teammate_after_current_wake_cycle() {
             model,
             AgentConfig {
                 team: team_config(team_dir.clone()),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2216,7 +2216,7 @@ async fn failed_run_requeues_protocol_messages_and_preserves_request_state() {
             model.clone(),
             AgentConfig {
                 team: team_config(team_dir.clone()),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2226,7 +2226,7 @@ async fn failed_run_requeues_protocol_messages_and_preserves_request_state() {
             model,
             AgentConfig {
                 team: team_config(team_dir.clone()),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2290,7 +2290,7 @@ async fn failed_teammate_can_recover_on_next_wake() {
             model,
             AgentConfig {
                 team: team_config(temp_team_dir("teammate-recover")),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2330,7 +2330,7 @@ async fn persisted_protocol_requests_load_on_restart() {
             model.clone(),
             AgentConfig {
                 team: team_config(team_dir.clone()),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2340,7 +2340,7 @@ async fn persisted_protocol_requests_load_on_restart() {
             model.clone(),
             AgentConfig {
                 team: team_config(team_dir.clone()),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2361,7 +2361,7 @@ async fn persisted_protocol_requests_load_on_restart() {
             model,
             AgentConfig {
                 team: team_config(team_dir),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2396,7 +2396,7 @@ async fn persisted_teammates_reload_as_shutdown_without_live_actor() {
             model.clone(),
             AgentConfig {
                 team: team_config(team_dir.clone()),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2417,7 +2417,7 @@ async fn persisted_teammates_reload_as_shutdown_without_live_actor() {
             model,
             AgentConfig {
                 team: team_config(team_dir),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2446,7 +2446,7 @@ async fn team_spawn_revives_shutdown_teammate_name_after_restart() {
             model.clone(),
             AgentConfig {
                 team: team_config(team_dir.clone()),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2467,7 +2467,7 @@ async fn team_spawn_revives_shutdown_teammate_name_after_restart() {
             model,
             AgentConfig {
                 team: team_config(team_dir.clone()),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2518,7 +2518,7 @@ async fn autonomous_teammate_auto_claims_ready_task_after_spawn() {
                     tasks_dir: tasks_dir.clone(),
                     reminder_threshold: 3,
                 },
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2579,7 +2579,7 @@ async fn autonomous_teammates_do_not_double_claim_same_task() {
                     tasks_dir: tasks_dir.clone(),
                     reminder_threshold: 3,
                 },
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2635,7 +2635,7 @@ async fn autonomous_teammate_does_not_claim_more_work_while_owning_unfinished_ta
                     tasks_dir: tasks_dir.clone(),
                     reminder_threshold: 3,
                 },
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2690,7 +2690,7 @@ async fn autonomous_teammate_claims_task_after_dependency_unblocks() {
                     tasks_dir: tasks_dir.clone(),
                     reminder_threshold: 3,
                 },
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2758,7 +2758,7 @@ async fn teammate_task_updates_are_limited_to_owned_tasks() {
                     tasks_dir: tasks_dir.clone(),
                     reminder_threshold: 3,
                 },
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2827,7 +2827,7 @@ async fn teammate_task_subagent_inherits_owner_restrictions() {
                     tasks_dir: tasks_dir.clone(),
                     reminder_threshold: 3,
                 },
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2863,7 +2863,7 @@ async fn idle_tool_returns_teammate_to_idle() {
             model,
             AgentConfig {
                 team: team_config(temp_team_dir("idle-tool-team")),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2897,7 +2897,7 @@ async fn autonomous_idle_timeout_shuts_down_and_same_name_can_respawn() {
                     Duration::from_millis(10),
                     Duration::from_millis(40),
                 ),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .unwrap();
@@ -3196,7 +3196,7 @@ fn temp_store(label: &str) -> SqliteRuntimeStore {
 fn team_config(team_dir: PathBuf) -> TeamConfig {
     TeamConfig {
         team_dir,
-        ..TeamConfig::default()
+        ..Default::default()
     }
 }
 
@@ -3251,7 +3251,7 @@ fn create_task_with_directory(
 fn workspace_config(base_dir: &Path) -> WorkspaceConfig {
     WorkspaceConfig {
         base_dir: base_dir.to_path_buf(),
-        ..WorkspaceConfig::default()
+        ..Default::default()
     }
 }
 

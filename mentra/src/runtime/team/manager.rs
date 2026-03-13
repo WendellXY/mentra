@@ -40,6 +40,7 @@ struct TeamManagerState {
     teams: HashMap<String, TeamState>,
 }
 
+#[derive(Default)]
 struct TeamState {
     team_dir: PathBuf,
     members: Vec<TeamMemberSummary>,
@@ -70,7 +71,7 @@ impl TeamManager {
         Self {
             inner: Arc::new(TeamManagerInner {
                 store,
-                state: Mutex::new(TeamManagerState::default()),
+                state: Default::default(),
             }),
         }
     }
@@ -683,21 +684,6 @@ fn load_tasks(
             .expect("agent snapshot poisoned")
             .tasks
             .clone(),
-    }
-}
-
-impl Default for TeamState {
-    fn default() -> Self {
-        Self {
-            team_dir: PathBuf::new(),
-            members: Vec::new(),
-            requests: Vec::new(),
-            known_agents: HashSet::new(),
-            unread_counts: HashMap::new(),
-            observers: Vec::new(),
-            actors: HashMap::new(),
-            pending_shutdowns: HashSet::new(),
-        }
     }
 }
 

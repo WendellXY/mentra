@@ -333,7 +333,7 @@ async fn list_persisted_agents_includes_teammates_for_runtime() {
             model,
             AgentConfig {
                 team: team_config(temp_team_dir("persisted-agent-list-team")),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .expect("spawn lead");
@@ -418,7 +418,7 @@ async fn resume_revives_persisted_teammate_actors_for_lead_runtime() {
             model.clone(),
             AgentConfig {
                 team: team_config(temp_team_dir("resume-revive-team")),
-                ..AgentConfig::default()
+                ..Default::default()
             },
         )
         .expect("spawn lead");
@@ -608,7 +608,7 @@ fn temp_team_dir(label: &str) -> std::path::PathBuf {
 fn team_config(team_dir: std::path::PathBuf) -> TeamConfig {
     TeamConfig {
         team_dir,
-        ..TeamConfig::default()
+        ..Default::default()
     }
 }
 
