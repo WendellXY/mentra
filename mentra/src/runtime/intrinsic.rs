@@ -5,6 +5,7 @@ use strum::{Display, VariantArray};
 use crate::{
     ContentBlock,
     agent::{Agent, AgentEvent, ContextCompactionTrigger, SpawnedAgentStatus},
+    memory::{MemorySearchMode, MemorySearchRequest},
     tool::{
         ExecutableTool, ToolCall, ToolCapability, ToolContext, ToolDurability, ToolResult,
         ToolSideEffectLevel, ToolSpec,
@@ -28,6 +29,9 @@ pub(crate) fn register_tools(registry: &mut crate::tool::ToolRegistry) {
 pub(crate) enum RuntimeIntrinsicTool {
     Compact,
     Idle,
+    MemoryForget,
+    MemoryPin,
+    MemorySearch,
     Task,
 }
 
@@ -75,6 +79,58 @@ impl ExecutableTool for RuntimeIntrinsicTool {
                 ToolSideEffectLevel::LocalState,
                 ToolDurability::Persistent,
             ),
+            Self::MemorySearch => self.intrinsic_spec(
+                "Search the current agent's long-term memory for additional recall.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Memory query text"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of results to return"
+                        }
+                    },
+                    "required": ["query"]
+                }),
+                vec![ToolCapability::ReadOnly],
+                ToolSideEffectLevel::None,
+                ToolDurability::ReplaySafe,
+            ),
+            Self::MemoryPin => self.intrinsic_spec(
+                "Persist a fact in long-term memory for the current agent.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "content": {
+                            "type": "string",
+                            "description": "Fact to remember"
+                        }
+                    },
+                    "required": ["content"]
+                }),
+                vec![ToolCapability::Custom("memory_write".to_string())],
+                ToolSideEffectLevel::LocalState,
+                ToolDurability::Persistent,
+            ),
+            Self::MemoryForget => self.intrinsic_spec(
+                "Forget a specific long-term memory record by id.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "record_id": {
+                            "type": "string",
+                            "description": "Identifier of the memory record to forget"
+                        }
+                    },
+                    "required": ["record_id"]
+                }),
+                vec![ToolCapability::Custom("memory_write".to_string())],
+                ToolSideEffectLevel::LocalState,
+                ToolDurability::Persistent,
+            ),
             Self::Task => self.intrinsic_spec(
                 "Spawn a fresh subagent to work a subtask and return a concise summary.",
                 json!({
@@ -103,6 +159,9 @@ impl ExecutableTool for RuntimeIntrinsicTool {
         let block = match self {
             Self::Compact => execute_compact(ctx.agent, call).await,
             Self::Idle => execute_idle(ctx.agent, call),
+            Self::MemorySearch => execute_memory_search(ctx, call).await,
+            Self::MemoryPin => execute_memory_pin(ctx, call),
+            Self::MemoryForget => execute_memory_forget(ctx, call),
             Self::Task => execute_task(ctx.agent, call).await,
         };
         content_block_to_result(block)
@@ -130,6 +189,154 @@ fn execute_idle(agent: &mut Agent, call: ToolCall) -> ContentBlock {
         tool_use_id: call.id,
         content: "Yielding to the teammate idle loop.".to_string(),
         is_error: false,
+    }
+}
+
+fn execute_memory_pin(ctx: ToolContext<'_>, call: ToolCall) -> ContentBlock {
+    if !ctx.agent.config().memory.write_tools_enabled {
+        return ContentBlock::ToolResult {
+            tool_use_id: call.id,
+            content: "Memory write tools are disabled for this agent.".to_string(),
+            is_error: true,
+        };
+    }
+
+    let Some(content) = call
+        .input
+        .get("content")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return ContentBlock::ToolResult {
+            tool_use_id: call.id,
+            content: "Invalid memory_pin input: content is required.".to_string(),
+            is_error: true,
+        };
+    };
+
+    match ctx
+        .agent
+        .memory_engine()
+        .pin(ctx.agent.id(), ctx.agent.memory_revision(), content)
+    {
+        Ok(record) => ContentBlock::ToolResult {
+            tool_use_id: call.id,
+            content: format!("Pinned memory {}.", record.record_id),
+            is_error: false,
+        },
+        Err(error) => ContentBlock::ToolResult {
+            tool_use_id: call.id,
+            content: format!("Failed to pin memory: {error}"),
+            is_error: true,
+        },
+    }
+}
+
+fn execute_memory_forget(ctx: ToolContext<'_>, call: ToolCall) -> ContentBlock {
+    if !ctx.agent.config().memory.write_tools_enabled {
+        return ContentBlock::ToolResult {
+            tool_use_id: call.id,
+            content: "Memory write tools are disabled for this agent.".to_string(),
+            is_error: true,
+        };
+    }
+
+    let Some(record_id) = call
+        .input
+        .get("record_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return ContentBlock::ToolResult {
+            tool_use_id: call.id,
+            content: "Invalid memory_forget input: record_id is required.".to_string(),
+            is_error: true,
+        };
+    };
+
+    match ctx.agent.memory_engine().forget(ctx.agent.id(), record_id) {
+        Ok(true) => ContentBlock::ToolResult {
+            tool_use_id: call.id,
+            content: format!("Forgot memory {record_id}."),
+            is_error: false,
+        },
+        Ok(false) => ContentBlock::ToolResult {
+            tool_use_id: call.id,
+            content: format!("Memory record {record_id} was not found for this agent."),
+            is_error: true,
+        },
+        Err(error) => ContentBlock::ToolResult {
+            tool_use_id: call.id,
+            content: format!("Failed to forget memory: {error}"),
+            is_error: true,
+        },
+    }
+}
+
+async fn execute_memory_search(ctx: ToolContext<'_>, call: ToolCall) -> ContentBlock {
+    let Some(query) = call
+        .input
+        .get("query")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return ContentBlock::ToolResult {
+            tool_use_id: call.id,
+            content: "Invalid memory_search input: query is required.".to_string(),
+            is_error: true,
+        };
+    };
+
+    let configured_limit = ctx.agent.config().memory.tool_search_limit;
+    let requested_limit = call
+        .input
+        .get("limit")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(configured_limit as u64) as usize;
+    let limit = requested_limit.min(configured_limit).min(10);
+
+    match ctx
+        .agent
+        .memory_engine()
+        .search(MemorySearchRequest {
+            agent_id: ctx.agent.id().to_string(),
+            query: query.to_string(),
+            limit,
+            char_budget: None,
+            mode: MemorySearchMode::Tool,
+        })
+        .await
+    {
+        Ok(hits) => {
+            let results = hits
+                .into_iter()
+                .map(|hit| {
+                    json!({
+                        "id": hit.record_id,
+                        "kind": hit.kind,
+                        "content": hit.content,
+                        "score": hit.score,
+                        "timestamp": hit.created_at,
+                        "source": hit.source,
+                        "why_retrieved": hit.why_retrieved,
+                    })
+                })
+                .collect::<Vec<_>>();
+            ContentBlock::ToolResult {
+                tool_use_id: call.id,
+                content: serde_json::to_string_pretty(&results)
+                    .unwrap_or_else(|_| "[]".to_string()),
+                is_error: false,
+            }
+        }
+        Err(error) => ContentBlock::ToolResult {
+            tool_use_id: call.id,
+            content: format!("Memory search failed: {error}"),
+            is_error: true,
+        },
     }
 }
 

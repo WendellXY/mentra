@@ -39,7 +39,7 @@ use crate::{
 pub(crate) use team::parse_task_input;
 
 pub use config::{
-    AgentConfig, ContextCompactionConfig, TaskConfig, TeamAutonomyConfig, TeamConfig,
+    AgentConfig, ContextCompactionConfig, MemoryConfig, TaskConfig, TeamAutonomyConfig, TeamConfig,
     WorkspaceConfig,
 };
 pub use events::{
@@ -267,6 +267,14 @@ impl Agent {
     /// Returns the committed transcript history.
     pub fn history(&self) -> &[Message] {
         self.memory.transcript()
+    }
+
+    pub(crate) fn memory_revision(&self) -> u64 {
+        self.memory.revision()
+    }
+
+    pub(crate) fn memory_engine(&self) -> Arc<crate::memory::MemoryEngine> {
+        self.runtime.memory_engine()
     }
 
     /// Returns whether this agent is a persistent teammate rather than the lead agent.

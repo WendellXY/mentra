@@ -94,6 +94,27 @@ impl Default for WorkspaceConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryConfig {
+    pub auto_recall_enabled: bool,
+    pub auto_recall_limit: usize,
+    pub auto_recall_char_budget: usize,
+    pub tool_search_limit: usize,
+    pub write_tools_enabled: bool,
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            auto_recall_enabled: true,
+            auto_recall_limit: 3,
+            auto_recall_char_budget: 2_000,
+            tool_search_limit: 10,
+            write_tools_enabled: true,
+        }
+    }
+}
+
 #[cfg(not(test))]
 fn default_team_dir() -> PathBuf {
     crate::default_paths::workspace_default_paths().team_dir
@@ -145,6 +166,8 @@ pub struct AgentConfig {
     pub team: TeamConfig,
     pub task: TaskConfig,
     pub workspace: WorkspaceConfig,
+    #[serde(default)]
+    pub memory: MemoryConfig,
     pub context_compaction: ContextCompactionConfig,
 }
 
@@ -160,6 +183,7 @@ impl Default for AgentConfig {
             team: TeamConfig::default(),
             task: TaskConfig::default(),
             workspace: WorkspaceConfig::default(),
+            memory: MemoryConfig::default(),
             context_compaction: ContextCompactionConfig::default(),
         }
     }

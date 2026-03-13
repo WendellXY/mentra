@@ -13,16 +13,17 @@ use tokio::time::{Duration, sleep, timeout};
 use crate::{
     BuiltinProvider, ContentBlock, Message, Role,
     agent::{
-        Agent, AgentConfig, AgentEvent, SpawnedAgentStatus, TaskConfig, TeamAutonomyConfig,
-        TeamConfig, WorkspaceConfig,
+        Agent, AgentConfig, AgentEvent, MemoryConfig, SpawnedAgentStatus, TaskConfig,
+        TeamAutonomyConfig, TeamConfig, WorkspaceConfig,
     },
+    memory::{MemoryRecord, MemoryRecordKind, MemoryStore},
     provider::{
         ContentBlockDelta, ContentBlockStart, ProviderError, ProviderEvent, Request, ToolChoice,
     },
     runtime::{
-        BackgroundTaskStatus, CancellationToken, RunOptions, Runtime, RuntimeError, RuntimePolicy,
-        SqliteRuntimeStore, TaskIntrinsicTool, TeamMemberStatus, TeamMessageKind,
-        TeamProtocolStatus,
+        BackgroundTaskStatus, CancellationToken, HybridRuntimeStore, RunOptions, Runtime,
+        RuntimeError, RuntimePolicy, SqliteRuntimeStore, TaskIntrinsicTool, TeamMemberStatus,
+        TeamMessageKind, TeamProtocolStatus,
         task::{self, TaskAccess},
     },
 };
@@ -1715,6 +1716,9 @@ async fn default_runtime_exposes_task_and_new_empty_does_not() {
     assert!(default_tools.contains("background_run"));
     assert!(default_tools.contains("check_background"));
     assert!(default_tools.contains("compact"));
+    assert!(default_tools.contains("memory_search"));
+    assert!(default_tools.contains("memory_pin"));
+    assert!(default_tools.contains("memory_forget"));
     assert!(default_tools.contains("files"));
     assert!(!default_tools.contains("read_file"));
     assert!(default_tools.contains("task"));
@@ -1749,6 +1753,9 @@ async fn default_runtime_exposes_task_and_new_empty_does_not() {
     assert!(!empty_tools.contains("check_background"));
     assert!(!empty_tools.contains("files"));
     assert!(!empty_tools.contains("compact"));
+    assert!(!empty_tools.contains("memory_search"));
+    assert!(!empty_tools.contains("memory_pin"));
+    assert!(!empty_tools.contains("memory_forget"));
     assert!(!empty_tools.contains("task"));
     assert!(!empty_tools.contains("task_create"));
     assert!(!empty_tools.contains("task_claim"));
@@ -1756,6 +1763,143 @@ async fn default_runtime_exposes_task_and_new_empty_does_not() {
     assert!(!empty_tools.contains("task_list"));
     assert!(!empty_tools.contains("task_get"));
     assert!(!empty_tools.contains("load_skill"));
+}
+
+#[tokio::test]
+async fn memory_search_tool_returns_provenance_fields() {
+    let store = hybrid_temp_store("memory-search-tool");
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(
+                &model.id,
+                "memory-search-1",
+                "memory_search",
+                r#"{"query":"short answers","limit":5}"#,
+            ),
+            text_stream(&model.id, "searched"),
+        ],
+    );
+    let runtime = Runtime::builder()
+        .with_store(store.clone())
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime.spawn("agent", model).expect("spawn agent");
+    let agent_id = agent.id().to_string();
+    store
+        .upsert_records(&[MemoryRecord {
+            record_id: "fact:search:1".to_string(),
+            agent_id: agent_id.clone(),
+            kind: MemoryRecordKind::Fact,
+            content: "The user likes short answers.".to_string(),
+            source_revision: 1,
+            created_at: 1,
+            metadata_json: "{}".to_string(),
+            source: Some("manual_pin".to_string()),
+            pinned: true,
+            score: None,
+        }])
+        .expect("seed records");
+
+    agent
+        .send(vec![ContentBlock::Text {
+            text: "Search memory.".to_string(),
+        }])
+        .await
+        .expect("run");
+
+    let result = match &agent.history()[2].content[0] {
+        ContentBlock::ToolResult { content, .. } => content.as_str(),
+        other => panic!("expected tool result, got {other:?}"),
+    };
+    assert!(result.contains("\"source\": \"manual_pin\""));
+    assert!(result.contains("\"why_retrieved\":"));
+}
+
+#[tokio::test]
+async fn memory_forget_tool_rejects_cross_agent_record_ids() {
+    let store = hybrid_temp_store("memory-forget-cross-agent");
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(
+                &model.id,
+                "memory-forget-cross-agent",
+                "memory_forget",
+                r#"{"record_id":"fact:shared:1"}"#,
+            ),
+            text_stream(&model.id, "handled"),
+        ],
+    );
+    let runtime = Runtime::builder()
+        .with_store(store.clone())
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let owner = runtime
+        .spawn_with_config(
+            "owner",
+            model.clone(),
+            AgentConfig {
+                memory: MemoryConfig {
+                    write_tools_enabled: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .expect("spawn owner");
+    let owner_id = owner.id().to_string();
+    let mut other = runtime
+        .spawn_with_config(
+            "other",
+            model,
+            AgentConfig {
+                memory: MemoryConfig {
+                    write_tools_enabled: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .expect("spawn other");
+
+    store
+        .upsert_records(&[MemoryRecord {
+            record_id: "fact:shared:1".to_string(),
+            agent_id: owner_id.clone(),
+            kind: MemoryRecordKind::Fact,
+            content: "Owner memory only".to_string(),
+            source_revision: 1,
+            created_at: 1,
+            metadata_json: "{}".to_string(),
+            source: Some("manual_pin".to_string()),
+            pinned: true,
+            score: None,
+        }])
+        .expect("seed records");
+
+    other
+        .send(vec![ContentBlock::Text {
+            text: "Forget that.".to_string(),
+        }])
+        .await
+        .expect("run");
+
+    let result = match &other.history()[2].content[0] {
+        ContentBlock::ToolResult { content, .. } => content.as_str(),
+        other => panic!("expected tool result, got {other:?}"),
+    };
+    assert!(result.contains("was not found for this agent"));
+    let records = store
+        .search_records(&owner_id, "Owner memory", 10)
+        .expect("search records");
+    assert_eq!(records.len(), 1);
 }
 
 #[tokio::test]
@@ -3942,6 +4086,21 @@ fn temp_store(label: &str) -> SqliteRuntimeStore {
     SqliteRuntimeStore::new(std::env::temp_dir().join(format!(
         "mentra-runtime-store-{label}-{timestamp}-{unique}.sqlite"
     )))
+}
+
+fn hybrid_temp_store(label: &str) -> HybridRuntimeStore {
+    let unique = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let base_dir = std::env::temp_dir().join(format!(
+        "mentra-runtime-hybrid-store-{label}-{timestamp}-{unique}"
+    ));
+    HybridRuntimeStore::with_memory_path(
+        base_dir.join("runtime.sqlite"),
+        base_dir.join("memory.sqlite"),
+    )
 }
 
 fn team_config(team_dir: PathBuf) -> TeamConfig {

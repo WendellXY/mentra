@@ -14,7 +14,7 @@ use crate::{
         BackgroundNotification, BackgroundStore, BackgroundTaskStatus, BackgroundTaskSummary,
     },
     memory::journal::AgentMemoryState,
-    memory::{MemoryCursor, MemoryRecord, MemoryStore},
+    memory::{MemoryCursor, MemoryRecord, MemorySearchRequest, MemoryStore},
     provider::ProviderId,
     runtime::TaskItem,
     team::{TeamMemberSummary, TeamMessage, TeamProtocolRequestSummary, TeamStore},
@@ -1075,16 +1075,14 @@ impl MemoryStore for SqliteRuntimeStore {
         tx.commit().map_err(sqlite_error)
     }
 
-    fn search_records(
+    fn search_records_with_options(
         &self,
-        agent_id: &str,
-        query: &str,
-        limit: usize,
+        request: &MemorySearchRequest,
     ) -> Result<Vec<MemoryRecord>, RuntimeError> {
-        if query.trim().is_empty() || limit == 0 {
+        if request.query.trim().is_empty() || request.limit == 0 {
             return Ok(Vec::new());
         }
-        let Some(query) = fts_query(query) else {
+        let Some(query) = fts_query(&request.query) else {
             return Ok(Vec::new());
         };
 
@@ -1111,19 +1109,24 @@ impl MemoryStore for SqliteRuntimeStore {
             )
             .map_err(sqlite_error)?;
 
-        stmt.query_map(params![agent_id, query, limit as i64], |row| {
-            let kind = row.get::<_, String>(2)?;
-            Ok(MemoryRecord {
-                record_id: row.get(0)?,
-                agent_id: row.get(1)?,
-                kind: parse_memory_kind(&kind),
-                content: row.get(3)?,
-                source_revision: row.get::<_, i64>(4)? as u64,
-                created_at: row.get(5)?,
-                metadata_json: row.get(6)?,
-                score: row.get::<_, Option<f64>>(7)?,
-            })
-        })
+        stmt.query_map(
+            params![request.agent_id, query, request.limit as i64],
+            |row| {
+                let kind = row.get::<_, String>(2)?;
+                Ok(MemoryRecord {
+                    record_id: row.get(0)?,
+                    agent_id: row.get(1)?,
+                    kind: parse_memory_kind(&kind),
+                    content: row.get(3)?,
+                    source_revision: row.get::<_, i64>(4)? as u64,
+                    created_at: row.get(5)?,
+                    metadata_json: row.get(6)?,
+                    source: None,
+                    pinned: false,
+                    score: row.get::<_, Option<f64>>(7)?,
+                })
+            },
+        )
         .map_err(sqlite_error)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(sqlite_error)
@@ -1151,6 +1154,37 @@ impl MemoryStore for SqliteRuntimeStore {
             .map_err(sqlite_error)?;
         }
         tx.commit().map_err(sqlite_error)
+    }
+
+    fn tombstone_records(
+        &self,
+        agent_id: &str,
+        record_ids: &[String],
+    ) -> Result<usize, RuntimeError> {
+        if record_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let mut conn = self.open()?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sqlite_error)?;
+        let mut affected = 0usize;
+        for record_id in record_ids {
+            tx.execute(
+                "DELETE FROM long_term_memory_fts WHERE record_id = ?1",
+                params![record_id],
+            )
+            .map_err(sqlite_error)?;
+            affected += tx
+                .execute(
+                    "DELETE FROM long_term_memory WHERE record_id = ?1 AND agent_id = ?2",
+                    params![record_id, agent_id],
+                )
+                .map_err(sqlite_error)?;
+        }
+        tx.commit().map_err(sqlite_error)?;
+        Ok(affected)
     }
 
     fn load_agent_memory_cursor(
@@ -1438,6 +1472,8 @@ mod tests {
                 source_revision: 1,
                 created_at: 1,
                 metadata_json: "{}".to_string(),
+                source: Some("seed".to_string()),
+                pinned: false,
                 score: None,
             }])
             .expect("seed records");
@@ -1463,6 +1499,8 @@ mod tests {
                 source_revision: 1,
                 created_at: 1,
                 metadata_json: "{}".to_string(),
+                source: Some("seed".to_string()),
+                pinned: false,
                 score: None,
             }])
             .expect("seed records");

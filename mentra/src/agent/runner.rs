@@ -5,7 +5,7 @@ use crate::{
     background::BackgroundNotification,
     error::RuntimeError,
     memory::journal::PendingTurnState,
-    memory::{SearchRequest, build_search_query, recalled_memory_message},
+    memory::{MemorySearchMode, MemorySearchRequest, build_search_query, recalled_memory_message},
     provider::Request,
     runtime::{RunOptions, RuntimeHookEvent, control::is_transient_provider_error},
     team::format_inbox,
@@ -216,16 +216,21 @@ impl<'a> TurnRunner<'a> {
     }
 
     async fn recalled_memory_message(&self, request_history: &[Message]) -> Option<Message> {
+        if !self.agent.config().memory.auto_recall_enabled {
+            return None;
+        }
         let query = build_search_query(request_history, self.agent.tasks());
         if query.trim().is_empty() {
             return None;
         }
 
         let memory = self.agent.runtime.memory_engine();
-        let search = memory.search(SearchRequest {
+        let search = memory.search(MemorySearchRequest {
             agent_id: self.agent.id().to_string(),
             query,
-            limit: 3,
+            limit: self.agent.config().memory.auto_recall_limit,
+            char_budget: Some(self.agent.config().memory.auto_recall_char_budget),
+            mode: MemorySearchMode::Automatic,
         });
         let hits = match tokio::time::timeout(MEMORY_SEARCH_TIMEOUT, search).await {
             Ok(Ok(hits)) => hits,
@@ -243,7 +248,7 @@ impl<'a> TurnRunner<'a> {
                 return None;
             }
         };
-        recalled_memory_message(&hits, 2_000)
+        recalled_memory_message(&hits, self.agent.config().memory.auto_recall_char_budget)
     }
 }
 

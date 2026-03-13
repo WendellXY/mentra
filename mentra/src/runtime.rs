@@ -2,6 +2,7 @@ mod builder;
 pub(crate) mod control;
 mod error;
 pub(crate) mod handle;
+mod hybrid_store;
 mod intrinsic;
 mod skill;
 mod store;
@@ -31,6 +32,7 @@ pub use control::{
 };
 pub use error::RuntimeError;
 pub(crate) use handle::RuntimeHandle;
+pub use hybrid_store::HybridRuntimeStore;
 pub(crate) use intrinsic::RuntimeIntrinsicTool;
 pub(crate) use store::{LoadedAgentState, PersistedAgentRecord, TaskStateSnapshot};
 pub use store::{RuntimeStore, SqliteRuntimeStore};

@@ -33,6 +33,10 @@ pub struct MemoryRecord {
     pub created_at: i64,
     pub metadata_json: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub pinned: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub score: Option<f64>,
 }
 
@@ -48,6 +52,42 @@ pub struct SearchRequest {
     pub limit: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemorySearchMode {
+    Automatic,
+    Tool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemorySearchRequest {
+    pub agent_id: String,
+    pub query: String,
+    pub limit: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub char_budget: Option<usize>,
+    #[serde(default)]
+    pub mode: MemorySearchMode,
+}
+
+impl Default for MemorySearchMode {
+    fn default() -> Self {
+        Self::Automatic
+    }
+}
+
+impl From<SearchRequest> for MemorySearchRequest {
+    fn from(value: SearchRequest) -> Self {
+        Self {
+            agent_id: value.agent_id,
+            query: value.query,
+            limit: value.limit,
+            char_budget: None,
+            mode: MemorySearchMode::Automatic,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct MemoryHit {
     pub record_id: String,
@@ -56,6 +96,8 @@ pub struct MemoryHit {
     pub source_revision: u64,
     pub created_at: i64,
     pub metadata_json: String,
+    pub source: Option<String>,
+    pub why_retrieved: Option<String>,
     pub score: Option<f64>,
 }
 
@@ -100,13 +142,30 @@ pub struct CompactProposal {
 
 pub trait MemoryStore: Send + Sync {
     fn upsert_records(&self, records: &[MemoryRecord]) -> Result<(), RuntimeError>;
+    fn search_records_with_options(
+        &self,
+        request: &MemorySearchRequest,
+    ) -> Result<Vec<MemoryRecord>, RuntimeError>;
     fn search_records(
         &self,
         agent_id: &str,
         query: &str,
         limit: usize,
-    ) -> Result<Vec<MemoryRecord>, RuntimeError>;
+    ) -> Result<Vec<MemoryRecord>, RuntimeError> {
+        self.search_records_with_options(&MemorySearchRequest {
+            agent_id: agent_id.to_string(),
+            query: query.to_string(),
+            limit,
+            char_budget: None,
+            mode: MemorySearchMode::Automatic,
+        })
+    }
     fn delete_records(&self, record_ids: &[String]) -> Result<(), RuntimeError>;
+    fn tombstone_records(
+        &self,
+        agent_id: &str,
+        record_ids: &[String],
+    ) -> Result<usize, RuntimeError>;
     fn load_agent_memory_cursor(
         &self,
         agent_id: &str,
@@ -129,7 +188,11 @@ impl MemoryEngine {
         Self { store, hooks }
     }
 
-    pub async fn search(&self, request: SearchRequest) -> Result<Vec<MemoryHit>, RuntimeError> {
+    pub async fn search(
+        &self,
+        request: impl Into<MemorySearchRequest>,
+    ) -> Result<Vec<MemoryHit>, RuntimeError> {
+        let request = request.into();
         let _ = self.hooks.emit(
             self.store.as_ref(),
             &RuntimeHookEvent::MemorySearchStarted {
@@ -138,37 +201,41 @@ impl MemoryEngine {
                 query_preview: preview_text(&request.query, 120),
             },
         );
-        let records =
-            match self
-                .store
-                .search_records(&request.agent_id, &request.query, request.limit)
-            {
-                Ok(records) => records,
-                Err(error) => {
-                    let _ = self.hooks.emit(
-                        self.store.as_ref(),
-                        &RuntimeHookEvent::MemorySearchFinished {
-                            agent_id: request.agent_id,
-                            success: false,
-                            result_count: 0,
-                            error: Some(error.to_string()),
-                        },
-                    );
-                    return Err(error);
-                }
-            };
-        let hits = records
+        let records = match self.store.search_records_with_options(&request) {
+            Ok(records) => records,
+            Err(error) => {
+                let _ = self.hooks.emit(
+                    self.store.as_ref(),
+                    &RuntimeHookEvent::MemorySearchFinished {
+                        agent_id: request.agent_id,
+                        success: false,
+                        result_count: 0,
+                        error: Some(error.to_string()),
+                    },
+                );
+                return Err(error);
+            }
+        };
+        let mut hits = records
             .into_iter()
-            .map(|record| MemoryHit {
-                record_id: record.record_id,
-                kind: record.kind,
-                content: record.content,
-                source_revision: record.source_revision,
-                created_at: record.created_at,
-                metadata_json: record.metadata_json,
-                score: record.score,
+            .map(|record| {
+                let why_retrieved = build_why_retrieved(&request.query, &record);
+                MemoryHit {
+                    record_id: record.record_id,
+                    kind: record.kind,
+                    content: record.content,
+                    source_revision: record.source_revision,
+                    created_at: record.created_at,
+                    metadata_json: record.metadata_json,
+                    source: record.source,
+                    why_retrieved,
+                    score: record.score,
+                }
             })
             .collect::<Vec<_>>();
+        if let Some(char_budget) = request.char_budget {
+            trim_hits_to_char_budget(&mut hits, char_budget);
+        }
         let _ = self.hooks.emit(
             self.store.as_ref(),
             &RuntimeHookEvent::MemorySearchFinished {
@@ -320,6 +387,8 @@ impl MemoryEngine {
             source_revision: request.source_revision,
             created_at: now_secs(),
             metadata_json: "{}".to_string(),
+            source: Some("auto_ingest".to_string()),
+            pinned: false,
             score: None,
         };
         if let Err(error) = self.store.upsert_records(&[record]) {
@@ -383,9 +452,39 @@ impl MemoryEngine {
             source_revision,
             created_at: now_secs(),
             metadata_json: "{}".to_string(),
+            source: Some("auto_compaction".to_string()),
+            pinned: false,
             score: None,
         };
         self.store.upsert_records(&[record])
+    }
+
+    pub fn pin(
+        &self,
+        agent_id: &str,
+        source_revision: u64,
+        content: &str,
+    ) -> Result<MemoryRecord, RuntimeError> {
+        let record = MemoryRecord {
+            record_id: format!("fact:{agent_id}:manual:{}", now_nanos()),
+            agent_id: agent_id.to_string(),
+            kind: MemoryRecordKind::Fact,
+            content: content.trim().to_string(),
+            source_revision,
+            created_at: now_secs(),
+            metadata_json: r#"{"origin":"manual_pin"}"#.to_string(),
+            source: Some("manual_pin".to_string()),
+            pinned: true,
+            score: None,
+        };
+        self.store.upsert_records(&[record.clone()])?;
+        Ok(record)
+    }
+
+    pub fn forget(&self, agent_id: &str, record_id: &str) -> Result<bool, RuntimeError> {
+        self.store
+            .tombstone_records(agent_id, &[record_id.to_string()])
+            .map(|count| count > 0)
     }
 }
 
@@ -431,9 +530,17 @@ pub(crate) fn recalled_memory_message(hits: &[MemoryHit], char_limit: usize) -> 
             continue;
         }
         let line = format!(
-            "[{} rev={}] {}",
+            "[{} rev={}{}{}] {}",
             kind_label(hit.kind),
             hit.source_revision,
+            hit.source
+                .as_deref()
+                .map(|source| format!(" source={source}"))
+                .unwrap_or_default(),
+            hit.why_retrieved
+                .as_deref()
+                .map(|why| format!(" why={why}"))
+                .unwrap_or_default(),
             hit.content.trim()
         );
         if line.trim().is_empty() {
@@ -594,4 +701,68 @@ fn now_secs() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
+}
+
+fn now_nanos() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+}
+
+fn trim_hits_to_char_budget(hits: &mut Vec<MemoryHit>, char_budget: usize) {
+    if char_budget == 0 {
+        hits.clear();
+        return;
+    }
+
+    let mut kept = Vec::with_capacity(hits.len());
+    let mut used = 0usize;
+    for hit in hits.drain(..) {
+        let line_len = hit.content.len()
+            + hit.source.as_deref().map_or(0, str::len)
+            + hit.why_retrieved.as_deref().map_or(0, str::len);
+        if !kept.is_empty() && used + line_len > char_budget {
+            break;
+        }
+        used += line_len;
+        kept.push(hit);
+    }
+    *hits = kept;
+}
+
+fn build_why_retrieved(query: &str, record: &MemoryRecord) -> Option<String> {
+    let mut reasons = Vec::new();
+    let matched = query
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .filter(|token| {
+            record
+                .content
+                .to_lowercase()
+                .contains(&token.to_lowercase())
+        })
+        .take(2)
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if !matched.is_empty() {
+        reasons.push(format!("matched {}", matched.join(",")));
+    }
+    match record.kind {
+        MemoryRecordKind::Fact => reasons.push("fact".to_string()),
+        MemoryRecordKind::Summary => reasons.push("summary".to_string()),
+        MemoryRecordKind::Episode => {}
+    }
+    if record.pinned || record.source.as_deref() == Some("manual_pin") {
+        reasons.push("manual".to_string());
+    }
+    if reasons.is_empty() {
+        None
+    } else {
+        Some(reasons.join("; "))
+    }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }

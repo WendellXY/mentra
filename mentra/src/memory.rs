@@ -1,5 +1,6 @@
 mod compaction;
 mod engine;
+mod hybrid_store;
 pub(crate) mod journal;
 
 pub(crate) use compaction::{
@@ -7,6 +8,8 @@ pub(crate) use compaction::{
 };
 pub use engine::{
     CompactProposal, CompactRequest, IngestOutcome, IngestRequest, MemoryCursor, MemoryEngine,
-    MemoryHit, MemoryRecord, MemoryRecordKind, MemoryStore, SearchRequest,
+    MemoryHit, MemoryRecord, MemoryRecordKind, MemorySearchMode, MemorySearchRequest, MemoryStore,
+    SearchRequest,
 };
 pub(crate) use engine::{build_search_query, recalled_memory_message};
+pub use hybrid_store::SqliteHybridMemoryStore;
