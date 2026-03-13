@@ -16,7 +16,7 @@ impl RuntimeHandle {
         self.tool_registry
             .write()
             .expect("tool registry poisoned")
-            .register_tool(crate::tool::builtin::LoadSkillTool);
+            .register_skill_tool();
     }
 
     pub fn tools(&self) -> Arc<[ToolSpec]> {

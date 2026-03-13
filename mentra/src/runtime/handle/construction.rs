@@ -72,13 +72,10 @@ impl RuntimeHandle {
     ) -> Self {
         let _ = store.prepare_recovery();
         let runtime_instance_id = format!("runtime-{}", std::process::id());
-        let mut tool_registry = if runtime_intrinsics_enabled {
-            ToolRegistry::default()
-        } else {
-            ToolRegistry::new_empty()
-        };
+        let mut tool_registry = ToolRegistry::default();
         if runtime_intrinsics_enabled {
             crate::runtime::intrinsic::register_tools(&mut tool_registry);
+            tool_registry.register_builtin_tools();
         }
         let handle = Self {
             tool_registry: Arc::new(RwLock::new(tool_registry)),

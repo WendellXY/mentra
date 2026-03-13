@@ -24,6 +24,13 @@ enum EntryKind {
     Missing,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ListTraversal<'a> {
+    root: &'a Path,
+    max_depth: usize,
+    limit: usize,
+}
+
 #[derive(Debug, Clone)]
 enum OriginalState {
     Missing,
@@ -202,15 +209,12 @@ impl WorkspaceEditor {
             }
             EntryKind::Dir => {
                 let mut visited = BTreeSet::new();
-                self.collect_list_entries(
-                    &path,
-                    &path,
-                    1,
-                    depth,
+                let traversal = ListTraversal {
+                    root: path.as_path(),
+                    max_depth: depth,
                     limit,
-                    &mut visited,
-                    &mut entries,
-                )?
+                };
+                self.collect_list_entries(&path, 1, traversal, &mut visited, &mut entries)?
             }
             EntryKind::Missing => unreachable!(),
         }
@@ -480,7 +484,7 @@ impl WorkspaceEditor {
         self.runtime
             .policy
             .authorize_file_read(&self.base_dir, path)
-            .map_err(|detail| {
+            .inspect_err(|detail| {
                 let _ = self
                     .runtime
                     .emit_hook(RuntimeHookEvent::AuthorizationDenied {
@@ -488,7 +492,6 @@ impl WorkspaceEditor {
                         action: action.to_string(),
                         detail: detail.clone(),
                     });
-                detail
             })
     }
 
@@ -496,7 +499,7 @@ impl WorkspaceEditor {
         self.runtime
             .policy
             .authorize_file_write(&self.base_dir, path)
-            .map_err(|detail| {
+            .inspect_err(|detail| {
                 let _ = self
                     .runtime
                     .emit_hook(RuntimeHookEvent::AuthorizationDenied {
@@ -504,7 +507,6 @@ impl WorkspaceEditor {
                         action: action.to_string(),
                         detail: detail.clone(),
                     });
-                detail
             })
     }
 
@@ -587,15 +589,13 @@ impl WorkspaceEditor {
 
     fn collect_list_entries(
         &self,
-        root: &Path,
         dir: &Path,
         current_depth: usize,
-        max_depth: usize,
-        limit: usize,
+        traversal: ListTraversal<'_>,
         visited: &mut BTreeSet<PathBuf>,
         entries: &mut Vec<String>,
     ) -> Result<(), String> {
-        if current_depth > max_depth || entries.len() >= limit {
+        if current_depth > traversal.max_depth || entries.len() >= traversal.limit {
             return Ok(());
         }
         if !self.mark_directory_visited(dir, visited)? {
@@ -603,23 +603,25 @@ impl WorkspaceEditor {
         }
 
         for child_name in self.child_names(dir)? {
-            if entries.len() >= limit {
+            if entries.len() >= traversal.limit {
                 break;
             }
 
             let child = dir.join(&child_name);
             match self.entry_kind(&child)? {
-                EntryKind::File => {
-                    entries.push(format!("[file] {}", self.display_relative_to(root, &child)))
-                }
+                EntryKind::File => entries.push(format!(
+                    "[file] {}",
+                    self.display_relative_to(traversal.root, &child)
+                )),
                 EntryKind::Dir => {
-                    entries.push(format!("[dir] {}", self.display_relative_to(root, &child)));
+                    entries.push(format!(
+                        "[dir] {}",
+                        self.display_relative_to(traversal.root, &child)
+                    ));
                     self.collect_list_entries(
-                        root,
                         &child,
                         current_depth + 1,
-                        max_depth,
-                        limit,
+                        traversal,
                         visited,
                         entries,
                     )?;

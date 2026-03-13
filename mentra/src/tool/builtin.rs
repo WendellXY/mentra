@@ -1,6 +1,3 @@
-#[path = "files.rs"]
-mod files;
-
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
@@ -8,8 +5,6 @@ use crate::tool::{
     ExecutableTool, ToolCapability, ToolContext, ToolDurability, ToolResult, ToolSideEffectLevel,
     ToolSpec,
 };
-
-pub use files::FilesTool;
 
 pub struct ShellTool;
 pub struct BackgroundRunTool;

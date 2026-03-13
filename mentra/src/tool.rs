@@ -1,4 +1,5 @@
-pub mod builtin;
+mod builtin;
+mod files;
 mod model;
 
 use std::{collections::HashMap, sync::Arc};
@@ -8,13 +9,16 @@ pub use model::{
     ToolSideEffectLevel, ToolSpec,
 };
 
+use builtin::{BackgroundRunTool, CheckBackgroundTool, LoadSkillTool, ShellTool};
+use files::FilesTool;
+
 #[derive(Clone)]
 struct RegisteredTool {
     spec: ToolSpec,
     handler: Arc<dyn ExecutableTool>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 /// Registry of tools available to a runtime instance.
 pub struct ToolRegistry {
     tools: HashMap<String, RegisteredTool>,
@@ -22,14 +26,6 @@ pub struct ToolRegistry {
 }
 
 impl ToolRegistry {
-    /// Creates an empty tool registry.
-    pub fn new_empty() -> Self {
-        Self {
-            tools: HashMap::new(),
-            tool_specs: Arc::from([]),
-        }
-    }
-
     /// Registers a tool implementation and refreshes the cached tool specs.
     pub fn register_tool<T>(&mut self, tool: T)
     where
@@ -62,13 +58,15 @@ impl ToolRegistry {
     }
 }
 
-impl Default for ToolRegistry {
-    fn default() -> Self {
-        let mut registry = Self::new_empty();
-        registry.register_tool(builtin::ShellTool);
-        registry.register_tool(builtin::BackgroundRunTool);
-        registry.register_tool(builtin::CheckBackgroundTool);
-        registry.register_tool(builtin::FilesTool);
-        registry
+impl ToolRegistry {
+    pub(crate) fn register_skill_tool(&mut self) {
+        self.register_tool(LoadSkillTool);
+    }
+
+    pub(crate) fn register_builtin_tools(&mut self) {
+        self.register_tool(ShellTool);
+        self.register_tool(BackgroundRunTool);
+        self.register_tool(CheckBackgroundTool);
+        self.register_tool(FilesTool);
     }
 }
