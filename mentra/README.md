@@ -2,6 +2,8 @@
 
 Mentra is an agent runtime for building tool-using LLM applications.
 
+MSRV: Rust 1.85.
+
 ## Current Features
 
 - streaming model response handling
@@ -15,6 +17,17 @@ Mentra is an agent runtime for building tool-using LLM applications.
 - Gemini Developer API provider support
 - OpenAI provider support via the Responses API
 - image inputs for OpenAI and Anthropic, plus inline image bytes for Gemini
+
+## Crates.io Quickstart
+
+Install the packaged example from crates.io:
+
+```bash
+cargo install mentra --example quickstart
+OPENAI_API_KEY=... quickstart "Summarize the benefits of tool-using agents."
+```
+
+The quickstart example accepts a prompt from CLI args or stdin. Set `MENTRA_MODEL` to skip model discovery and force a specific OpenAI model.
 
 ## Building A Runtime
 
@@ -95,7 +108,7 @@ For already-hosted assets, use `ContentBlock::image_url(...)` instead. Gemini cu
 Agents compact context by default:
 
 - old tool results are micro-compacted in outbound requests
-- when estimated request context exceeds roughly 50k tokens, Mentra writes the full transcript to `.transcripts/` and replaces older history with a model-generated summary
+- when estimated request context exceeds roughly 50k tokens, Mentra writes the full transcript to the default transcript directory and replaces older history with a model-generated summary
 - the model can also call the builtin `compact` tool explicitly
 
 You can tune or disable this per-agent with `ContextCompactionConfig`:
@@ -112,7 +125,26 @@ let config = AgentConfig {
 };
 ```
 
-## Run The Example
+## Data And Persistence Defaults
+
+For non-test builds, Mentra keeps all default persisted state under a workspace-scoped app-data directory:
+
+- store: `<platform data dir>/mentra/workspaces/<workspace-hash>/runtime.sqlite`
+- runtime-scoped stores: `<platform data dir>/mentra/workspaces/<workspace-hash>/runtime-<runtime-id>.sqlite`
+- team state: `<platform data dir>/mentra/workspaces/<workspace-hash>/team/`
+- task state: `<platform data dir>/mentra/workspaces/<workspace-hash>/tasks/`
+- transcripts: `<platform data dir>/mentra/workspaces/<workspace-hash>/transcripts/`
+
+If the platform data directory cannot be resolved, Mentra falls back to `.mentra/workspaces/<workspace-hash>/...` inside the current workspace.
+
+Override these defaults when needed:
+
+- use `Runtime::builder().with_store(...)` for the SQLite store
+- customize `AgentConfig::task.tasks_dir`, `AgentConfig::team.team_dir`, and `AgentConfig::context_compaction.transcript_dir` for task, team, and transcript storage
+
+## Repo Example
+
+Clone the repository when you want the richer interactive demo with provider selection, persisted runtime inspection, skills loading, and team/task visibility.
 
 Set `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY`, then run. The example lets you choose a provider and shows up to 10 models from that provider ordered newest to oldest.
 

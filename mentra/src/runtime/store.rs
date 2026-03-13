@@ -1146,14 +1146,7 @@ fn decode_runtime_store_filename(filename: &str) -> Option<String> {
 
 #[cfg(not(test))]
 fn default_store_dir() -> PathBuf {
-    let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let workspace = workspace.canonicalize().unwrap_or(workspace);
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    std::hash::Hash::hash(&workspace, &mut hasher);
-    let workspace_key = std::hash::Hasher::finish(&hasher);
-    std::env::temp_dir()
-        .join("mentra-runtime")
-        .join(format!("workspace-{workspace_key:016x}"))
+    crate::default_paths::workspace_default_paths().root_dir
 }
 
 #[cfg(test)]

@@ -1,5 +1,7 @@
 #![doc = include_str!("../README.md")]
 
+mod default_paths;
+
 /// Agent configuration, lifecycle, and event handling.
 pub mod agent;
 /// Background task coordination types and services.

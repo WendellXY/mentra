@@ -90,8 +90,14 @@ impl BackgroundObserverSink for AgentBackgroundObserver {
         let next_snapshot = snapshot.clone();
         drop(snapshot);
         self.snapshot_tx.send_replace(next_snapshot);
-        if self.is_teammate && self.background_tasks.has_pending_notifications(&self.agent_id) {
-            let _ = self.team.wake_teammate(self.team_dir.as_path(), &self.agent_name);
+        if self.is_teammate
+            && self
+                .background_tasks
+                .has_pending_notifications(&self.agent_id)
+        {
+            let _ = self
+                .team
+                .wake_teammate(self.team_dir.as_path(), &self.agent_name);
         }
     }
 
@@ -100,7 +106,9 @@ impl BackgroundObserverSink for AgentBackgroundObserver {
             self.is_teammate && matches!(event, AgentEvent::BackgroundTaskFinished { .. });
         let _ = self.events.send(event);
         if should_wake_teammate {
-            let _ = self.team.wake_teammate(self.team_dir.as_path(), &self.agent_name);
+            let _ = self
+                .team
+                .wake_teammate(self.team_dir.as_path(), &self.agent_name);
         }
     }
 }

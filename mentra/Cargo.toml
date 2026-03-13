@@ -2,6 +2,7 @@
 name = "mentra"
 version = "0.1.0"
 edition.workspace = true
+rust-version = "1.85"
 description = "An agent runtime for tool-using LLM applications"
 license.workspace = true
 repository.workspace = true
@@ -26,6 +27,7 @@ futures-util = "0.3.31"
 time = { version = "0.3", features = ["formatting", "parsing", "serde"] }
 base64 = "0.22.1"
 serde_yaml_ng = "0.10"
+directories = "6.0.0"
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 thiserror = "2.0.18"
 strum = { version = "0.27", features = ["derive"] }

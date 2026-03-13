@@ -19,7 +19,7 @@ pub struct TaskConfig {
 impl Default for TaskConfig {
     fn default() -> Self {
         Self {
-            tasks_dir: PathBuf::from(".tasks"),
+            tasks_dir: default_tasks_dir(),
             reminder_threshold: 3,
         }
     }
@@ -96,7 +96,7 @@ impl Default for WorkspaceConfig {
 
 #[cfg(not(test))]
 fn default_team_dir() -> PathBuf {
-    PathBuf::from(".team")
+    crate::default_paths::workspace_default_paths().team_dir
 }
 
 #[cfg(test)]
@@ -109,7 +109,20 @@ fn default_team_dir() -> PathBuf {
 
 #[cfg(not(test))]
 fn default_transcript_dir() -> PathBuf {
-    PathBuf::from(".transcripts")
+    crate::default_paths::workspace_default_paths().transcripts_dir
+}
+
+#[cfg(not(test))]
+fn default_tasks_dir() -> PathBuf {
+    crate::default_paths::workspace_default_paths().tasks_dir
+}
+
+#[cfg(test)]
+fn default_tasks_dir() -> PathBuf {
+    let suffix = NEXT_TEST_TRANSCRIPT_DIR_ID.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir()
+        .join("mentra-test-tasks")
+        .join(format!("process-{}-{suffix}", std::process::id()))
 }
 
 #[cfg(test)]
@@ -149,5 +162,37 @@ impl Default for AgentConfig {
             workspace: WorkspaceConfig::default(),
             context_compaction: ContextCompactionConfig::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_paths_override_defaults() {
+        let tasks_dir = PathBuf::from("/tmp/custom-tasks");
+        let team_dir = PathBuf::from("/tmp/custom-team");
+        let transcript_dir = PathBuf::from("/tmp/custom-transcripts");
+
+        let config = AgentConfig {
+            task: TaskConfig {
+                tasks_dir: tasks_dir.clone(),
+                ..Default::default()
+            },
+            team: TeamConfig {
+                team_dir: team_dir.clone(),
+                ..Default::default()
+            },
+            context_compaction: ContextCompactionConfig {
+                transcript_dir: transcript_dir.clone(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert_eq!(config.task.tasks_dir, tasks_dir);
+        assert_eq!(config.team.team_dir, team_dir);
+        assert_eq!(config.context_compaction.transcript_dir, transcript_dir);
     }
 }
