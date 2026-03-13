@@ -2,6 +2,7 @@ mod builtin;
 mod context;
 mod files;
 mod model;
+mod runtime;
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -9,6 +10,7 @@ pub use model::{
     ExecutableTool, ParallelToolContext, ToolCall, ToolCapability, ToolContext, ToolDurability,
     ToolExecutionMode, ToolResult, ToolSideEffectLevel, ToolSpec,
 };
+pub(crate) use runtime::ToolRuntime;
 
 use builtin::{BackgroundRunTool, CheckBackgroundTool, LoadSkillTool, ShellTool};
 use files::FilesTool;

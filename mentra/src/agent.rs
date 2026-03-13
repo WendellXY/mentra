@@ -317,6 +317,10 @@ impl Agent {
         true
     }
 
+    pub(crate) fn runtime_handle(&self) -> RuntimeHandle {
+        self.runtime.clone()
+    }
+
     pub(crate) fn max_rounds(&self) -> Option<usize> {
         self.max_rounds
     }
