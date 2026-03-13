@@ -25,6 +25,10 @@ fn begin_run_commit_and_finish_persist_memory_state() {
         .expect("begin run");
     assert_eq!(memory.transcript().len(), 1);
     assert_eq!(memory.state().revision, 1);
+    assert_eq!(
+        memory.resumable_user_message(),
+        Some(&Message::user(ContentBlock::text("hello")))
+    );
 
     memory
         .update_pending_turn(PendingTurnState::new("Hel".to_string(), Vec::new()))
@@ -39,6 +43,7 @@ fn begin_run_commit_and_finish_persist_memory_state() {
 
     memory.finish_run().expect("finish run");
     assert!(memory.state().run.is_none());
+    assert!(memory.resumable_user_message().is_none());
 }
 
 #[test]
@@ -63,6 +68,10 @@ fn rollback_and_compaction_update_memory_state() {
         .expect("pending");
     memory.rollback_failed_run().expect("rollback");
     assert!(memory.transcript().is_empty());
+    assert_eq!(
+        memory.resumable_user_message(),
+        Some(&Message::user(ContentBlock::text("hello")))
+    );
 
     memory
         .append_message(Message::user(ContentBlock::text("after")))

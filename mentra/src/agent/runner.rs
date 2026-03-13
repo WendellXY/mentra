@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, time::Duration};
 
 use crate::{
     ContentBlock, Message,
@@ -11,6 +11,9 @@ use crate::{
 };
 
 use super::{Agent, AgentEvent, AgentStatus, PendingAssistantTurn, memory::PendingTurnState};
+
+const PROVIDER_RETRY_BASE_DELAY: Duration = Duration::from_millis(500);
+const PROVIDER_RETRY_MAX_DELAY: Duration = Duration::from_secs(5);
 
 pub(super) struct TurnRunner<'a> {
     agent: &'a mut Agent,
@@ -141,6 +144,7 @@ impl<'a> TurnRunner<'a> {
                             self.options.model_budget(),
                         ));
                     }
+                    tokio::time::sleep(provider_retry_delay(attempt)).await;
                     continue;
                 }
                 Err(error) => {
@@ -204,6 +208,15 @@ impl<'a> TurnRunner<'a> {
             pending.pending_tool_use_summaries(),
         )
     }
+}
+
+fn provider_retry_delay(attempt: usize) -> Duration {
+    let shift = attempt.saturating_sub(1).min(usize::BITS as usize - 1) as u32;
+    let factor = 1u32 << shift;
+    PROVIDER_RETRY_BASE_DELAY
+        .checked_mul(factor)
+        .unwrap_or(PROVIDER_RETRY_MAX_DELAY)
+        .min(PROVIDER_RETRY_MAX_DELAY)
 }
 
 impl Agent {

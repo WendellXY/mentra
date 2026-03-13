@@ -41,6 +41,7 @@ impl AgentMemory {
             assistant_committed: false,
         });
         self.state.pending_turn = None;
+        self.state.resumable_user_message = Some(user_message.clone());
         self.state.transcript.push(user_message);
         self.persist()
     }
@@ -90,6 +91,7 @@ impl AgentMemory {
     pub fn finish_run(&mut self) -> Result<(), RuntimeError> {
         self.state.pending_turn = None;
         self.state.run = None;
+        self.state.resumable_user_message = None;
         self.persist()
     }
 
@@ -101,6 +103,8 @@ impl AgentMemory {
         let had_pending_turn = self.state.pending_turn.take().is_some();
         if had_pending_turn || !run.assistant_committed {
             self.state.transcript = run.baseline_transcript;
+        } else {
+            self.state.resumable_user_message = None;
         }
 
         self.persist()?;
@@ -116,6 +120,10 @@ impl AgentMemory {
 
     pub fn last_message(&self) -> Option<&Message> {
         self.state.transcript.last()
+    }
+
+    pub fn resumable_user_message(&self) -> Option<&Message> {
+        self.state.resumable_user_message.as_ref()
     }
 
     pub fn snapshot_view(&self) -> AgentSnapshotMemoryView {

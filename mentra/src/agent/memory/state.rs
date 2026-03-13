@@ -8,6 +8,7 @@ use crate::{Message, agent::PendingToolUseSummary};
 pub struct AgentMemoryState {
     pub transcript: Vec<Message>,
     pub pending_turn: Option<PendingTurnState>,
+    pub resumable_user_message: Option<Message>,
     pub compaction: CompactionState,
     pub revision: u64,
     pub run: Option<RunMemoryState>,

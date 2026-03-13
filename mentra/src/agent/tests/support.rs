@@ -26,6 +26,7 @@ use crate::{
 
 pub(super) enum StreamScript {
     Buffered(Vec<Result<ProviderEvent, ProviderError>>),
+    Fail(ProviderError),
     Receiver(ProviderEventStream),
 }
 
@@ -77,6 +78,7 @@ impl Provider for ScriptedProvider {
                 }
                 Ok(rx)
             }
+            Some(StreamScript::Fail(error)) => Err(error),
             Some(StreamScript::Receiver(receiver)) => Ok(receiver),
             None => panic!("no scripted stream available"),
         }
@@ -101,6 +103,10 @@ pub(super) fn erroring_stream(events: Vec<ProviderEvent>, error: ProviderError) 
     let mut items = events.into_iter().map(Ok).collect::<Vec<_>>();
     items.push(Err(error));
     StreamScript::Buffered(items)
+}
+
+pub(super) fn failed_request(error: ProviderError) -> StreamScript {
+    StreamScript::Fail(error)
 }
 
 pub(super) fn controlled_stream() -> (

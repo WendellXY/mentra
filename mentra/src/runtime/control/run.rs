@@ -6,6 +6,8 @@ use std::time::SystemTime;
 
 use crate::runtime::error::RuntimeError;
 
+const DEFAULT_PROVIDER_RETRY_BUDGET: usize = 5;
+
 #[derive(Clone, Default)]
 pub struct CancellationToken {
     cancelled: Arc<AtomicBool>,
@@ -23,13 +25,25 @@ impl CancellationToken {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct RunOptions {
     pub cancellation: Option<CancellationToken>,
     pub deadline: Option<SystemTime>,
     pub retry_budget: usize,
     pub tool_budget: Option<usize>,
     pub model_budget: Option<usize>,
+}
+
+impl Default for RunOptions {
+    fn default() -> Self {
+        Self {
+            cancellation: None,
+            deadline: None,
+            retry_budget: DEFAULT_PROVIDER_RETRY_BUDGET,
+            tool_budget: None,
+            model_budget: None,
+        }
+    }
 }
 
 impl RunOptions {

@@ -54,6 +54,8 @@ pub enum RuntimeError {
     ModelBudgetExceeded(usize),
     #[error("max rounds exceeded at {0}")]
     MaxRoundsExceeded(usize),
+    #[error("no resumable user turn is available")]
+    NoResumableTurn,
     #[error("invalid tool input for '{name}' ({id}): {source}")]
     InvalidToolUseInput {
         id: String,

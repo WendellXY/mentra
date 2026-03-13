@@ -1,13 +1,17 @@
 use std::sync::{Arc, Mutex};
 
+use reqwest::StatusCode;
+
 use crate::{
     BuiltinProvider, ContentBlock, Message, Role,
     agent::{AgentConfig, AgentEvent, AgentStatus},
     provider::{ContentBlockDelta, ContentBlockStart, ProviderError, ProviderEvent},
-    runtime::{RunOptions, Runtime, RuntimeHook, RuntimeHookEvent, RuntimePolicy},
+    runtime::{RunOptions, Runtime, RuntimeError, RuntimeHook, RuntimeHookEvent, RuntimePolicy},
 };
 
-use super::support::{ScriptedProvider, StaticTool, erroring_stream, model_info, ok_stream};
+use super::support::{
+    ScriptedProvider, StaticTool, erroring_stream, failed_request, model_info, ok_stream,
+};
 
 #[tokio::test]
 async fn send_streamed_text_turn_emits_events_and_commits_history() {
@@ -140,6 +144,126 @@ async fn send_failure_rolls_history_back_and_emits_run_failed() {
 
     let events = collect_events(&mut events);
     assert!(matches!(events.last(), Some(AgentEvent::RunFailed { .. })));
+}
+
+#[tokio::test]
+async fn send_retries_transient_provider_error_before_streaming() {
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![
+            failed_request(ProviderError::Http {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                body: "offline".to_string(),
+            }),
+            ok_stream(vec![
+                ProviderEvent::MessageStarted {
+                    id: "msg-1".to_string(),
+                    model: model.id.clone(),
+                    role: Role::Assistant,
+                },
+                ProviderEvent::ContentBlockStarted {
+                    index: 0,
+                    kind: ContentBlockStart::Text,
+                },
+                ProviderEvent::ContentBlockDelta {
+                    index: 0,
+                    delta: ContentBlockDelta::Text("recovered".to_string()),
+                },
+                ProviderEvent::ContentBlockStopped { index: 0 },
+                ProviderEvent::MessageStopped,
+            ]),
+        ],
+    );
+    let provider_handle = provider.clone();
+
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime.spawn("agent", model).expect("spawn agent");
+
+    agent
+        .send(vec![ContentBlock::text("hello")])
+        .await
+        .expect("send should retry");
+
+    assert_eq!(provider_handle.recorded_requests().await.len(), 2);
+    assert_eq!(
+        agent.last_message(),
+        Some(&Message::assistant(ContentBlock::text("recovered")))
+    );
+}
+
+#[tokio::test]
+async fn resume_replays_last_failed_turn() {
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![
+            erroring_stream(
+                vec![ProviderEvent::MessageStarted {
+                    id: "msg-1".to_string(),
+                    model: model.id.clone(),
+                    role: Role::Assistant,
+                }],
+                ProviderError::MalformedStream("boom".to_string()),
+            ),
+            ok_stream(vec![
+                ProviderEvent::MessageStarted {
+                    id: "msg-2".to_string(),
+                    model: model.id.clone(),
+                    role: Role::Assistant,
+                },
+                ProviderEvent::ContentBlockStarted {
+                    index: 0,
+                    kind: ContentBlockStart::Text,
+                },
+                ProviderEvent::ContentBlockDelta {
+                    index: 0,
+                    delta: ContentBlockDelta::Text("done".to_string()),
+                },
+                ProviderEvent::ContentBlockStopped { index: 0 },
+                ProviderEvent::MessageStopped,
+            ]),
+        ],
+    );
+
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime.spawn("agent", model).expect("spawn agent");
+
+    let error = agent
+        .send(vec![ContentBlock::text("retry me")])
+        .await
+        .expect_err("first send should fail");
+    assert!(matches!(error, RuntimeError::FailedToStreamResponse(_)));
+    assert!(agent.history().is_empty());
+
+    agent
+        .resume()
+        .await
+        .expect("resume should replay user turn");
+
+    assert_eq!(agent.history().len(), 2);
+    assert_eq!(
+        agent.history()[0],
+        Message::user(ContentBlock::text("retry me"))
+    );
+    assert_eq!(
+        agent.history()[1],
+        Message::assistant(ContentBlock::text("done"))
+    );
+
+    let error = agent
+        .resume()
+        .await
+        .expect_err("successful run clears resume state");
+    assert!(matches!(error, RuntimeError::NoResumableTurn));
 }
 
 fn collect_events(receiver: &mut tokio::sync::broadcast::Receiver<AgentEvent>) -> Vec<AgentEvent> {

@@ -11,6 +11,22 @@ impl Agent {
         self.run(content, RunOptions::default()).await
     }
 
+    /// Replays the most recent failed or interrupted user turn using default run options.
+    pub async fn resume(&mut self) -> Result<(), RuntimeError> {
+        self.resume_with_options(RunOptions::default()).await
+    }
+
+    /// Replays the most recent failed or interrupted user turn with explicit execution options.
+    pub async fn resume_with_options(&mut self, options: RunOptions) -> Result<(), RuntimeError> {
+        let content = self
+            .memory
+            .resumable_user_message()
+            .ok_or(RuntimeError::NoResumableTurn)?
+            .content
+            .clone();
+        self.run(content, options).await
+    }
+
     /// Runs a user turn with explicit execution limits and cancellation settings.
     pub async fn run(
         &mut self,
