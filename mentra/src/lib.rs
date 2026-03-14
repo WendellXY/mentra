@@ -2,6 +2,9 @@
 
 mod default_paths;
 
+/// Optional OAuth helpers for provider authentication.
+#[cfg(feature = "openai-oauth")]
+pub mod auth;
 /// Agent configuration, lifecycle, and event handling.
 pub mod agent;
 /// Background task coordination types and services.
