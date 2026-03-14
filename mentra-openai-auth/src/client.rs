@@ -43,6 +43,14 @@ pub enum OpenAIOAuthError {
     MissingApiKey,
     #[error("no stored OAuth tokens found")]
     MissingStoredTokens,
+    #[error("token store is unsupported on this platform: {0}")]
+    UnsupportedStore(&'static str),
+    #[error("credential store command `{command}` failed with status {status}: {stderr}")]
+    CredentialCommand {
+        command: &'static str,
+        status: i32,
+        stderr: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -9,7 +9,8 @@ use mentra::{
     provider::openai::OpenAIProvider,
 };
 use mentra_openai_auth::{
-    FileTokenStore, OpenAIOAuthClient, OpenAIOAuthCredentialSource, OpenAITokenSet, TokenStore,
+    OpenAIOAuthClient, OpenAIOAuthCredentialSource, OpenAITokenSet, PersistentTokenStoreKind,
+    TokenStore, persistent_token_store, selected_store_kind,
 };
 
 #[tokio::main]
@@ -17,12 +18,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
 
     let prompt = read_prompt()?;
-    let store: Arc<dyn TokenStore> = Arc::new(FileTokenStore::default());
+    let store_kind = selected_store_kind(PersistentTokenStoreKind::Auto);
+    let store: Arc<dyn TokenStore> = persistent_token_store(PersistentTokenStoreKind::Auto);
     let client = OpenAIOAuthClient::default();
     let tokens = match store.load()? {
         Some(tokens) => tokens,
         None => authorize(&client, store.as_ref()).await?,
     };
+    eprintln!("Using OAuth token store backend: {}", store_kind.label());
 
     let runtime = Runtime::builder()
         .with_provider_instance(OpenAIProvider::with_credential_source(

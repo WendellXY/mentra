@@ -7,4 +7,7 @@ pub use client::{
     OpenAIOAuthError, OpenAITokenSet, PendingAuthorization,
 };
 pub use credential::OpenAIOAuthCredentialSource;
-pub use store::{FileTokenStore, MemoryTokenStore, TokenStore};
+pub use store::{
+    FileTokenStore, KeychainTokenStore, MemoryTokenStore, PersistentTokenStoreKind, TokenStore,
+    persistent_token_store, selected_store_kind,
+};
