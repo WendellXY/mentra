@@ -394,6 +394,7 @@ fn resolve_existing_components(path: &Path) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::{
         fs,
         time::{SystemTime, UNIX_EPOCH},
