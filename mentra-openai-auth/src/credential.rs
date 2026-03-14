@@ -6,8 +6,8 @@ use time::Duration;
 use tokio::sync::Mutex;
 
 use crate::{
-    OpenAIOAuthClient, OpenAIOAuthError, OpenAITokenSet, PersistentTokenStoreKind, TokenStore,
-    persistent_token_store,
+    OpenAIOAuthClient, OpenAIOAuthError, OpenAITokenSet, PendingAuthorization,
+    PersistentTokenStoreKind, TokenStore, persistent_token_store,
 };
 
 pub struct OpenAIOAuthCredentialSource {
@@ -56,6 +56,58 @@ impl OpenAIOAuthCredentialSource {
         client: OpenAIOAuthClient,
     ) -> Result<Self, OpenAIOAuthError> {
         Self::from_persistent_store(client, PersistentTokenStoreKind::Auto)
+    }
+
+    pub async fn from_store_or_authorize<F>(
+        client: OpenAIOAuthClient,
+        store: Arc<dyn TokenStore>,
+        on_pending_authorization: F,
+    ) -> Result<Self, OpenAIOAuthError>
+    where
+        F: FnOnce(&PendingAuthorization),
+    {
+        match Self::from_store(client.clone(), store.clone()) {
+            Ok(source) => Ok(source),
+            Err(OpenAIOAuthError::MissingStoredTokens) => {
+                let pending = client.start_authorization().await?;
+                on_pending_authorization(&pending);
+                let tokens = pending.complete(&client).await?;
+                store.save(&tokens)?;
+                Ok(Self::new(client, tokens).with_store(store))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub async fn from_persistent_store_or_authorize<F>(
+        client: OpenAIOAuthClient,
+        kind: PersistentTokenStoreKind,
+        on_pending_authorization: F,
+    ) -> Result<Self, OpenAIOAuthError>
+    where
+        F: FnOnce(&PendingAuthorization),
+    {
+        Self::from_store_or_authorize(
+            client,
+            persistent_token_store(kind),
+            on_pending_authorization,
+        )
+        .await
+    }
+
+    pub async fn from_default_persistent_store_or_authorize<F>(
+        client: OpenAIOAuthClient,
+        on_pending_authorization: F,
+    ) -> Result<Self, OpenAIOAuthError>
+    where
+        F: FnOnce(&PendingAuthorization),
+    {
+        Self::from_persistent_store_or_authorize(
+            client,
+            PersistentTokenStoreKind::Auto,
+            on_pending_authorization,
+        )
+        .await
     }
 
     async fn current_api_key(&self) -> Result<String, OpenAIOAuthError> {

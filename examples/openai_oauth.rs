@@ -1,7 +1,4 @@
-use std::{
-    io::{self, Read, Write},
-    sync::Arc,
-};
+use std::io::{self, Read, Write};
 
 use dotenvy::dotenv;
 use mentra::{
@@ -9,8 +6,7 @@ use mentra::{
     provider::openai::OpenAIProvider,
 };
 use mentra_openai_auth::{
-    OpenAIOAuthClient, OpenAIOAuthCredentialSource, OpenAITokenSet, PersistentTokenStoreKind,
-    TokenStore, persistent_token_store, selected_store_kind,
+    OpenAIOAuthClient, OpenAIOAuthCredentialSource, PersistentTokenStoreKind, selected_store_kind,
 };
 
 #[tokio::main]
@@ -19,21 +15,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let prompt = read_prompt()?;
     let store_kind = selected_store_kind(PersistentTokenStoreKind::Auto);
-    let store: Arc<dyn TokenStore> = persistent_token_store(PersistentTokenStoreKind::Auto);
     let client = OpenAIOAuthClient::default();
     eprintln!("Using OAuth token store backend: {}", store_kind.label());
 
-    let credential_source = match OpenAIOAuthCredentialSource::from_persistent_store(
-        client.clone(),
+    let credential_source = OpenAIOAuthCredentialSource::from_persistent_store_or_authorize(
+        client,
         PersistentTokenStoreKind::Auto,
-    ) {
-        Ok(source) => source,
-        Err(mentra_openai_auth::OpenAIOAuthError::MissingStoredTokens) => {
-            let tokens = authorize(&client, store.as_ref()).await?;
-            OpenAIOAuthCredentialSource::new(client.clone(), tokens).with_store(store)
-        }
-        Err(error) => return Err(error.into()),
-    };
+        |pending| {
+            eprintln!("Open this URL in your browser to authorize Mentra:");
+            eprintln!("{}", pending.authorize_url());
+            eprintln!();
+            eprintln!("Waiting for the callback on {} ...", pending.redirect_uri());
+        },
+    )
+    .await?;
 
     let runtime = Runtime::builder()
         .with_provider_instance(OpenAIProvider::with_credential_source(credential_source))
@@ -43,21 +38,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut agent = runtime.spawn("OAuth Quickstart", model)?;
     stream_response(&mut agent, prompt).await?;
     Ok(())
-}
-
-async fn authorize(
-    client: &OpenAIOAuthClient,
-    store: &dyn TokenStore,
-) -> Result<OpenAITokenSet, Box<dyn std::error::Error>> {
-    let pending = client.start_authorization().await?;
-    eprintln!("Open this URL in your browser to authorize Mentra:");
-    eprintln!("{}", pending.authorize_url());
-    eprintln!();
-    eprintln!("Waiting for the callback on {} ...", pending.redirect_uri());
-
-    let tokens = pending.complete(client).await?;
-    store.save(&tokens)?;
-    Ok(tokens)
 }
 
 fn read_prompt() -> Result<String, Box<dyn std::error::Error>> {
