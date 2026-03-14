@@ -8,7 +8,9 @@ use std::{
     },
     time::{SystemTime, UNIX_EPOCH},
 };
-use tokio::time::{Duration, sleep, timeout};
+#[cfg(unix)]
+use tokio::time::timeout;
+use tokio::time::{Duration, sleep};
 
 use crate::{
     BuiltinProvider, ContentBlock, Message, Role,

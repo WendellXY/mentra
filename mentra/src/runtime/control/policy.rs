@@ -507,6 +507,7 @@ mod tests {
         let _ = fs::remove_dir_all(&outside);
     }
 
+    #[cfg(unix)]
     fn unique_temp_dir(label: &str) -> PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
