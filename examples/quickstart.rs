@@ -2,7 +2,7 @@ use std::io::{self, Read, Write};
 
 use dotenvy::dotenv;
 use mentra::{
-    Agent, BuiltinProvider, ContentBlock, ModelInfo, ProviderId, Runtime, agent::AgentEvent,
+    Agent, BuiltinProvider, ContentBlock, ModelInfo, ModelSelector, Runtime, agent::AgentEvent,
 };
 
 #[tokio::main]
@@ -43,29 +43,13 @@ fn read_prompt() -> Result<String, Box<dyn std::error::Error>> {
 }
 
 async fn pick_model(runtime: &Runtime) -> Result<ModelInfo, Box<dyn std::error::Error>> {
-    if let Ok(model) = std::env::var("MENTRA_MODEL") {
-        return Ok(ModelInfo {
-            id: model,
-            provider: ProviderId::from(BuiltinProvider::OpenAI),
-            display_name: None,
-            description: None,
-            created_at: None,
-        });
-    }
+    let selector = std::env::var("MENTRA_MODEL")
+        .map(ModelSelector::Id)
+        .unwrap_or(ModelSelector::NewestAvailable);
 
-    let provider_id = ProviderId::from(BuiltinProvider::OpenAI);
-    let mut models = runtime.list_models(Some(&provider_id)).await?;
-    models.sort_by(|left, right| {
-        right
-            .created_at
-            .cmp(&left.created_at)
-            .then_with(|| left.id.cmp(&right.id))
-    });
-
-    models
-        .into_iter()
-        .next()
-        .ok_or_else(|| "OpenAI did not return any models".into())
+    Ok(runtime
+        .resolve_model(BuiltinProvider::OpenAI, selector)
+        .await?)
 }
 
 async fn stream_response(

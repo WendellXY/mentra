@@ -26,7 +26,7 @@ Clone the repository and run the workspace quickstart example:
 cargo run -p mentra-examples --example quickstart -- "Summarize the benefits of tool-using agents."
 ```
 
-The quickstart example accepts a prompt from CLI args or stdin. Set `MENTRA_MODEL` to skip model discovery and force a specific OpenAI model.
+The quickstart example accepts a prompt from CLI args or stdin. Set `MENTRA_MODEL` to force a specific OpenAI model; otherwise it resolves the newest available OpenAI model automatically.
 
 ## Building A Runtime
 
@@ -47,6 +47,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = runtime;
     Ok(())
 }
+```
+
+## Resolving A Model
+
+Use `Runtime::resolve_model(...)` when you want provider-aware model selection without reimplementing discovery or `ModelInfo` construction in application code.
+
+```rust,no_run
+use mentra::{BuiltinProvider, ModelSelector, Runtime};
+
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+let runtime = Runtime::builder()
+    .with_provider(BuiltinProvider::OpenAI, std::env::var("OPENAI_API_KEY")?)
+    .build()?;
+let model = runtime
+    .resolve_model(
+        BuiltinProvider::OpenAI,
+        std::env::var("MENTRA_MODEL")
+            .map(ModelSelector::Id)
+            .unwrap_or(ModelSelector::NewestAvailable),
+    )
+    .await?;
+
+let _ = model;
+# Ok(())
+# }
 ```
 
 ## Coding Agent Setup
@@ -198,14 +223,19 @@ When a tool needs disposable delegated work, `ParallelToolContext::spawn_subagen
 Register tools once on the runtime, then use `AgentConfig::tool_profile` to expose different subsets for different operating modes.
 
 ```rust,no_run
-use mentra::{BuiltinProvider, ModelInfo, Runtime};
+use mentra::{BuiltinProvider, ModelSelector, Runtime};
 use mentra::agent::{AgentConfig, ToolProfile};
 
 # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
 let runtime = Runtime::builder()
     .with_provider(BuiltinProvider::OpenAI, std::env::var("OPENAI_API_KEY")?)
     .build()?;
-let model = ModelInfo::new("gpt-5.4-mini", BuiltinProvider::OpenAI);
+let model = runtime
+    .resolve_model(
+        BuiltinProvider::OpenAI,
+        ModelSelector::Id("gpt-5.4-mini".to_string()),
+    )
+    .await?;
 
 let queue_mode = AgentConfig {
     tool_profile: ToolProfile::only([

@@ -1,5 +1,5 @@
 use dotenvy::dotenv;
-use mentra::{BuiltinProvider, ModelInfo, ProviderId, Runtime, RuntimePolicy};
+use mentra::{BuiltinProvider, ModelInfo, ModelSelector, Runtime, RuntimePolicy};
 
 #[allow(dead_code)]
 pub fn openai_runtime() -> Result<Runtime, Box<dyn std::error::Error>> {
@@ -15,23 +15,13 @@ pub fn openai_runtime() -> Result<Runtime, Box<dyn std::error::Error>> {
 }
 
 pub async fn openai_model(runtime: &Runtime) -> Result<ModelInfo, Box<dyn std::error::Error>> {
-    if let Ok(model) = std::env::var("MENTRA_MODEL") {
-        return Ok(ModelInfo::new(model, BuiltinProvider::OpenAI));
-    }
+    let selector = std::env::var("MENTRA_MODEL")
+        .map(ModelSelector::Id)
+        .unwrap_or(ModelSelector::NewestAvailable);
 
-    let provider_id = ProviderId::from(BuiltinProvider::OpenAI);
-    let mut models = runtime.list_models(Some(&provider_id)).await?;
-    models.sort_by(|left, right| {
-        right
-            .created_at
-            .cmp(&left.created_at)
-            .then_with(|| left.id.cmp(&right.id))
-    });
-
-    models
-        .into_iter()
-        .next()
-        .ok_or_else(|| "OpenAI did not return any models".into())
+    Ok(runtime
+        .resolve_model(BuiltinProvider::OpenAI, selector)
+        .await?)
 }
 
 #[allow(dead_code)]
