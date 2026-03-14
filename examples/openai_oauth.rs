@@ -2,7 +2,8 @@ use std::io::{self, Read, Write};
 
 use dotenvy::dotenv;
 use mentra::{
-    Agent, ContentBlock, ModelInfo, ModelSelector, Runtime, agent::AgentEvent,
+    Agent, ContentBlock, ModelInfo, ModelSelector, Runtime,
+    agent::AgentEvent,
     auth::openai::{
         OpenAIOAuthClient, OpenAIOAuthCredentialSource, PersistentTokenStoreKind,
         selected_store_kind,

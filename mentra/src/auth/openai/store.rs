@@ -228,7 +228,7 @@ impl TokenStore for KeychainTokenStore {
                 return Ok(());
             }
 
-            return Err(command_error(output, "security"));
+            Err(command_error(output, "security"))
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -256,7 +256,7 @@ impl TokenStore for KeychainTokenStore {
                 return Ok(());
             }
 
-            return Err(command_error(output, "security"));
+            Err(command_error(output, "security"))
         }
 
         #[cfg(not(target_os = "macos"))]

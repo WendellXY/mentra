@@ -264,9 +264,9 @@ async fn receive_code(
     stream.write_all(response.as_bytes()).await?;
     stream.shutdown().await?;
 
-    if !params
+    if params
         .get("state")
-        .is_some_and(|state| state == expected_state)
+        .is_none_or(|state| state != expected_state)
     {
         return Err(OpenAIOAuthError::StateMismatch);
     }
