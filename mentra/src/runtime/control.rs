@@ -9,13 +9,14 @@ pub use command::{
     CommandOutput, CommandRequest, CommandSpec, LocalRuntimeExecutor, RuntimeExecutor,
     read_limited_file,
 };
-pub use hooks::{AuditHook, AuditLogHook, RuntimeHook, RuntimeHookEvent, RuntimeHooks};
+pub use hooks::{
+    AuditHook, AuditLogHook, RuntimeHook, RuntimeHookEvent, RuntimeHooks,
+    is_transient_provider_error, is_transient_runtime_error,
+};
 pub use policy::RuntimePolicy;
 pub use run::{CancellationFlag, CancellationToken, RunOptions};
+pub(crate) use shell_parse::parse_command;
 pub use shell_types::{
     ApprovalPolicy, CommandEvaluation, CommandParse, CommandStage, Decision, ExecOutput, ExecRule,
     ParsedCommand, RuleMatch, ShellRequest,
 };
-
-pub(crate) use hooks::is_transient_provider_error;
-pub(crate) use shell_parse::parse_command;

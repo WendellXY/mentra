@@ -4,6 +4,7 @@ mod execution;
 mod tooling;
 
 use std::{
+    any::{Any, TypeId},
     collections::{BTreeSet, HashMap},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, RwLock},
@@ -45,6 +46,7 @@ pub struct RuntimeHandle {
     pub(crate) policy: Arc<RuntimePolicy>,
     pub(crate) hooks: RuntimeHooks,
     pub(crate) memory: Arc<MemoryEngine>,
+    pub(crate) app_contexts: Arc<RwLock<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>>,
     pub(crate) runtime_intrinsics_enabled: bool,
     runtime_instance_id: String,
     persisted_runtime_identifier: Arc<str>,

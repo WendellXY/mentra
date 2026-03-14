@@ -352,6 +352,7 @@ mod tests {
                 capabilities: vec![],
                 side_effect_level: crate::tool::ToolSideEffectLevel::None,
                 durability: crate::tool::ToolDurability::ReplaySafe,
+                execution_timeout: None,
             }]),
             tool_choice: Some(ToolChoice::Tool {
                 name: "files".to_string(),

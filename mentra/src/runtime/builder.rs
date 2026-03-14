@@ -1,5 +1,4 @@
-use std::path::Path;
-use std::sync::Arc;
+use std::{any::Any, path::Path, sync::Arc};
 
 use crate::{
     provider::{BuiltinProvider, Provider, ProviderRegistry},
@@ -34,6 +33,12 @@ impl RuntimeBuilder {
         T: ExecutableTool + 'static,
     {
         self.handle.register_tool(tool);
+        self
+    }
+
+    /// Registers typed application state that tools can retrieve from their context.
+    pub fn with_context(self, context: Arc<dyn Any + Send + Sync>) -> Self {
+        self.handle.register_app_context(context);
         self
     }
 

@@ -223,7 +223,8 @@ impl RuntimeHooks {
     }
 }
 
-pub(crate) fn is_transient_provider_error(error: &ProviderError) -> bool {
+/// Returns whether a provider error is likely transient and worth retrying.
+pub fn is_transient_provider_error(error: &ProviderError) -> bool {
     match error {
         ProviderError::Transport(_) | ProviderError::Decode(_) => true,
         ProviderError::Http { status, .. } => {
@@ -236,5 +237,16 @@ pub(crate) fn is_transient_provider_error(error: &ProviderError) -> bool {
         | ProviderError::InvalidRequest(_)
         | ProviderError::InvalidResponse(_)
         | ProviderError::MalformedStream(_) => false,
+    }
+}
+
+/// Returns whether a runtime error is backed by a transient provider failure.
+pub fn is_transient_runtime_error(error: &RuntimeError) -> bool {
+    match error {
+        RuntimeError::FailedToSendRequest(source)
+        | RuntimeError::FailedToListModels(source)
+        | RuntimeError::FailedToStreamResponse(source)
+        | RuntimeError::FailedToCompactHistory(source) => is_transient_provider_error(source),
+        _ => false,
     }
 }

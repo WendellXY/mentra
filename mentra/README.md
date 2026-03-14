@@ -94,6 +94,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+## App Context
+
+If your tools need access to typed host-side state, register it on the runtime and retrieve it from `ToolContext` or `ParallelToolContext`:
+
+```rust,no_run
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use mentra::{
+    BuiltinProvider, Runtime,
+    tool::{ExecutableTool, ToolContext, ToolResult, ToolSpec},
+};
+use serde_json::{Value, json};
+
+struct AppState {
+    api_base: String,
+}
+
+struct InspectStateTool;
+
+#[async_trait]
+impl ExecutableTool for InspectStateTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec::builder("inspect_state")
+            .description("Return the configured API base URL.")
+            .input_schema(json!({
+                "type": "object",
+                "properties": {}
+            }))
+            .build()
+    }
+
+    async fn execute_mut(&self, ctx: ToolContext<'_>, _input: Value) -> ToolResult {
+        let state = ctx.app_context::<AppState>()?;
+        Ok(state.api_base.clone())
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let runtime = Runtime::builder()
+        .with_provider(BuiltinProvider::OpenAI, std::env::var("OPENAI_API_KEY")?)
+        .with_context(Arc::new(AppState {
+            api_base: "https://api.example.com".to_string(),
+        }))
+        .with_tool(InspectStateTool)
+        .build()?;
+
+    let _ = runtime;
+    Ok(())
+}
+```
+
 ## Custom Tools
 
 Use `ToolSpec::builder(...)` to define custom tools without hand-assembling the metadata struct:
@@ -123,6 +175,7 @@ impl ExecutableTool for UppercaseTool {
             .capability(ToolCapability::ReadOnly)
             .side_effect_level(ToolSideEffectLevel::None)
             .durability(ToolDurability::ReplaySafe)
+            .execution_timeout(std::time::Duration::from_secs(5))
             .build()
     }
 
@@ -135,6 +188,8 @@ impl ExecutableTool for UppercaseTool {
     }
 }
 ```
+
+`ToolSpec::execution_timeout(...)` is enforced by Mentra around the tool future itself, which is useful for network-backed tools that need a tighter budget than the overall agent run.
 
 When a tool needs disposable delegated work, `ParallelToolContext::spawn_subagent()` can create a child agent that inherits the current runtime and model defaults. See the `subagent_tool` example in the workspace examples crate for a complete usage pattern.
 

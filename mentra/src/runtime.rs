@@ -8,7 +8,7 @@ mod skill;
 mod store;
 pub(crate) mod task;
 
-use std::path::Path;
+use std::{any::Any, path::Path, sync::Arc};
 
 use crate::{
     agent::{Agent, AgentConfig, AgentSpawnOptions, AgentStatus},
@@ -29,6 +29,7 @@ pub use control::{
     CommandEvaluation, CommandOutput, CommandParse, CommandRequest, CommandSpec, CommandStage,
     Decision, ExecOutput, ExecRule, ParsedCommand, RuleMatch, RunOptions, RuntimeExecutor,
     RuntimeHook, RuntimeHookEvent, RuntimeHooks, RuntimePolicy, ShellRequest,
+    is_transient_provider_error, is_transient_runtime_error,
 };
 pub use error::RuntimeError;
 pub(crate) use handle::RuntimeHandle;
@@ -73,6 +74,19 @@ impl Runtime {
         T: ExecutableTool + 'static,
     {
         self.handle.register_tool(tool);
+    }
+
+    /// Registers typed application state that tools can retrieve from their context.
+    pub fn register_context(&self, context: Arc<dyn Any + Send + Sync>) {
+        self.handle.register_app_context(context);
+    }
+
+    /// Returns typed application state previously registered on this runtime.
+    pub fn app_context<T>(&self) -> Result<Arc<T>, String>
+    where
+        T: Any + Send + Sync + 'static,
+    {
+        self.handle.app_context::<T>()
     }
 
     /// Registers a skills directory and enables the builtin `load_skill` tool.

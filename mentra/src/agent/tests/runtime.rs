@@ -1,9 +1,20 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+
+use async_trait::async_trait;
+use serde_json::{Value, json};
+use tokio::time::sleep;
 
 use crate::{
     BuiltinProvider, ContentBlock, Role,
-    provider::{ContentBlockDelta, ContentBlockStart, ProviderEvent},
-    runtime::{RunOptions, Runtime, RuntimeHook, RuntimeHookEvent, RuntimePolicy},
+    provider::{ContentBlockDelta, ContentBlockStart, ProviderError, ProviderEvent},
+    runtime::{
+        RunOptions, Runtime, RuntimeHook, RuntimeHookEvent, RuntimePolicy,
+        is_transient_runtime_error,
+    },
+    tool::{ExecutableTool, ToolContext, ToolResult, ToolSpec},
 };
 
 use super::support::{ScriptedProvider, StaticTool, model_info, ok_stream};
@@ -185,6 +196,146 @@ async fn custom_hooks_observe_model_and_tool_execution() {
         RuntimeHookEvent::ToolExecutionFinished { tool_name, is_error: false, .. }
             if tool_name == "test_tool"
     )));
+}
+
+#[tokio::test]
+async fn tools_can_read_registered_app_context() {
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(&model.id, "tool-ctx", "app_context_tool", r#"{}"#),
+            text_stream("done"),
+        ],
+    );
+    let app_state = Arc::new(TestAppState {
+        label: "configured",
+    });
+
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .with_context(app_state.clone())
+        .with_tool(AppContextTool)
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime.spawn("agent", model).unwrap();
+
+    assert_eq!(
+        runtime
+            .app_context::<TestAppState>()
+            .expect("app context should be registered")
+            .label,
+        "configured"
+    );
+
+    agent
+        .send(vec![ContentBlock::Text {
+            text: "use the app_context_tool".to_string(),
+        }])
+        .await
+        .expect("send");
+
+    assert!(matches!(
+        &agent.history()[2].content[0],
+        ContentBlock::ToolResult { content, is_error: false, .. }
+            if content == "configured"
+    ));
+}
+
+#[tokio::test]
+async fn tool_execution_timeout_returns_tool_error() {
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(&model.id, "tool-slow", "slow_tool", r#"{}"#),
+            text_stream("done"),
+        ],
+    );
+
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .with_tool(SlowTool)
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime.spawn("agent", model).unwrap();
+
+    agent
+        .send(vec![ContentBlock::Text {
+            text: "run the slow tool".to_string(),
+        }])
+        .await
+        .expect("send");
+
+    assert!(matches!(
+        &agent.history()[2].content[0],
+        ContentBlock::ToolResult { content, is_error: true, .. }
+            if content.contains("timed out after 20ms")
+    ));
+}
+
+#[test]
+fn transient_runtime_error_helper_matches_provider_retry_policy() {
+    let transient = crate::runtime::RuntimeError::FailedToStreamResponse(ProviderError::Http {
+        status: reqwest::StatusCode::TOO_MANY_REQUESTS,
+        body: String::new(),
+    });
+    let permanent = crate::runtime::RuntimeError::FailedToStreamResponse(
+        ProviderError::InvalidRequest("bad request".to_string()),
+    );
+
+    assert!(is_transient_runtime_error(&transient));
+    assert!(!is_transient_runtime_error(&permanent));
+    assert!(!is_transient_runtime_error(
+        &crate::runtime::RuntimeError::EmptyAssistantResponse
+    ));
+}
+
+#[derive(Debug)]
+struct TestAppState {
+    label: &'static str,
+}
+
+struct AppContextTool;
+
+#[async_trait]
+impl ExecutableTool for AppContextTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec::builder("app_context_tool")
+            .description("Return a value from the runtime app context.")
+            .input_schema(json!({
+                "type": "object",
+                "properties": {}
+            }))
+            .build()
+    }
+
+    async fn execute_mut(&self, ctx: ToolContext<'_>, _input: Value) -> ToolResult {
+        Ok(ctx.app_context::<TestAppState>()?.label.to_string())
+    }
+}
+
+struct SlowTool;
+
+#[async_trait]
+impl ExecutableTool for SlowTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec::builder("slow_tool")
+            .description("Sleep long enough to trigger a timeout.")
+            .input_schema(json!({
+                "type": "object",
+                "properties": {}
+            }))
+            .execution_timeout(Duration::from_millis(20))
+            .build()
+    }
+
+    async fn execute_mut(&self, _ctx: ToolContext<'_>, _input: Value) -> ToolResult {
+        sleep(Duration::from_millis(60)).await;
+        Ok("finished".to_string())
+    }
 }
 
 #[derive(Clone)]

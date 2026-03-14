@@ -1,6 +1,38 @@
 use super::*;
 
 impl RuntimeHandle {
+    pub fn register_app_context(&self, context: Arc<dyn Any + Send + Sync>) {
+        self.app_contexts
+            .write()
+            .expect("app context registry poisoned")
+            .insert(context.as_ref().type_id(), context);
+    }
+
+    pub fn app_context<T>(&self) -> Result<Arc<T>, String>
+    where
+        T: Any + Send + Sync + 'static,
+    {
+        let context = self
+            .app_contexts
+            .read()
+            .expect("app context registry poisoned")
+            .get(&TypeId::of::<T>())
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "App context '{}' is not registered on this runtime",
+                    std::any::type_name::<T>()
+                )
+            })?;
+
+        Arc::downcast::<T>(context).map_err(|_| {
+            format!(
+                "App context '{}' was registered with an incompatible type",
+                std::any::type_name::<T>()
+            )
+        })
+    }
+
     pub fn register_tool<T>(&self, tool: T)
     where
         T: ExecutableTool + 'static,

@@ -498,6 +498,7 @@ impl ExecutableTool for BlockingTool {
             capabilities: vec![],
             side_effect_level: ToolSideEffectLevel::None,
             durability: ToolDurability::ReplaySafe,
+            execution_timeout: None,
         }
     }
 

@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{future::Future, path::PathBuf, sync::Arc, time::Duration};
 
 use tokio::task::JoinSet;
 
@@ -307,7 +307,12 @@ impl ToolRuntime {
 
             let ctx = self.parallel_tool_context(agent, &call);
             join_set.spawn(async move {
-                let result = tool.execute(ctx, call.input.clone()).await;
+                let result = execute_tool_future(
+                    &call.name,
+                    spec.execution_timeout,
+                    tool.execute(ctx, call.input.clone()),
+                )
+                .await;
                 (index, call, spec, result)
             });
         }
@@ -379,16 +384,20 @@ impl ToolRuntime {
         let runtime = self.runtime.clone();
         let result = Self::tool_result_block(
             &call,
-            tool.execute_mut(
-                ToolContext {
-                    agent_id: self.agent_id.clone(),
-                    tool_call_id: call.id.clone(),
-                    tool_name: call.name.clone(),
-                    working_directory,
-                    runtime,
-                    agent,
-                },
-                call.input.clone(),
+            execute_tool_future(
+                &call.name,
+                spec.execution_timeout,
+                tool.execute_mut(
+                    ToolContext {
+                        agent_id: self.agent_id.clone(),
+                        tool_call_id: call.id.clone(),
+                        tool_name: call.name.clone(),
+                        working_directory,
+                        runtime,
+                        agent,
+                    },
+                    call.input.clone(),
+                ),
             )
             .await,
         );
@@ -439,5 +448,37 @@ impl IntoIterator for ToolCallSchedule {
 
     fn into_iter(self) -> Self::IntoIter {
         self.batches.into_iter()
+    }
+}
+
+async fn execute_tool_future<F>(
+    tool_name: &str,
+    execution_timeout: Option<Duration>,
+    future: F,
+) -> crate::tool::ToolResult
+where
+    F: Future<Output = crate::tool::ToolResult>,
+{
+    match execution_timeout {
+        Some(timeout) => match tokio::time::timeout(timeout, future).await {
+            Ok(result) => result,
+            Err(_) => Err(format!(
+                "Tool '{tool_name}' timed out after {}",
+                format_duration(timeout)
+            )),
+        },
+        None => future.await,
+    }
+}
+
+fn format_duration(duration: Duration) -> String {
+    if duration.as_secs() > 0 && duration.subsec_nanos() == 0 {
+        format!("{}s", duration.as_secs())
+    } else if duration.as_millis() > 0 {
+        format!("{}ms", duration.as_millis())
+    } else if duration.as_micros() > 0 {
+        format!("{}us", duration.as_micros())
+    } else {
+        format!("{}ns", duration.as_nanos())
     }
 }

@@ -1,4 +1,9 @@
-use std::path::{Path, PathBuf};
+use std::{
+    any::Any,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -67,6 +72,8 @@ pub struct ToolSpec {
     pub capabilities: Vec<ToolCapability>,
     pub side_effect_level: ToolSideEffectLevel,
     pub durability: ToolDurability,
+    /// Optional runtime-enforced timeout for the tool implementation itself.
+    pub execution_timeout: Option<Duration>,
 }
 
 impl ToolSpec {
@@ -82,6 +89,7 @@ impl ToolSpec {
             capabilities: Vec::new(),
             side_effect_level: ToolSideEffectLevel::None,
             durability: ToolDurability::Ephemeral,
+            execution_timeout: None,
         }
     }
 }
@@ -94,6 +102,7 @@ pub struct ToolSpecBuilder {
     capabilities: Vec<ToolCapability>,
     side_effect_level: ToolSideEffectLevel,
     durability: ToolDurability,
+    execution_timeout: Option<Duration>,
 }
 
 impl ToolSpecBuilder {
@@ -127,6 +136,11 @@ impl ToolSpecBuilder {
         self
     }
 
+    pub fn execution_timeout(mut self, execution_timeout: Duration) -> Self {
+        self.execution_timeout = Some(execution_timeout);
+        self
+    }
+
     pub fn build(self) -> ToolSpec {
         ToolSpec {
             name: self.name,
@@ -135,6 +149,7 @@ impl ToolSpecBuilder {
             capabilities: self.capabilities,
             side_effect_level: self.side_effect_level,
             durability: self.durability,
+            execution_timeout: self.execution_timeout,
         }
     }
 }
@@ -200,6 +215,14 @@ impl ToolContext<'_> {
     /// Returns skill descriptions exposed to the model, when available.
     pub fn skill_descriptions(&self) -> Option<String> {
         self.runtime.skill_descriptions()
+    }
+
+    /// Returns typed application state registered on the runtime.
+    pub fn app_context<T>(&self) -> Result<Arc<T>, String>
+    where
+        T: Any + Send + Sync + 'static,
+    {
+        self.runtime.app_context::<T>()
     }
 
     /// Executes a foreground shell command through the runtime policy and executor.
@@ -429,6 +452,14 @@ impl ParallelToolContext {
     /// Returns skill descriptions exposed to the model, when available.
     pub fn skill_descriptions(&self) -> Option<String> {
         self.runtime.skill_descriptions()
+    }
+
+    /// Returns typed application state registered on the runtime.
+    pub fn app_context<T>(&self) -> Result<Arc<T>, String>
+    where
+        T: Any + Send + Sync + 'static,
+    {
+        self.runtime.app_context::<T>()
     }
 
     /// Executes a foreground shell command through the runtime policy and executor.
