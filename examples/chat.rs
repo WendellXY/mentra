@@ -1,4 +1,4 @@
-use std::{io::Write, path::PathBuf};
+use std::{io::Write, path::{Path, PathBuf}};
 
 use dotenvy::dotenv;
 use mentra::{
@@ -12,8 +12,13 @@ use time::format_description::well_known::Rfc3339;
 async fn main() {
     dotenv().ok();
 
+    let cli = parse_cli_args();
     let runtime_identifier = example_runtime_identifier();
     let store_path = example_store_path(&runtime_identifier);
+    if cli.fresh {
+        reset_store(&store_path);
+    }
+
     let runtime = mentra::Runtime::builder()
         .with_runtime_identifier(runtime_identifier.clone())
         .with_store(SqliteRuntimeStore::new(store_path.clone()))
@@ -37,6 +42,9 @@ async fn main() {
 
     println!("Using store: {}", store_path.display());
     println!("Using runtime identifier: {runtime_identifier}");
+    if cli.fresh {
+        println!("Started with a fresh runtime store.");
+    }
     print_persisted_runtime_identifiers();
     let mut agent = load_or_create_agent(&runtime, &runtime_identifier).await;
     println!("Active agent: {} ({})", agent.name(), agent.id());
@@ -62,6 +70,62 @@ async fn main() {
             }])
             .await
             .expect("Failed to send message");
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct CliArgs {
+    fresh: bool,
+}
+
+fn parse_cli_args() -> CliArgs {
+    let mut cli = CliArgs::default();
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "--fresh" => cli.fresh = true,
+            "--help" | "-h" => {
+                print_usage_and_exit(0);
+            }
+            _ => {
+                eprintln!("Unknown argument: {arg}");
+                print_usage_and_exit(1);
+            }
+        }
+    }
+    cli
+}
+
+fn print_usage_and_exit(code: i32) -> ! {
+    let program = std::env::args()
+        .next()
+        .unwrap_or_else(|| "chat".to_string());
+    let program = Path::new(&program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("chat");
+
+    println!("Usage: {program} [--fresh]");
+    println!();
+    println!("  --fresh    Delete the current chat store before startup.");
+
+    std::process::exit(code);
+}
+
+fn reset_store(store_path: &Path) {
+    for path in [
+        store_path.to_path_buf(),
+        PathBuf::from(format!("{}-wal", store_path.display())),
+        PathBuf::from(format!("{}-shm", store_path.display())),
+    ] {
+        match std::fs::remove_file(&path) {
+            Ok(()) => {
+                println!("Removed persisted store file: {}", path.display());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                eprintln!("Failed to remove {}: {error}", path.display());
+            }
+        }
     }
 }
 
