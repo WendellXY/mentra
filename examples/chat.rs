@@ -1,4 +1,7 @@
-use std::{io::Write, path::{Path, PathBuf}};
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 use dotenvy::dotenv;
 use mentra::{

@@ -1,6 +1,7 @@
 use dotenvy::dotenv;
 use mentra::{BuiltinProvider, ModelInfo, ProviderId, Runtime, RuntimePolicy};
 
+#[allow(dead_code)]
 pub fn openai_runtime() -> Result<Runtime, Box<dyn std::error::Error>> {
     dotenv().ok();
 
@@ -33,6 +34,7 @@ pub async fn openai_model(runtime: &Runtime) -> Result<ModelInfo, Box<dyn std::e
         .ok_or_else(|| "OpenAI did not return any models".into())
 }
 
+#[allow(dead_code)]
 pub fn first_arg_or(default: &str) -> String {
     std::env::args()
         .nth(1)

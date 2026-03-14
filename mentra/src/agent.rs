@@ -40,7 +40,7 @@ pub(crate) use team::parse_task_input;
 
 pub use config::{
     AgentConfig, ContextCompactionConfig, MemoryConfig, TaskConfig, TeamAutonomyConfig, TeamConfig,
-    WorkspaceConfig,
+    ToolProfile, WorkspaceConfig,
 };
 pub use events::{
     AgentEvent, AgentSnapshot, AgentStatus, ContextCompactionDetails, ContextCompactionTrigger,
@@ -314,6 +314,10 @@ impl Agent {
 
     pub(crate) fn can_use_tool(&self, name: &str) -> bool {
         if self.hidden_tools.contains(name) {
+            return false;
+        }
+
+        if !self.config.tool_profile.allows(name) {
             return false;
         }
 

@@ -193,6 +193,56 @@ impl ExecutableTool for UppercaseTool {
 
 When a tool needs disposable delegated work, `ParallelToolContext::spawn_subagent()` can create a child agent that inherits the current runtime and model defaults. See the `subagent_tool` example in the workspace examples crate for a complete usage pattern.
 
+## Tool Profiles
+
+Register tools once on the runtime, then use `AgentConfig::tool_profile` to expose different subsets for different operating modes.
+
+```rust,no_run
+use mentra::{BuiltinProvider, ModelInfo, Runtime};
+use mentra::agent::{AgentConfig, ToolProfile};
+
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+let runtime = Runtime::builder()
+    .with_provider(BuiltinProvider::OpenAI, std::env::var("OPENAI_API_KEY")?)
+    .build()?;
+let model = ModelInfo::new("gpt-5.4-mini", BuiltinProvider::OpenAI);
+
+let queue_mode = AgentConfig {
+    tool_profile: ToolProfile::only([
+        "shell",
+        "background_run",
+        "check_background",
+        "files",
+        "task",
+    ]),
+    ..Default::default()
+};
+
+let direct_mode = AgentConfig {
+    tool_profile: ToolProfile::hide(["task", "background_run"]),
+    ..Default::default()
+};
+
+let _queue_agent = runtime.spawn_with_config("Queue Agent", model.clone(), queue_mode)?;
+let _direct_agent = runtime.spawn_with_config("Direct Agent", model, direct_mode)?;
+# Ok(())
+# }
+```
+
+This is the recommended pattern when one application needs multiple tool surfaces such as a queue-backed agent with delegation enabled and a direct mode that keeps the same runtime but hides long-running or task-oriented tools.
+
+## CLI Integration Pattern
+
+For CLI-style coding or analysis tools, the usual setup is:
+
+- register a superset of builtin and custom tools on one runtime
+- scope shell and file access with `RuntimePolicy`
+- keep application-specific output paths in app context for custom tools
+- switch behavior per mode by changing `AgentConfig::tool_profile`, not by rebuilding the runtime
+- inspect `agent.history()` after the run when you want to render a compact tool log or transcript summary
+
+The `cli_runtime` example in the workspace examples crate shows this pattern end to end with custom tools, policy setup, mode-specific tool surfaces, and transcript inspection.
+
 ## Disposable Tasks vs Persistent Teams
 
 Mentra supports two different delegation models:
@@ -282,6 +332,15 @@ Enable the `test-utils` feature when you want a deterministic scripted runtime f
 
 This is the recommended way to test Mentra-based agents and tools without live API keys.
 
+The common pattern is:
+
+- build a `MockRuntime`
+- register the same custom tools you use in production
+- spawn an agent with the `AgentConfig` or `ToolProfile` you want to verify
+- assert against `mock.recorded_requests()` to confirm the runtime exposed the expected tools and tool-choice hints
+
+See `mentra::test` and the crate tests for a full example of asserting runtime assembly with custom tools and filtered tool surfaces.
+
 ## Interactive Repo Example
 
 Clone the repository when you want the richer interactive demo with provider selection, persisted runtime inspection, skills loading, and team/task visibility.
@@ -298,7 +357,10 @@ Additional focused examples live in the same crate:
 cargo run -p mentra-examples --example custom_tool
 cargo run -p mentra-examples --example subagent_tool
 cargo run -p mentra-examples --example team_collaboration
+cargo run -p mentra-examples --example cli_runtime -- --mode direct
 ```
+
+`cli_runtime` is the closest example to a real integration. It combines runtime policy setup, custom tools, mode-specific `ToolProfile` selection, and transcript inspection after the run.
 
 ## Run Checks
 

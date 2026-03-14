@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, path::PathBuf, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
+    time::Duration,
+};
 
 #[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -115,6 +119,52 @@ impl Default for MemoryConfig {
     }
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolProfile {
+    #[serde(default)]
+    pub allowed_tools: Option<BTreeSet<String>>,
+    #[serde(default)]
+    pub hidden_tools: BTreeSet<String>,
+}
+
+impl ToolProfile {
+    pub fn all() -> Self {
+        Self::default()
+    }
+
+    pub fn only<I, S>(tools: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            allowed_tools: Some(tools.into_iter().map(Into::into).collect()),
+            hidden_tools: BTreeSet::new(),
+        }
+    }
+
+    pub fn hide<I, S>(tools: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            allowed_tools: None,
+            hidden_tools: tools.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    pub fn allows(&self, tool_name: &str) -> bool {
+        if let Some(allowed_tools) = &self.allowed_tools
+            && !allowed_tools.contains(tool_name)
+        {
+            return false;
+        }
+
+        !self.hidden_tools.contains(tool_name)
+    }
+}
+
 #[cfg(not(test))]
 fn default_team_dir() -> PathBuf {
     crate::default_paths::workspace_default_paths().team_dir
@@ -158,6 +208,8 @@ fn default_transcript_dir() -> PathBuf {
 pub struct AgentConfig {
     pub system: Option<String>,
     pub tool_choice: Option<ToolChoice>,
+    #[serde(default)]
+    pub tool_profile: ToolProfile,
     pub temperature: Option<f32>,
     pub max_output_tokens: Option<u32>,
     pub metadata: BTreeMap<String, String>,
@@ -176,6 +228,7 @@ impl Default for AgentConfig {
         Self {
             system: None,
             tool_choice: Some(ToolChoice::default()),
+            tool_profile: ToolProfile::default(),
             temperature: None,
             max_output_tokens: Some(8192),
             metadata: BTreeMap::new(),
@@ -192,6 +245,7 @@ impl Default for AgentConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn explicit_paths_override_defaults() {
@@ -218,5 +272,63 @@ mod tests {
         assert_eq!(config.task.tasks_dir, tasks_dir);
         assert_eq!(config.team.team_dir, team_dir);
         assert_eq!(config.context_compaction.transcript_dir, transcript_dir);
+    }
+
+    #[test]
+    fn tool_profile_defaults_to_allowing_everything() {
+        let profile = ToolProfile::default();
+
+        assert!(profile.allows("shell"));
+        assert!(profile.allows("files"));
+    }
+
+    #[test]
+    fn tool_profile_only_restricts_to_allowlist() {
+        let profile = ToolProfile::only(["shell", "files"]);
+
+        assert!(profile.allows("shell"));
+        assert!(profile.allows("files"));
+        assert!(!profile.allows("task"));
+    }
+
+    #[test]
+    fn tool_profile_hide_blocks_named_tools() {
+        let profile = ToolProfile::hide(["shell", "background_run"]);
+
+        assert!(!profile.allows("shell"));
+        assert!(!profile.allows("background_run"));
+        assert!(profile.allows("files"));
+    }
+
+    #[test]
+    fn tool_profile_respects_allowlist_and_hidden_overrides() {
+        let profile = ToolProfile {
+            allowed_tools: Some(["shell", "files"].into_iter().map(str::to_string).collect()),
+            hidden_tools: ["shell"].into_iter().map(str::to_string).collect(),
+        };
+
+        assert!(!profile.allows("shell"));
+        assert!(profile.allows("files"));
+        assert!(!profile.allows("task"));
+    }
+
+    #[test]
+    fn agent_config_deserializes_without_tool_profile_field() {
+        let config: AgentConfig = serde_json::from_value(json!({
+            "system": null,
+            "tool_choice": serde_json::to_value(ToolChoice::Auto).expect("serialize tool choice"),
+            "temperature": null,
+            "max_output_tokens": 8192,
+            "metadata": {},
+            "provider_request_options": {},
+            "team": TeamConfig::default(),
+            "task": TaskConfig::default(),
+            "workspace": WorkspaceConfig::default(),
+            "memory": MemoryConfig::default(),
+            "context_compaction": ContextCompactionConfig::default()
+        }))
+        .expect("deserialize config without tool profile");
+
+        assert_eq!(config.tool_profile, ToolProfile::default());
     }
 }

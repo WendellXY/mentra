@@ -30,3 +30,7 @@ path = "subagent_tool.rs"
 [[example]]
 name = "team_collaboration"
 path = "team_collaboration.rs"
+
+[[example]]
+name = "cli_runtime"
+path = "cli_runtime.rs"

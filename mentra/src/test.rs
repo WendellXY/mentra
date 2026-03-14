@@ -293,6 +293,7 @@ mod tests {
     use super::*;
     use crate::{
         Agent,
+        agent::{AgentConfig, ToolProfile},
         provider::Message,
         tool::{ExecutableTool, ParallelToolContext, ToolResult, ToolSpec},
     };
@@ -384,5 +385,34 @@ mod tests {
 
         assert_eq!(message.text(), "done");
         assert_eq!(mock.recorded_requests().await.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn mock_runtime_supports_runtime_assembly_assertions() {
+        let mock = MockRuntime::builder().text("done").build().unwrap();
+        mock.runtime().register_tool(EchoTool);
+        let mut agent = mock
+            .runtime()
+            .spawn_with_config(
+                "mock-agent",
+                mock.model(),
+                AgentConfig {
+                    tool_profile: ToolProfile::only(["echo_tool"]),
+                    ..Default::default()
+                },
+            )
+            .expect("spawn mock agent");
+
+        let message = agent.send(vec![ContentBlock::text("hi")]).await.unwrap();
+
+        assert_eq!(message.text(), "done");
+
+        let requests = mock.recorded_requests().await;
+        let tool_names = requests[0]
+            .tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(tool_names, vec!["echo_tool"]);
     }
 }

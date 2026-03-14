@@ -14,7 +14,7 @@ use crate::{
     BuiltinProvider, ContentBlock, Message, Role,
     agent::{
         Agent, AgentConfig, AgentEvent, MemoryConfig, SpawnedAgentStatus, TaskConfig,
-        TeamAutonomyConfig, TeamConfig, WorkspaceConfig,
+        TeamAutonomyConfig, TeamConfig, ToolProfile, WorkspaceConfig,
     },
     memory::{MemoryRecord, MemoryRecordKind, MemoryStore},
     provider::{
@@ -1766,6 +1766,113 @@ async fn default_runtime_exposes_task_and_new_empty_does_not() {
 }
 
 #[tokio::test]
+async fn tool_profile_only_exposes_requested_tools() {
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![text_stream(&model.id, "ok")],
+    );
+    let provider_handle = provider.clone();
+
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .with_tool(StaticTool::success("echo_tool", "echoed"))
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime
+        .spawn_with_config(
+            "agent",
+            model,
+            AgentConfig {
+                tool_profile: ToolProfile::only(["files", "echo_tool"]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+    agent.send(vec![ContentBlock::text("hello")]).await.unwrap();
+
+    let requests = provider_handle.recorded_requests().await;
+    let tools = tool_names(&requests[0]);
+    assert!(tools.contains("files"));
+    assert!(tools.contains("echo_tool"));
+    assert!(!tools.contains("shell"));
+    assert!(!tools.contains("task"));
+    assert!(!tools.contains("background_run"));
+}
+
+#[tokio::test]
+async fn tool_profile_hide_blocks_named_tools() {
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![text_stream(&model.id, "ok")],
+    );
+    let provider_handle = provider.clone();
+
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime
+        .spawn_with_config(
+            "agent",
+            model,
+            AgentConfig {
+                tool_profile: ToolProfile::hide(["shell", "files"]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+    agent.send(vec![ContentBlock::text("hello")]).await.unwrap();
+
+    let requests = provider_handle.recorded_requests().await;
+    let tools = tool_names(&requests[0]);
+    assert!(!tools.contains("shell"));
+    assert!(!tools.contains("files"));
+    assert!(tools.contains("task"));
+    assert!(tools.contains("memory_search"));
+}
+
+#[tokio::test]
+async fn hidden_tool_profile_tool_choice_falls_back_to_auto() {
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![text_stream(&model.id, "ok")],
+    );
+    let provider_handle = provider.clone();
+
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime
+        .spawn_with_config(
+            "agent",
+            model,
+            AgentConfig {
+                tool_choice: Some(ToolChoice::Tool {
+                    name: "shell".to_string(),
+                }),
+                tool_profile: ToolProfile::hide(["shell"]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+    agent.send(vec![ContentBlock::text("hello")]).await.unwrap();
+
+    let requests = provider_handle.recorded_requests().await;
+    assert_eq!(requests[0].tool_choice, Some(ToolChoice::Auto));
+    assert!(!tool_names(&requests[0]).contains("shell"));
+}
+
+#[tokio::test]
 async fn memory_search_tool_returns_provenance_fields() {
     let store = hybrid_temp_store("memory-search-tool");
     let model = model_info("model", BuiltinProvider::Anthropic);
@@ -2099,6 +2206,59 @@ async fn task_tool_runs_child_with_isolated_history_and_filtered_tools() {
             .iter()
             .any(|event| matches!(event, AgentEvent::SubagentFinished { .. }))
     );
+}
+
+#[tokio::test]
+async fn task_subagent_inherits_tool_profile_and_internal_task_hide() {
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(
+                &model.id,
+                "tool-parent",
+                "task",
+                r#"{"prompt":"inspect repo"}"#,
+            ),
+            text_stream(&model.id, "child summary"),
+            text_stream(&model.id, "parent done"),
+        ],
+    );
+    let provider_handle = provider.clone();
+
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime
+        .spawn_with_config(
+            "agent",
+            model,
+            AgentConfig {
+                tool_profile: ToolProfile::only(["task", "shell", "files"]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+    agent
+        .send(vec![ContentBlock::text("delegate")])
+        .await
+        .unwrap();
+
+    let requests = provider_handle.recorded_requests().await;
+    let parent_tools = tool_names(&requests[0]);
+    assert!(parent_tools.contains("task"));
+    assert!(parent_tools.contains("shell"));
+    assert!(parent_tools.contains("files"));
+    assert!(!parent_tools.contains("background_run"));
+
+    let child_tools = tool_names(&requests[1]);
+    assert!(child_tools.contains("shell"));
+    assert!(child_tools.contains("files"));
+    assert!(!child_tools.contains("task"));
+    assert!(!child_tools.contains("background_run"));
 }
 
 #[tokio::test]
@@ -2462,6 +2622,79 @@ async fn persistent_teammate_processes_mail_and_reports_back_to_lead() {
     let teammates = lead.watch_snapshot().borrow().teammates.clone();
     assert_eq!(teammates.len(), 1);
     assert_eq!(teammates[0].status, TeamMemberStatus::Idle);
+}
+
+#[tokio::test]
+async fn teammate_inherits_tool_profile_and_internal_team_hides() {
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(
+                &model.id,
+                "child-send",
+                "team_send",
+                r#"{"to":"lead","content":"done"}"#,
+            ),
+            text_stream(&model.id, "done"),
+        ],
+    );
+    let provider_handle = provider.clone();
+
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut lead = runtime
+        .spawn_with_config(
+            "lead",
+            model,
+            AgentConfig {
+                team: team_config(temp_team_dir("tool-profile-team")),
+                tool_profile: ToolProfile::only([
+                    "team_spawn",
+                    "team_send",
+                    "team_read_inbox",
+                    "team_request",
+                    "team_respond",
+                    "team_list_requests",
+                    "idle",
+                    "task_create",
+                    "task_claim",
+                    "task_update",
+                    "task_list",
+                    "task_get",
+                ]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+    lead.spawn_teammate("alice", "researcher", None)
+        .await
+        .expect("spawn teammate");
+    lead.send_team_message("alice", "Check the task graph")
+        .expect("send message");
+
+    wait_for_recorded_requests(&provider_handle, 1).await;
+    wait_for_teammate_status(&lead, TeamMemberStatus::Idle).await;
+
+    let requests = provider_handle.recorded_requests().await;
+    let child_tools = tool_names(&requests[0]);
+    assert!(child_tools.contains("team_send"));
+    assert!(child_tools.contains("team_read_inbox"));
+    assert!(child_tools.contains("team_request"));
+    assert!(child_tools.contains("team_respond"));
+    assert!(child_tools.contains("team_list_requests"));
+    assert!(child_tools.contains("idle"));
+    assert!(child_tools.contains("task_claim"));
+    assert!(child_tools.contains("task_update"));
+    assert!(child_tools.contains("task_list"));
+    assert!(child_tools.contains("task_get"));
+    assert!(!child_tools.contains("team_spawn"));
+    assert!(!child_tools.contains("task_create"));
+    assert!(!child_tools.contains("team_broadcast"));
 }
 
 #[tokio::test]
