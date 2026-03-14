@@ -5,7 +5,7 @@ use serde_json::Value;
 use tokio::sync::{Mutex as AsyncMutex, mpsc};
 
 use crate::error::RuntimeError;
-use crate::runtime::{RuntimeIntrinsicTool, task::TaskIntrinsicTool};
+use crate::runtime::task::TaskIntrinsicTool;
 use crate::team::{
     TEAMMATE_MAX_ROUNDS, TeamDispatch, TeamIntrinsicTool, TeamMemberStatus, TeamMemberSummary,
     TeamMessage, TeamProtocolRequestSummary, TeamProtocolStatus, TeamRequestDirection,
@@ -13,9 +13,6 @@ use crate::team::{
 };
 
 use super::{Agent, AgentSpawnOptions, TeammateIdentity};
-
-const SUBAGENT_MAX_ROUNDS: usize = 30;
-const SUBAGENT_SYSTEM_PROMPT: &str = "You are a subagent working for another agent. Solve the delegated task, use tools when helpful, and finish with a concise final answer for the parent agent.";
 
 impl Agent {
     pub async fn spawn_teammate(
@@ -230,29 +227,6 @@ impl Agent {
             },
         )
     }
-
-    pub(crate) fn spawn_disposable_subagent(&self) -> Result<Self, RuntimeError> {
-        let mut hidden_tools = self.hidden_tools.clone();
-        hidden_tools.insert(RuntimeIntrinsicTool::Task.to_string());
-
-        let mut config = self.config.clone();
-        config.system = Some(build_subagent_system_prompt(
-            self.config.system.as_deref().map(Cow::Borrowed),
-        ));
-
-        Self::new(
-            self.runtime.clone(),
-            self.model.clone(),
-            format!("{}::task", self.name),
-            config,
-            Arc::clone(&self.provider),
-            AgentSpawnOptions {
-                hidden_tools,
-                max_rounds: Some(SUBAGENT_MAX_ROUNDS),
-                teammate_identity: self.teammate_identity.clone(),
-            },
-        )
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -277,11 +251,4 @@ pub(crate) fn parse_task_input(input: Value) -> Result<String, String> {
     }
 
     Ok(parsed.prompt)
-}
-
-fn build_subagent_system_prompt(base: Option<Cow<'_, str>>) -> String {
-    match base {
-        Some(system) => format!("{system}\n\n{SUBAGENT_SYSTEM_PROMPT}"),
-        None => SUBAGENT_SYSTEM_PROMPT.to_string(),
-    }
 }

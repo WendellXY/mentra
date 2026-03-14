@@ -52,9 +52,10 @@ pub struct SearchRequest {
     pub limit: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum MemorySearchMode {
+    #[default]
     Automatic,
     Tool,
 }
@@ -68,12 +69,6 @@ pub struct MemorySearchRequest {
     pub char_budget: Option<usize>,
     #[serde(default)]
     pub mode: MemorySearchMode,
-}
-
-impl Default for MemorySearchMode {
-    fn default() -> Self {
-        Self::Automatic
-    }
 }
 
 impl From<SearchRequest> for MemorySearchRequest {
@@ -477,7 +472,7 @@ impl MemoryEngine {
             pinned: true,
             score: None,
         };
-        self.store.upsert_records(&[record.clone()])?;
+        self.store.upsert_records(std::slice::from_ref(&record))?;
         Ok(record)
     }
 

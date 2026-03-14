@@ -230,6 +230,7 @@ impl ToolRuntime {
             tool_name: call.name.clone(),
             working_directory: self.working_directory(),
             runtime: self.runtime.clone(),
+            subagent_template: agent.disposable_subagent_template(),
             agent_name: agent.name().to_string(),
             model: agent.model().to_string(),
             history_len: agent.history().len(),

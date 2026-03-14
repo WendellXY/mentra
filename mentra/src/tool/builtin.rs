@@ -108,10 +108,9 @@ where
 #[async_trait]
 impl ExecutableTool for ShellTool {
     fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: "shell".to_string(),
-            description: Some("Execute a single local shell command.".into()),
-            input_schema: json!({
+        ToolSpec::builder("shell")
+            .description("Execute a single local shell command.")
+            .input_schema(json!({
                 "type": "object",
                 "properties": {
                     "command": {
@@ -132,11 +131,11 @@ impl ExecutableTool for ShellTool {
                     }
                 },
                 "required": ["command"]
-            }),
-            capabilities: vec![ToolCapability::ProcessExec, ToolCapability::FilesystemWrite],
-            side_effect_level: ToolSideEffectLevel::Process,
-            durability: ToolDurability::Ephemeral,
-        }
+            }))
+            .capabilities([ToolCapability::ProcessExec, ToolCapability::FilesystemWrite])
+            .side_effect_level(ToolSideEffectLevel::Process)
+            .durability(ToolDurability::Ephemeral)
+            .build()
     }
 
     fn execution_mode(&self, _input: &Value) -> ToolExecutionMode {
@@ -151,12 +150,11 @@ impl ExecutableTool for ShellTool {
 #[async_trait]
 impl ExecutableTool for BackgroundRunTool {
     fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: "background_run".to_string(),
-            description: Some(
-                "Start a shell command in the background and return a task ID immediately.".into(),
-            ),
-            input_schema: json!({
+        ToolSpec::builder("background_run")
+            .description(
+                "Start a shell command in the background and return a task ID immediately.",
+            )
+            .input_schema(json!({
                 "type": "object",
                 "properties": {
                     "command": {
@@ -173,14 +171,14 @@ impl ExecutableTool for BackgroundRunTool {
                     }
                 },
                 "required": ["command"]
-            }),
-            capabilities: vec![
+            }))
+            .capabilities([
                 ToolCapability::BackgroundExec,
                 ToolCapability::FilesystemWrite,
-            ],
-            side_effect_level: ToolSideEffectLevel::Process,
-            durability: ToolDurability::Persistent,
-        }
+            ])
+            .side_effect_level(ToolSideEffectLevel::Process)
+            .durability(ToolDurability::Persistent)
+            .build()
     }
 
     fn execution_mode(&self, _input: &Value) -> ToolExecutionMode {
@@ -195,13 +193,11 @@ impl ExecutableTool for BackgroundRunTool {
 #[async_trait]
 impl ExecutableTool for CheckBackgroundTool {
     fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: "check_background".to_string(),
-            description: Some(
-                "Check one background task by ID, or list all background tasks when omitted."
-                    .into(),
-            ),
-            input_schema: json!({
+        ToolSpec::builder("check_background")
+            .description(
+                "Check one background task by ID, or list all background tasks when omitted.",
+            )
+            .input_schema(json!({
                 "type": "object",
                 "properties": {
                     "task_id": {
@@ -209,11 +205,11 @@ impl ExecutableTool for CheckBackgroundTool {
                         "description": "Optional background task ID to inspect"
                     }
                 }
-            }),
-            capabilities: vec![ToolCapability::ReadOnly],
-            side_effect_level: ToolSideEffectLevel::None,
-            durability: ToolDurability::ReplaySafe,
-        }
+            }))
+            .capability(ToolCapability::ReadOnly)
+            .side_effect_level(ToolSideEffectLevel::None)
+            .durability(ToolDurability::ReplaySafe)
+            .build()
     }
 
     fn execution_mode(&self, _input: &Value) -> ToolExecutionMode {
@@ -229,10 +225,9 @@ impl ExecutableTool for CheckBackgroundTool {
 #[async_trait]
 impl ExecutableTool for LoadSkillTool {
     fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: "load_skill".to_string(),
-            description: Some("Load the full body of a named skill when it is relevant.".into()),
-            input_schema: json!({
+        ToolSpec::builder("load_skill")
+            .description("Load the full body of a named skill when it is relevant.")
+            .input_schema(json!({
                 "type": "object",
                 "properties": {
                     "name": {
@@ -241,11 +236,11 @@ impl ExecutableTool for LoadSkillTool {
                     }
                 },
                 "required": ["name"]
-            }),
-            capabilities: vec![ToolCapability::SkillLoad, ToolCapability::ReadOnly],
-            side_effect_level: ToolSideEffectLevel::None,
-            durability: ToolDurability::ReplaySafe,
-        }
+            }))
+            .capabilities([ToolCapability::SkillLoad, ToolCapability::ReadOnly])
+            .side_effect_level(ToolSideEffectLevel::None)
+            .durability(ToolDurability::ReplaySafe)
+            .build()
     }
 
     fn execution_mode(&self, _input: &Value) -> ToolExecutionMode {

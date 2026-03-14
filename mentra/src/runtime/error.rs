@@ -54,6 +54,8 @@ pub enum RuntimeError {
     ModelBudgetExceeded(usize),
     #[error("max rounds exceeded at {0}")]
     MaxRoundsExceeded(usize),
+    #[error("run completed without a final assistant message")]
+    EmptyAssistantResponse,
     #[error("no resumable user turn is available")]
     NoResumableTurn,
     #[error("invalid tool input for '{name}' ({id}): {source}")]
@@ -95,5 +97,13 @@ mod tests {
         );
 
         assert!(error.source().is_some());
+    }
+
+    #[test]
+    fn empty_assistant_response_has_clear_display_text() {
+        assert_eq!(
+            RuntimeError::EmptyAssistantResponse.to_string(),
+            "run completed without a final assistant message"
+        );
     }
 }

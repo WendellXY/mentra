@@ -47,14 +47,13 @@ pub(super) struct TeamListRequestsInput {
 
 impl TeamIntrinsicTool {
     fn team_spec(&self, description: &str, input_schema: serde_json::Value) -> ToolSpec {
-        ToolSpec {
-            name: self.to_string(),
-            description: Some(description.to_string()),
-            input_schema,
-            capabilities: vec![ToolCapability::TeamCoordination],
-            side_effect_level: ToolSideEffectLevel::LocalState,
-            durability: ToolDurability::Persistent,
-        }
+        ToolSpec::builder(self.to_string())
+            .description(description)
+            .input_schema(input_schema)
+            .capability(ToolCapability::TeamCoordination)
+            .side_effect_level(ToolSideEffectLevel::LocalState)
+            .durability(ToolDurability::Persistent)
+            .build()
     }
 
     pub(super) fn tool_spec(&self) -> ToolSpec {

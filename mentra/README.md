@@ -67,6 +67,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+## Runtime Policy Defaults
+
+Mentra's builtin runtime tools are available by default, but command execution is not:
+
+- `Runtime::builder()` registers the builtin shell, background, file, task, team, and memory-oriented intrinsics
+- foreground shell execution is disabled by default
+- background command execution is disabled by default
+- `RuntimePolicy::permissive()` enables both shell and background command execution and suppresses approval prompts
+
+Use the default policy when you want a safer runtime surface, and opt into `RuntimePolicy::permissive()` only when you are intentionally building a coding-agent or automation workflow that should be able to act on the local workspace.
+
 Registering a skills directory also makes the builtin `load_skill` tool available:
 
 ```rust,no_run
@@ -82,6 +93,59 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+## Custom Tools
+
+Use `ToolSpec::builder(...)` to define custom tools without hand-assembling the metadata struct:
+
+```rust,no_run
+use async_trait::async_trait;
+use mentra::tool::{
+    ExecutableTool, ParallelToolContext, ToolCapability, ToolDurability, ToolResult,
+    ToolSideEffectLevel, ToolSpec,
+};
+use serde_json::{Value, json};
+
+struct UppercaseTool;
+
+#[async_trait]
+impl ExecutableTool for UppercaseTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec::builder("uppercase_text")
+            .description("Uppercase the provided text")
+            .input_schema(json!({
+                "type": "object",
+                "properties": {
+                    "text": { "type": "string" }
+                },
+                "required": ["text"]
+            }))
+            .capability(ToolCapability::ReadOnly)
+            .side_effect_level(ToolSideEffectLevel::None)
+            .durability(ToolDurability::ReplaySafe)
+            .build()
+    }
+
+    async fn execute(&self, _ctx: ParallelToolContext, input: Value) -> ToolResult {
+        let text = input
+            .get("text")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| "text is required".to_string())?;
+        Ok(text.to_uppercase())
+    }
+}
+```
+
+When a tool needs disposable delegated work, `ParallelToolContext::spawn_subagent()` can create a child agent that inherits the current runtime and model defaults. See the `subagent_tool` example in the workspace examples crate for a complete usage pattern.
+
+## Disposable Tasks vs Persistent Teams
+
+Mentra supports two different delegation models:
+
+- use the builtin `task` tool or `ParallelToolContext::spawn_subagent()` for short-lived disposable delegation that should return a single summary to the parent
+- use `team_spawn`, `team_send`, `team_read_inbox`, `team_request`, and `team_respond` when you want a persistent teammate with a durable mailbox and request/response workflow across turns
+
+The `task` path is ideal for one-off decomposition inside a single run. The `team_*` tools are for longer-lived collaborators that should keep state, receive follow-up work, and participate in approval or shutdown flows.
 
 ## Sending Images
 
@@ -101,6 +165,16 @@ agent
 ```
 
 For already-hosted assets, use `ContentBlock::image_url(...)` instead. Gemini currently supports inline `image_bytes(...)` inputs only and rejects `image_url(...)`.
+
+## Long-Term Memory
+
+Agents automatically recall from long-term memory by default. When you use `Runtime::builder()`, the builtin runtime intrinsics include:
+
+- `memory_search` for explicit recall
+- `memory_pin` for writing important facts
+- `memory_forget` for tombstoning a specific memory record
+
+`MemoryConfig` controls recall and write behavior per agent. The default configuration enables automatic recall and memory write tools, which is useful for long-running assistants and teammate workflows. Disable write tools when you want recall without model-initiated mutation.
 
 ## Context Compaction
 
@@ -141,6 +215,18 @@ Override these defaults when needed:
 - use `Runtime::builder().with_store(...)` for the SQLite store
 - customize `AgentConfig::task.tasks_dir`, `AgentConfig::team.team_dir`, and `AgentConfig::context_compaction.transcript_dir` for task, team, and transcript storage
 
+## Testing With MockRuntime
+
+Enable the `test-utils` feature when you want a deterministic scripted runtime for unit and integration tests.
+
+`mentra::test::MockRuntime` wraps a real runtime with:
+
+- a scripted provider
+- a temporary SQLite-backed runtime store
+- deterministic per-turn helper methods for assistant text, streamed text, tool-call turns, and provider failures
+
+This is the recommended way to test Mentra-based agents and tools without live API keys.
+
 ## Interactive Repo Example
 
 Clone the repository when you want the richer interactive demo with provider selection, persisted runtime inspection, skills loading, and team/task visibility.
@@ -151,9 +237,19 @@ Set `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY`, then run. The ex
 cargo run -p mentra-examples --example chat
 ```
 
+Additional focused examples live in the same crate:
+
+```bash
+cargo run -p mentra-examples --example custom_tool
+cargo run -p mentra-examples --example subagent_tool
+cargo run -p mentra-examples --example team_collaboration
+```
+
 ## Run Checks
 
 ```bash
+cargo fmt --all --check
 cargo check --workspace
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```

@@ -2,10 +2,11 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::agent::{
-    ContextCompactionDetails, ContextCompactionTrigger, SpawnedAgentStatus, SpawnedAgentSummary,
+    ContextCompactionDetails, ContextCompactionTrigger, DisposableSubagentTemplate,
+    SpawnedAgentStatus, SpawnedAgentSummary,
 };
 
 use crate::runtime::{
@@ -66,6 +67,76 @@ pub struct ToolSpec {
     pub capabilities: Vec<ToolCapability>,
     pub side_effect_level: ToolSideEffectLevel,
     pub durability: ToolDurability,
+}
+
+impl ToolSpec {
+    /// Starts building a [`ToolSpec`] from the required tool name.
+    pub fn builder(name: impl Into<String>) -> ToolSpecBuilder {
+        ToolSpecBuilder {
+            name: name.into(),
+            description: None,
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+            capabilities: Vec::new(),
+            side_effect_level: ToolSideEffectLevel::None,
+            durability: ToolDurability::Ephemeral,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolSpecBuilder {
+    name: String,
+    description: Option<String>,
+    input_schema: Value,
+    capabilities: Vec<ToolCapability>,
+    side_effect_level: ToolSideEffectLevel,
+    durability: ToolDurability,
+}
+
+impl ToolSpecBuilder {
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    pub fn input_schema(mut self, input_schema: Value) -> Self {
+        self.input_schema = input_schema;
+        self
+    }
+
+    pub fn capability(mut self, capability: ToolCapability) -> Self {
+        self.capabilities.push(capability);
+        self
+    }
+
+    pub fn capabilities(mut self, capabilities: impl IntoIterator<Item = ToolCapability>) -> Self {
+        self.capabilities = capabilities.into_iter().collect();
+        self
+    }
+
+    pub fn side_effect_level(mut self, side_effect_level: ToolSideEffectLevel) -> Self {
+        self.side_effect_level = side_effect_level;
+        self
+    }
+
+    pub fn durability(mut self, durability: ToolDurability) -> Self {
+        self.durability = durability;
+        self
+    }
+
+    pub fn build(self) -> ToolSpec {
+        ToolSpec {
+            name: self.name,
+            description: self.description,
+            input_schema: self.input_schema,
+            capabilities: self.capabilities,
+            side_effect_level: self.side_effect_level,
+            durability: self.durability,
+        }
+    }
 }
 
 /// A concrete tool call emitted by a model.
@@ -291,6 +362,7 @@ pub struct ParallelToolContext {
     pub tool_name: String,
     pub(crate) working_directory: PathBuf,
     pub(crate) runtime: crate::runtime::RuntimeHandle,
+    pub(crate) subagent_template: DisposableSubagentTemplate,
     pub(crate) agent_name: String,
     pub(crate) model: String,
     pub(crate) history_len: usize,
@@ -305,6 +377,7 @@ impl From<ToolContext<'_>> for ParallelToolContext {
             tool_name: ctx.tool_name,
             working_directory: ctx.working_directory,
             runtime: ctx.runtime,
+            subagent_template: ctx.agent.disposable_subagent_template(),
             agent_name: ctx.agent.name().to_string(),
             model: ctx.agent.model().to_string(),
             history_len: ctx.agent.history().len(),
@@ -404,6 +477,11 @@ impl ParallelToolContext {
         self.runtime
             .read_file(&self.agent_id, path, max_lines)
             .await
+    }
+
+    /// Spawns a disposable subagent that inherits the current runtime.
+    pub fn spawn_subagent(&self) -> Result<crate::agent::Agent, RuntimeError> {
+        self.subagent_template.spawn()
     }
 }
 

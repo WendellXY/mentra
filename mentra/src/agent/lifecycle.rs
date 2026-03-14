@@ -7,17 +7,20 @@ impl Agent {
     pub async fn send(
         &mut self,
         content: impl Into<Vec<ContentBlock>>,
-    ) -> Result<(), RuntimeError> {
+    ) -> Result<Message, RuntimeError> {
         self.run(content, RunOptions::default()).await
     }
 
     /// Replays the most recent failed or interrupted user turn using default run options.
-    pub async fn resume(&mut self) -> Result<(), RuntimeError> {
+    pub async fn resume(&mut self) -> Result<Message, RuntimeError> {
         self.resume_with_options(RunOptions::default()).await
     }
 
     /// Replays the most recent failed or interrupted user turn with explicit execution options.
-    pub async fn resume_with_options(&mut self, options: RunOptions) -> Result<(), RuntimeError> {
+    pub async fn resume_with_options(
+        &mut self,
+        options: RunOptions,
+    ) -> Result<Message, RuntimeError> {
         let content = self
             .memory
             .resumable_user_message()
@@ -32,7 +35,7 @@ impl Agent {
         &mut self,
         content: impl Into<Vec<ContentBlock>>,
         options: RunOptions,
-    ) -> Result<(), RuntimeError> {
+    ) -> Result<Message, RuntimeError> {
         self.idle_requested = false;
         self.refresh_tasks_from_disk()?;
         let tasks_before_run = self.tasks.clone();
@@ -51,6 +54,11 @@ impl Agent {
 
         match TurnRunner::new(self, options).run().await {
             Ok(()) => {
+                let final_message = self
+                    .memory
+                    .last_message()
+                    .cloned()
+                    .filter(|message| message.role == Role::Assistant);
                 let run_delta = self.memory.current_run_delta().unwrap_or_default();
                 self.clear_inflight_team_messages();
                 self.clear_inflight_background_notifications();
@@ -67,7 +75,7 @@ impl Agent {
                 self.persist_agent_record()?;
                 self.finish_run_checkpoint()?;
                 self.emit_event(AgentEvent::RunFinished);
-                Ok(())
+                final_message.ok_or(RuntimeError::EmptyAssistantResponse)
             }
             Err(error) => {
                 self.idle_requested = false;

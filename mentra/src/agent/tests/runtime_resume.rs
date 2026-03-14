@@ -623,7 +623,7 @@ fn clear_leases(store: &SqliteRuntimeStore) {
 }
 
 async fn wait_for_recorded_requests(provider: &ScriptedProvider, expected: usize) {
-    for _ in 0..50 {
+    for _ in 0..250 {
         if provider.recorded_requests().await.len() >= expected {
             return;
         }

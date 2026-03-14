@@ -21,13 +21,9 @@ pub struct FilesTool;
 #[async_trait]
 impl ExecutableTool for FilesTool {
     fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: "files".to_string(),
-            description: Some(
-                "Read, search, list, create, update, move, and delete files within the workspace."
-                    .into(),
-            ),
-            input_schema: json!({
+        ToolSpec::builder("files")
+            .description("Read, search, list, create, update, move, and delete files within the workspace.")
+            .input_schema(json!({
                 "type": "object",
                 "properties": {
                     "workingDirectory": {
@@ -136,14 +132,14 @@ impl ExecutableTool for FilesTool {
                     }
                 },
                 "required": ["operations"]
-            }),
-            capabilities: vec![
+            }))
+            .capabilities([
                 ToolCapability::FilesystemRead,
                 ToolCapability::FilesystemWrite,
-            ],
-            side_effect_level: ToolSideEffectLevel::LocalState,
-            durability: ToolDurability::Ephemeral,
-        }
+            ])
+            .side_effect_level(ToolSideEffectLevel::LocalState)
+            .durability(ToolDurability::Ephemeral)
+            .build()
     }
 
     fn execution_mode(&self, input: &Value) -> ToolExecutionMode {

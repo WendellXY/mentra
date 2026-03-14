@@ -48,6 +48,7 @@ pub use events::{
 };
 pub use pending::PendingAssistantTurn;
 use runner::TurnRunner;
+pub(crate) use subagent::DisposableSubagentTemplate;
 
 static NEXT_AGENT_ID: AtomicU64 = AtomicU64::new(1);
 

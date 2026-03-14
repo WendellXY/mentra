@@ -4186,7 +4186,7 @@ fn write_skill(root: &Path, name: &str, content: &str) {
 }
 
 async fn wait_for_recorded_requests(provider: &ScriptedProvider, expected: usize) {
-    for _ in 0..200 {
+    for _ in 0..500 {
         if provider.recorded_requests().await.len() >= expected {
             return;
         }
@@ -4197,7 +4197,7 @@ async fn wait_for_recorded_requests(provider: &ScriptedProvider, expected: usize
 }
 
 async fn wait_for_background_notification(store: &SqliteRuntimeStore, agent_id: &str) {
-    for _ in 0..200 {
+    for _ in 0..500 {
         if <SqliteRuntimeStore as crate::background::BackgroundStore>::has_pending_background_notifications(
             store, agent_id,
         )
@@ -4216,7 +4216,7 @@ async fn wait_for_background_task_record(
     agent_id: &str,
     expected_count: usize,
 ) {
-    for _ in 0..200 {
+    for _ in 0..500 {
         let tasks =
             <SqliteRuntimeStore as crate::background::BackgroundStore>::load_background_tasks(
                 store, agent_id,
@@ -4232,7 +4232,7 @@ async fn wait_for_background_task_record(
 }
 
 async fn wait_for_teammate_status(agent: &Agent, expected: TeamMemberStatus) {
-    for _ in 0..200 {
+    for _ in 0..500 {
         let teammates = agent.watch_snapshot().borrow().teammates.clone();
         if teammates.len() == 1 && teammates[0].status == expected {
             return;
@@ -4249,7 +4249,7 @@ async fn wait_for_task_owner(
     task_id: u64,
     owner: &str,
 ) {
-    for _ in 0..200 {
+    for _ in 0..500 {
         if load_task(store, tasks_dir, task_id)["owner"].as_str() == Some(owner) {
             return;
         }

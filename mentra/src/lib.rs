@@ -14,6 +14,9 @@ pub mod provider;
 pub mod runtime;
 /// Team coordination types and collaboration services.
 pub mod team;
+/// Optional test helpers for deterministic scripted runtimes.
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test;
 /// Tool traits, metadata, and builtin tools.
 pub mod tool;
 

@@ -135,14 +135,11 @@ async fn work_cycle(
         let _ = manager.update_member_status(team_dir, teammate_name, TeamMemberStatus::Working);
         let result = {
             let mut guard = agent.lock().await;
-            guard
-                .send(vec![ContentBlock::Text { text: prompt }])
-                .await
-                .map(|()| guard.take_idle_requested())
+            guard.send(vec![ContentBlock::Text { text: prompt }]).await
         };
 
         match result {
-            Ok(..) => {
+            Ok(_) | Err(RuntimeError::EmptyAssistantResponse) => {
                 next_prompt = None;
             }
             Err(error) => {

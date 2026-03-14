@@ -108,7 +108,7 @@ impl SqliteHybridMemoryStore {
             )
             .map_err(sqlite_error)?;
 
-        let candidate_limit = request.limit.saturating_mul(5).max(10).min(50) as i64;
+        let candidate_limit = request.limit.saturating_mul(5).clamp(10, 50) as i64;
         let mut records = stmt
             .query_map(params![request.agent_id, query, candidate_limit], |row| {
                 let kind = row.get::<_, String>(2)?;

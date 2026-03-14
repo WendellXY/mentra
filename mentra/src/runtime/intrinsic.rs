@@ -44,14 +44,13 @@ impl RuntimeIntrinsicTool {
         side_effect_level: ToolSideEffectLevel,
         durability: ToolDurability,
     ) -> ToolSpec {
-        ToolSpec {
-            name: self.to_string(),
-            description: Some(description.to_string()),
-            input_schema,
-            capabilities,
-            side_effect_level,
-            durability,
-        }
+        ToolSpec::builder(self.to_string())
+            .description(description)
+            .input_schema(input_schema)
+            .capabilities(capabilities)
+            .side_effect_level(side_effect_level)
+            .durability(durability)
+            .build()
     }
 }
 
@@ -387,7 +386,7 @@ async fn execute_task(agent: &mut Agent, call: ToolCall) -> ContentBlock {
             agent.emit_event(AgentEvent::SubagentSpawned { agent: started });
 
             match Box::pin(child.send(vec![ContentBlock::Text { text: prompt }])).await {
-                Ok(()) => {
+                Ok(message) => {
                     if let Some(finished) =
                         agent.finish_subagent(child.id(), SpawnedAgentStatus::Finished)
                     {
@@ -403,7 +402,11 @@ async fn execute_task(agent: &mut Agent, call: ToolCall) -> ContentBlock {
 
                     ContentBlock::ToolResult {
                         tool_use_id: call.id,
-                        content: child.final_text_summary(),
+                        content: if message.text().is_empty() {
+                            child.final_text_summary()
+                        } else {
+                            message.text()
+                        },
                         is_error: false,
                     }
                 }
