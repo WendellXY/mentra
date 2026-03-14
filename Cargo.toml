@@ -1,5 +1,5 @@
 [workspace]
-members = ["mentra", "mentra-openai-auth", "examples"]
+members = ["mentra", "examples"]
 resolver = "2"
 
 [workspace.package]
