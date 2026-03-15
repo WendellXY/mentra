@@ -37,21 +37,41 @@ use super::skill::SkillLoader;
 
 #[derive(Clone)]
 pub struct RuntimeHandle {
-    pub(crate) tool_registry: Arc<RwLock<ToolRegistry>>,
-    pub(crate) skill_loader: Arc<RwLock<Option<SkillLoader>>>,
-    pub(crate) background_tasks: BackgroundTaskManager,
-    pub(crate) team: TeamManager,
-    pub(crate) store: Arc<dyn RuntimeStore>,
-    pub(crate) executor: Arc<dyn RuntimeExecutor>,
-    pub(crate) policy: Arc<RuntimePolicy>,
-    pub(crate) hooks: RuntimeHooks,
-    pub(crate) memory: Arc<MemoryEngine>,
-    pub(crate) app_contexts: Arc<RwLock<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>>,
+    pub(crate) execution: ExecutionServices,
+    pub(crate) persistence: PersistenceServices,
+    pub(crate) collaboration: CollaborationServices,
+    pub(crate) tooling: ToolingServices,
     pub(crate) runtime_intrinsics_enabled: bool,
     runtime_instance_id: String,
     persisted_runtime_identifier: Arc<str>,
     lease_keys: Arc<Mutex<BTreeSet<String>>>,
     agent_contexts: Arc<RwLock<HashMap<String, AgentExecutionConfig>>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ExecutionServices {
+    pub(crate) executor: Arc<dyn RuntimeExecutor>,
+    pub(crate) policy: Arc<RuntimePolicy>,
+    pub(crate) hooks: RuntimeHooks,
+}
+
+#[derive(Clone)]
+pub(crate) struct PersistenceServices {
+    pub(crate) store: Arc<dyn RuntimeStore>,
+    pub(crate) memory: Arc<MemoryEngine>,
+}
+
+#[derive(Clone)]
+pub(crate) struct CollaborationServices {
+    pub(crate) background_tasks: BackgroundTaskManager,
+    pub(crate) team: TeamManager,
+}
+
+#[derive(Clone)]
+pub(crate) struct ToolingServices {
+    pub(crate) tool_registry: Arc<RwLock<ToolRegistry>>,
+    pub(crate) skill_loader: Arc<RwLock<Option<SkillLoader>>>,
+    pub(crate) app_contexts: Arc<RwLock<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>>,
 }
 
 #[derive(Clone)]
@@ -83,13 +103,16 @@ impl Drop for RuntimeHandle {
         };
 
         for key in lease_keys {
-            let _ = self.store.release_lease(&key, &self.runtime_instance_id);
+            let _ = self
+                .persistence
+                .store
+                .release_lease(&key, &self.runtime_instance_id);
         }
     }
 }
 
 impl RuntimeHandle {
     pub(crate) fn memory_engine(&self) -> Arc<MemoryEngine> {
-        self.memory.clone()
+        self.persistence.memory.clone()
     }
 }

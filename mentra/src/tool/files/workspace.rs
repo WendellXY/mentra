@@ -482,9 +482,10 @@ impl WorkspaceEditor {
 
     fn authorize_read(&self, path: &Path, action: &str) -> Result<PathBuf, String> {
         self.runtime
+            .execution
             .policy
             .authorize_file_read(&self.base_dir, path)
-            .inspect_err(|detail| {
+            .inspect_err(|detail: &String| {
                 let _ = self
                     .runtime
                     .emit_hook(RuntimeHookEvent::AuthorizationDenied {
@@ -497,9 +498,10 @@ impl WorkspaceEditor {
 
     fn authorize_write(&self, path: &Path, action: &str) -> Result<PathBuf, String> {
         self.runtime
+            .execution
             .policy
             .authorize_file_write(&self.base_dir, path)
-            .inspect_err(|detail| {
+            .inspect_err(|detail: &String| {
                 let _ = self
                     .runtime
                     .emit_hook(RuntimeHookEvent::AuthorizationDenied {

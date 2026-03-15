@@ -51,6 +51,26 @@ fn background_hook_sink(
     Arc::new(RuntimeBackgroundHookSink { store, hooks })
 }
 
+fn clone_tooling_services(tooling: &ToolingServices) -> ToolingServices {
+    ToolingServices {
+        tool_registry: Arc::new(RwLock::new(
+            tooling
+                .tool_registry
+                .read()
+                .expect("tool registry poisoned")
+                .clone(),
+        )),
+        skill_loader: Arc::new(RwLock::new(
+            tooling
+                .skill_loader
+                .read()
+                .expect("skill loader poisoned")
+                .clone(),
+        )),
+        app_contexts: tooling.app_contexts.clone(),
+    }
+}
+
 impl RuntimeHandle {
     pub fn new(runtime_intrinsics_enabled: bool) -> Self {
         Self::with_components(
@@ -80,20 +100,28 @@ impl RuntimeHandle {
             tool_registry.register_builtin_tools();
         }
         let handle = Self {
-            tool_registry: Arc::new(RwLock::new(tool_registry)),
-            skill_loader: Arc::new(RwLock::new(None)),
-            background_tasks: BackgroundTaskManager::new(
-                store.clone(),
-                executor.clone(),
-                background_hook_sink(store.clone(), hooks.clone()),
-            ),
-            team: TeamManager::new(store.clone()),
-            store,
-            executor,
-            policy,
-            hooks,
-            memory,
-            app_contexts: Arc::new(RwLock::new(HashMap::new())),
+            execution: ExecutionServices {
+                executor: executor.clone(),
+                policy,
+                hooks: hooks.clone(),
+            },
+            persistence: PersistenceServices {
+                store: store.clone(),
+                memory,
+            },
+            collaboration: CollaborationServices {
+                background_tasks: BackgroundTaskManager::new(
+                    store.clone(),
+                    executor,
+                    background_hook_sink(store.clone(), hooks),
+                ),
+                team: TeamManager::new(store),
+            },
+            tooling: ToolingServices {
+                tool_registry: Arc::new(RwLock::new(tool_registry)),
+                skill_loader: Arc::new(RwLock::new(None)),
+                app_contexts: Arc::new(RwLock::new(HashMap::new())),
+            },
             runtime_intrinsics_enabled,
             runtime_instance_id,
             persisted_runtime_identifier,
@@ -108,32 +136,24 @@ impl RuntimeHandle {
 
     pub fn rebind_store(&self, store: Arc<dyn RuntimeStore>) -> Self {
         let _ = store.prepare_recovery();
-        let memory = Arc::new(MemoryEngine::new(store.clone(), self.hooks.clone()));
         let handle = Self {
-            tool_registry: Arc::new(RwLock::new(
-                self.tool_registry
-                    .read()
-                    .expect("tool registry poisoned")
-                    .clone(),
-            )),
-            skill_loader: Arc::new(RwLock::new(
-                self.skill_loader
-                    .read()
-                    .expect("skill loader poisoned")
-                    .clone(),
-            )),
-            background_tasks: BackgroundTaskManager::new(
-                store.clone(),
-                self.executor.clone(),
-                background_hook_sink(store.clone(), self.hooks.clone()),
-            ),
-            team: TeamManager::new(store.clone()),
-            store,
-            executor: self.executor.clone(),
-            policy: self.policy.clone(),
-            hooks: self.hooks.clone(),
-            memory,
-            app_contexts: self.app_contexts.clone(),
+            execution: self.execution.clone(),
+            persistence: PersistenceServices {
+                store: store.clone(),
+                memory: Arc::new(MemoryEngine::new(
+                    store.clone(),
+                    self.execution.hooks.clone(),
+                )),
+            },
+            collaboration: CollaborationServices {
+                background_tasks: BackgroundTaskManager::new(
+                    store.clone(),
+                    self.execution.executor.clone(),
+                    background_hook_sink(store.clone(), self.execution.hooks.clone()),
+                ),
+                team: TeamManager::new(store),
+            },
+            tooling: clone_tooling_services(&self.tooling),
             runtime_intrinsics_enabled: self.runtime_intrinsics_enabled,
             runtime_instance_id: format!("runtime-{}", std::process::id()),
             persisted_runtime_identifier: self.persisted_runtime_identifier.clone(),
@@ -147,32 +167,31 @@ impl RuntimeHandle {
     }
 
     pub fn with_executor(&self, executor: Arc<dyn RuntimeExecutor>) -> Self {
-        let memory = Arc::new(MemoryEngine::new(self.store.clone(), self.hooks.clone()));
         Self {
-            tool_registry: Arc::new(RwLock::new(
-                self.tool_registry
-                    .read()
-                    .expect("tool registry poisoned")
-                    .clone(),
-            )),
-            skill_loader: Arc::new(RwLock::new(
-                self.skill_loader
-                    .read()
-                    .expect("skill loader poisoned")
-                    .clone(),
-            )),
-            background_tasks: BackgroundTaskManager::new(
-                self.store.clone(),
-                executor.clone(),
-                background_hook_sink(self.store.clone(), self.hooks.clone()),
-            ),
-            team: self.team.clone(),
-            store: self.store.clone(),
-            executor,
-            policy: self.policy.clone(),
-            hooks: self.hooks.clone(),
-            memory,
-            app_contexts: self.app_contexts.clone(),
+            execution: ExecutionServices {
+                executor: executor.clone(),
+                policy: self.execution.policy.clone(),
+                hooks: self.execution.hooks.clone(),
+            },
+            persistence: PersistenceServices {
+                store: self.persistence.store.clone(),
+                memory: Arc::new(MemoryEngine::new(
+                    self.persistence.store.clone(),
+                    self.execution.hooks.clone(),
+                )),
+            },
+            collaboration: CollaborationServices {
+                background_tasks: BackgroundTaskManager::new(
+                    self.persistence.store.clone(),
+                    executor,
+                    background_hook_sink(
+                        self.persistence.store.clone(),
+                        self.execution.hooks.clone(),
+                    ),
+                ),
+                team: self.collaboration.team.clone(),
+            },
+            tooling: clone_tooling_services(&self.tooling),
             runtime_intrinsics_enabled: self.runtime_intrinsics_enabled,
             runtime_instance_id: format!("runtime-{}", std::process::id()),
             persisted_runtime_identifier: self.persisted_runtime_identifier.clone(),
@@ -182,32 +201,31 @@ impl RuntimeHandle {
     }
 
     pub fn with_policy(&self, policy: RuntimePolicy) -> Self {
-        let memory = Arc::new(MemoryEngine::new(self.store.clone(), self.hooks.clone()));
         Self {
-            tool_registry: Arc::new(RwLock::new(
-                self.tool_registry
-                    .read()
-                    .expect("tool registry poisoned")
-                    .clone(),
-            )),
-            skill_loader: Arc::new(RwLock::new(
-                self.skill_loader
-                    .read()
-                    .expect("skill loader poisoned")
-                    .clone(),
-            )),
-            background_tasks: BackgroundTaskManager::new(
-                self.store.clone(),
-                self.executor.clone(),
-                background_hook_sink(self.store.clone(), self.hooks.clone()),
-            ),
-            team: self.team.clone(),
-            store: self.store.clone(),
-            executor: self.executor.clone(),
-            policy: Arc::new(policy),
-            hooks: self.hooks.clone(),
-            memory,
-            app_contexts: self.app_contexts.clone(),
+            execution: ExecutionServices {
+                executor: self.execution.executor.clone(),
+                policy: Arc::new(policy),
+                hooks: self.execution.hooks.clone(),
+            },
+            persistence: PersistenceServices {
+                store: self.persistence.store.clone(),
+                memory: Arc::new(MemoryEngine::new(
+                    self.persistence.store.clone(),
+                    self.execution.hooks.clone(),
+                )),
+            },
+            collaboration: CollaborationServices {
+                background_tasks: BackgroundTaskManager::new(
+                    self.persistence.store.clone(),
+                    self.execution.executor.clone(),
+                    background_hook_sink(
+                        self.persistence.store.clone(),
+                        self.execution.hooks.clone(),
+                    ),
+                ),
+                team: self.collaboration.team.clone(),
+            },
+            tooling: clone_tooling_services(&self.tooling),
             runtime_intrinsics_enabled: self.runtime_intrinsics_enabled,
             runtime_instance_id: format!("runtime-{}", std::process::id()),
             persisted_runtime_identifier: self.persisted_runtime_identifier.clone(),
@@ -217,32 +235,25 @@ impl RuntimeHandle {
     }
 
     pub fn with_hooks(&self, hooks: RuntimeHooks) -> Self {
-        let memory = Arc::new(MemoryEngine::new(self.store.clone(), hooks.clone()));
         Self {
-            tool_registry: Arc::new(RwLock::new(
-                self.tool_registry
-                    .read()
-                    .expect("tool registry poisoned")
-                    .clone(),
-            )),
-            skill_loader: Arc::new(RwLock::new(
-                self.skill_loader
-                    .read()
-                    .expect("skill loader poisoned")
-                    .clone(),
-            )),
-            background_tasks: BackgroundTaskManager::new(
-                self.store.clone(),
-                self.executor.clone(),
-                background_hook_sink(self.store.clone(), hooks.clone()),
-            ),
-            team: self.team.clone(),
-            store: self.store.clone(),
-            executor: self.executor.clone(),
-            policy: self.policy.clone(),
-            hooks,
-            memory,
-            app_contexts: self.app_contexts.clone(),
+            execution: ExecutionServices {
+                executor: self.execution.executor.clone(),
+                policy: self.execution.policy.clone(),
+                hooks: hooks.clone(),
+            },
+            persistence: PersistenceServices {
+                store: self.persistence.store.clone(),
+                memory: Arc::new(MemoryEngine::new(self.persistence.store.clone(), hooks.clone())),
+            },
+            collaboration: CollaborationServices {
+                background_tasks: BackgroundTaskManager::new(
+                    self.persistence.store.clone(),
+                    self.execution.executor.clone(),
+                    background_hook_sink(self.persistence.store.clone(), hooks),
+                ),
+                team: self.collaboration.team.clone(),
+            },
+            tooling: clone_tooling_services(&self.tooling),
             runtime_intrinsics_enabled: self.runtime_intrinsics_enabled,
             runtime_instance_id: format!("runtime-{}", std::process::id()),
             persisted_runtime_identifier: self.persisted_runtime_identifier.clone(),
@@ -252,32 +263,27 @@ impl RuntimeHandle {
     }
 
     pub fn with_runtime_identifier(&self, runtime_identifier: impl Into<Arc<str>>) -> Self {
-        let memory = Arc::new(MemoryEngine::new(self.store.clone(), self.hooks.clone()));
         Self {
-            tool_registry: Arc::new(RwLock::new(
-                self.tool_registry
-                    .read()
-                    .expect("tool registry poisoned")
-                    .clone(),
-            )),
-            skill_loader: Arc::new(RwLock::new(
-                self.skill_loader
-                    .read()
-                    .expect("skill loader poisoned")
-                    .clone(),
-            )),
-            background_tasks: BackgroundTaskManager::new(
-                self.store.clone(),
-                self.executor.clone(),
-                background_hook_sink(self.store.clone(), self.hooks.clone()),
-            ),
-            team: self.team.clone(),
-            store: self.store.clone(),
-            executor: self.executor.clone(),
-            policy: self.policy.clone(),
-            hooks: self.hooks.clone(),
-            memory,
-            app_contexts: self.app_contexts.clone(),
+            execution: self.execution.clone(),
+            persistence: PersistenceServices {
+                store: self.persistence.store.clone(),
+                memory: Arc::new(MemoryEngine::new(
+                    self.persistence.store.clone(),
+                    self.execution.hooks.clone(),
+                )),
+            },
+            collaboration: CollaborationServices {
+                background_tasks: BackgroundTaskManager::new(
+                    self.persistence.store.clone(),
+                    self.execution.executor.clone(),
+                    background_hook_sink(
+                        self.persistence.store.clone(),
+                        self.execution.hooks.clone(),
+                    ),
+                ),
+                team: self.collaboration.team.clone(),
+            },
+            tooling: clone_tooling_services(&self.tooling),
             runtime_intrinsics_enabled: self.runtime_intrinsics_enabled,
             runtime_instance_id: format!("runtime-{}", std::process::id()),
             persisted_runtime_identifier: runtime_identifier.into(),

@@ -2,7 +2,8 @@ use super::*;
 
 impl RuntimeHandle {
     pub fn register_app_context(&self, context: Arc<dyn Any + Send + Sync>) {
-        self.app_contexts
+        self.tooling
+            .app_contexts
             .write()
             .expect("app context registry poisoned")
             .insert(context.as_ref().type_id(), context);
@@ -13,6 +14,7 @@ impl RuntimeHandle {
         T: Any + Send + Sync + 'static,
     {
         let context = self
+            .tooling
             .app_contexts
             .read()
             .expect("app context registry poisoned")
@@ -37,29 +39,36 @@ impl RuntimeHandle {
     where
         T: ExecutableTool + 'static,
     {
-        self.tool_registry
+        self.tooling
+            .tool_registry
             .write()
             .expect("tool registry poisoned")
             .register_tool(tool);
     }
 
     pub fn register_skill_loader(&self, loader: SkillLoader) {
-        *self.skill_loader.write().expect("skill loader poisoned") = Some(loader);
-        self.tool_registry
+        *self
+            .tooling
+            .skill_loader
+            .write()
+            .expect("skill loader poisoned") = Some(loader);
+        self.tooling
+            .tool_registry
             .write()
             .expect("tool registry poisoned")
             .register_skill_tool();
     }
 
     pub fn tools(&self) -> Arc<[ToolSpec]> {
-        self.tool_registry
+        self.tooling
+            .tool_registry
             .read()
             .expect("tool registry poisoned")
             .tools()
     }
 
     pub fn store(&self) -> Arc<dyn RuntimeStore> {
-        self.store.clone()
+        self.persistence.store.clone()
     }
 
     pub fn persisted_runtime_identifier(&self) -> &str {
@@ -67,7 +76,8 @@ impl RuntimeHandle {
     }
 
     pub fn skill_descriptions(&self) -> Option<String> {
-        self.skill_loader
+        self.tooling
+            .skill_loader
             .read()
             .expect("skill loader poisoned")
             .as_ref()
@@ -76,7 +86,11 @@ impl RuntimeHandle {
     }
 
     pub fn load_skill(&self, name: &str) -> Result<String, String> {
-        let skills = self.skill_loader.read().expect("skill loader poisoned");
+        let skills = self
+            .tooling
+            .skill_loader
+            .read()
+            .expect("skill loader poisoned");
         let Some(loader) = skills.as_ref() else {
             return Err("Skill loader is not available".to_string());
         };
@@ -85,7 +99,8 @@ impl RuntimeHandle {
     }
 
     pub fn get_tool(&self, name: &str) -> Option<Arc<dyn ExecutableTool>> {
-        self.tool_registry
+        self.tooling
+            .tool_registry
             .read()
             .expect("tool registry poisoned")
             .get_tool(name)

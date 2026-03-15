@@ -6,7 +6,7 @@ use crate::{
 };
 
 struct AgentTeamObserver {
-    store: Arc<dyn RuntimeStore>,
+    store: Arc<dyn crate::runtime::TaskStore>,
     tasks_dir: PathBuf,
     events: broadcast::Sender<AgentEvent>,
     snapshot_tx: watch::Sender<AgentSnapshot>,
@@ -14,7 +14,11 @@ struct AgentTeamObserver {
 }
 
 impl AgentTeamObserver {
-    fn new(store: Arc<dyn RuntimeStore>, tasks_dir: PathBuf, observer: &AgentObserver) -> Self {
+    fn new(
+        store: Arc<dyn crate::runtime::TaskStore>,
+        tasks_dir: PathBuf,
+        observer: &AgentObserver,
+    ) -> Self {
         Self {
             store,
             tasks_dir,
@@ -122,22 +126,23 @@ impl RuntimeHandle {
         observer: &AgentObserver,
     ) -> Result<(), RuntimeError> {
         self.acquire_agent_lease(agent_id)?;
-        self.background_tasks
+        self.collaboration
+            .background_tasks
             .register_agent(BackgroundRegistration {
                 agent_id: agent_id.to_string(),
                 observer: Arc::new(AgentBackgroundObserver::new(
-                    self.background_tasks.clone(),
-                    self.team.clone(),
+                    self.collaboration.background_tasks.clone(),
+                    self.collaboration.team.clone(),
                     agent_id.to_string(),
                     &config,
                     observer,
                 )),
             });
-        self.team.register_agent(TeamRegistration {
+        self.collaboration.team.register_agent(TeamRegistration {
             agent_name: agent_name.to_string(),
             team_dir: config.team_dir.clone(),
             observer: Arc::new(AgentTeamObserver::new(
-                self.store.clone(),
+                self.persistence.store.clone(),
                 config.tasks_dir.clone(),
                 observer,
             )),
@@ -152,7 +157,8 @@ impl RuntimeHandle {
     pub fn acquire_agent_lease(&self, agent_id: &str) -> Result<(), RuntimeError> {
         let key = format!("agent:{agent_id}");
         let acquired =
-            self.store
+            self.persistence
+                .store
                 .acquire_lease(&key, &self.runtime_instance_id, Duration::from_secs(3600))?;
         if acquired {
             self.lease_keys

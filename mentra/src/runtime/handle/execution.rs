@@ -11,6 +11,7 @@ impl RuntimeHandle {
     ) -> Result<(AgentExecutionConfig, CommandEvaluation, CommandRequest), String> {
         let config = self.agent_config(agent_id)?;
         let evaluation = match self
+            .execution
             .policy
             .evaluate_shell_request(&config.base_dir, &request)
         {
@@ -63,9 +64,12 @@ impl RuntimeHandle {
                 command: request.command.clone(),
             },
             cwd: request.cwd,
-            timeout: self.policy.effective_timeout(request.requested_timeout),
-            env: self.policy.allowed_environment(),
-            max_output_bytes_per_stream: self.policy.max_output_bytes_per_stream,
+            timeout: self
+                .execution
+                .policy
+                .effective_timeout(request.requested_timeout),
+            env: self.execution.policy.allowed_environment(),
+            max_output_bytes_per_stream: self.execution.policy.max_output_bytes_per_stream,
         };
 
         Ok((config, evaluation, command_request))
@@ -91,8 +95,12 @@ impl RuntimeHandle {
             },
         )?;
 
-        if let Some(limit) = self.policy.background_task_limit
-            && self.background_tasks.running_task_count(agent_id) >= limit
+        if let Some(limit) = self.execution.policy.background_task_limit
+            && self
+                .collaboration
+                .background_tasks
+                .running_task_count(agent_id)
+                >= limit
         {
             let detail = format!("Background task limit of {limit} reached");
             let _ = self.emit_hook(RuntimeHookEvent::AuthorizationDenied {
@@ -103,7 +111,9 @@ impl RuntimeHandle {
             return Err(detail);
         }
 
-        self.background_tasks.start_task(agent_id, command_request)
+        self.collaboration
+            .background_tasks
+            .start_task(agent_id, command_request)
     }
 
     pub fn check_background_task(
@@ -111,15 +121,19 @@ impl RuntimeHandle {
         agent_id: &str,
         task_id: Option<&str>,
     ) -> Result<String, String> {
-        self.background_tasks.check_task(agent_id, task_id)
+        self.collaboration.background_tasks.check_task(agent_id, task_id)
     }
 
     pub fn drain_background_notifications(&self, agent_id: &str) -> Vec<BackgroundNotification> {
-        self.background_tasks.drain_notifications(agent_id)
+        self.collaboration
+            .background_tasks
+            .drain_notifications(agent_id)
     }
 
     pub fn has_pending_background_notifications(&self, agent_id: &str) -> bool {
-        self.background_tasks.has_pending_notifications(agent_id)
+        self.collaboration
+            .background_tasks
+            .has_pending_notifications(agent_id)
     }
 
     pub fn requeue_background_notifications(
@@ -127,16 +141,19 @@ impl RuntimeHandle {
         agent_id: &str,
         notifications: Vec<BackgroundNotification>,
     ) {
-        self.background_tasks
+        self.collaboration
+            .background_tasks
             .requeue_notifications(agent_id, notifications);
     }
 
     pub fn acknowledge_background_notifications(&self, agent_id: &str) {
-        self.background_tasks.acknowledge_notifications(agent_id);
+        self.collaboration
+            .background_tasks
+            .acknowledge_notifications(agent_id);
     }
 
     pub fn team_manager(&self) -> TeamManager {
-        self.team.clone()
+        self.collaboration.team.clone()
     }
 
     pub fn register_teammate(
@@ -146,11 +163,15 @@ impl RuntimeHandle {
         wake_tx: tokio::sync::mpsc::UnboundedSender<()>,
         task: std::thread::JoinHandle<()>,
     ) -> Result<TeamMemberSummary, RuntimeError> {
-        self.team.spawn_teammate(team_dir, summary, wake_tx, task)
+        self.collaboration
+            .team
+            .spawn_teammate(team_dir, summary, wake_tx, task)
     }
 
     pub fn wake_teammate(&self, team_dir: &Path, teammate_name: &str) -> Result<(), RuntimeError> {
-        self.team.wake_teammate(team_dir, teammate_name)
+        self.collaboration
+            .team
+            .wake_teammate(team_dir, teammate_name)
     }
 
     pub fn send_team_message(
@@ -160,7 +181,9 @@ impl RuntimeHandle {
         to: &str,
         content: String,
     ) -> Result<TeamDispatch, RuntimeError> {
-        self.team.send_message(team_dir, sender, to, content)
+        self.collaboration
+            .team
+            .send_message(team_dir, sender, to, content)
     }
 
     pub fn broadcast_team_message(
@@ -169,7 +192,9 @@ impl RuntimeHandle {
         sender: &str,
         content: String,
     ) -> Result<Vec<TeamDispatch>, RuntimeError> {
-        self.team.broadcast_message(team_dir, sender, content)
+        self.collaboration
+            .team
+            .broadcast_message(team_dir, sender, content)
     }
 
     pub fn read_team_inbox(
@@ -177,7 +202,7 @@ impl RuntimeHandle {
         team_dir: &Path,
         agent_name: &str,
     ) -> Result<Vec<TeamMessage>, RuntimeError> {
-        self.team.read_inbox(team_dir, agent_name)
+        self.collaboration.team.read_inbox(team_dir, agent_name)
     }
 
     pub fn requeue_team_messages(
@@ -186,7 +211,9 @@ impl RuntimeHandle {
         agent_name: &str,
         messages: Vec<TeamMessage>,
     ) -> Result<(), RuntimeError> {
-        self.team.requeue_messages(team_dir, agent_name, messages)
+        self.collaboration
+            .team
+            .requeue_messages(team_dir, agent_name, messages)
     }
 
     pub fn acknowledge_team_messages(
@@ -194,7 +221,9 @@ impl RuntimeHandle {
         team_dir: &Path,
         agent_name: &str,
     ) -> Result<(), RuntimeError> {
-        self.team.acknowledge_messages(team_dir, agent_name)
+        self.collaboration
+            .team
+            .acknowledge_messages(team_dir, agent_name)
     }
 
     pub fn create_team_request(
@@ -205,7 +234,8 @@ impl RuntimeHandle {
         protocol: String,
         content: String,
     ) -> Result<TeamProtocolRequestSummary, RuntimeError> {
-        self.team
+        self.collaboration
+            .team
             .create_request(team_dir, sender, to, protocol, content)
     }
 
@@ -217,7 +247,8 @@ impl RuntimeHandle {
         approve: bool,
         reason: Option<String>,
     ) -> Result<TeamProtocolRequestSummary, RuntimeError> {
-        self.team
+        self.collaboration
+            .team
             .resolve_request(team_dir, responder, request_id, approve, reason)
     }
 
@@ -227,7 +258,9 @@ impl RuntimeHandle {
         agent_name: &str,
         filter: TeamRequestFilter,
     ) -> Result<Vec<TeamProtocolRequestSummary>, RuntimeError> {
-        self.team.list_requests(team_dir, agent_name, filter)
+        self.collaboration
+            .team
+            .list_requests(team_dir, agent_name, filter)
     }
 
     pub fn execute_task_mutation(
@@ -237,7 +270,7 @@ impl RuntimeHandle {
         dir: &Path,
         access: TaskAccess<'_>,
     ) -> Result<String, String> {
-        task::execute_with_store(self.store.as_ref(), tool, input, dir, access)
+        task::execute_with_store(self.persistence.store.as_ref(), tool, input, dir, access)
     }
 
     pub async fn execute_shell_command(
@@ -260,7 +293,7 @@ impl RuntimeHandle {
             },
         )?;
 
-        self.executor.run(command_request).await
+        self.execution.executor.run(command_request).await
     }
 
     pub async fn read_file(
@@ -271,6 +304,7 @@ impl RuntimeHandle {
     ) -> Result<String, String> {
         let config = self.agent_config(agent_id)?;
         let resolved = match self
+            .execution
             .policy
             .authorize_file_read(&config.base_dir, Path::new(path))
         {
@@ -304,6 +338,7 @@ impl RuntimeHandle {
         }
 
         let tasks = self
+            .persistence
             .store
             .load_tasks(&config.tasks_dir)
             .map_err(|error| error.to_string())?;
@@ -346,7 +381,9 @@ impl RuntimeHandle {
     }
 
     pub fn emit_hook(&self, event: RuntimeHookEvent) -> Result<(), RuntimeError> {
-        self.hooks.emit(self.store.as_ref(), &event)
+        self.execution
+            .hooks
+            .emit(self.persistence.store.as_ref(), &event)
     }
 }
 
