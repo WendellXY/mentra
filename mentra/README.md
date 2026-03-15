@@ -49,6 +49,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+## Architecture
+
+Mentra is organized around four runtime subsystems:
+
+- execution: model providers, runtime policy, hooks, turn execution, and shell/background command routing
+- persistence: agent records, run state, task snapshots, leases, team state, background notifications, and memory
+- tooling: builtin and custom tools, optional skills, and typed app context
+- collaboration: persistent teammates, team inbox/request flows, and background task wakeups
+
+Persistent teammates are hosted as async actors on a shared Tokio runtime. Live actors are wake-driven rather than steady-state polled: inbox appends, protocol updates, background task completion, explicit resume, and autonomy timers wake the actor to process durable state already written to the store. After a restart, the persisted team inbox, protocol requests, and background notifications remain the source of truth, and `Runtime::resume(...)` revives teammate actors against that stored state.
+
 ## Resolving A Model
 
 Use `Runtime::resolve_model(...)` when you want provider-aware model selection without reimplementing discovery or `ModelInfo` construction in application code.
@@ -349,6 +360,17 @@ Override these defaults when needed:
 
 - use `Runtime::builder().with_store(...)` for the SQLite store
 - customize `AgentConfig::task.tasks_dir`, `AgentConfig::team.team_dir`, and `AgentConfig::context_compaction.transcript_dir` for task, team, and transcript storage
+
+## Persistence Extension Points
+
+The public persistence surface is intentionally split into narrower traits:
+
+- `AgentStore` for agent records and working-memory snapshots
+- `RunStore` for turn and run lifecycle tracking
+- `TaskStore` for the dependency-aware task board
+- `LeaseStore` for runtime ownership and resume coordination
+
+`RuntimeStore` composes those traits with `TeamStore`, `BackgroundStore`, and `MemoryStore`. `SqliteRuntimeStore` is the default all-in-one backend. `HybridRuntimeStore` keeps SQLite runtime state and swaps in the hybrid memory engine for richer long-term memory behavior.
 
 ## Testing With MockRuntime
 
