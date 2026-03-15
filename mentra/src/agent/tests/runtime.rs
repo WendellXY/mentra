@@ -9,7 +9,7 @@ use tokio::time::sleep;
 
 use crate::{
     BuiltinProvider, ContentBlock, Role,
-    provider::{ContentBlockDelta, ContentBlockStart, ProviderError, ProviderEvent},
+    provider::{ContentBlockDelta, ContentBlockStart, ProviderError, ProviderEvent, TokenUsage},
     runtime::{
         RunOptions, Runtime, RuntimeHook, RuntimeHookEvent, RuntimePolicy,
         is_transient_runtime_error,
@@ -17,7 +17,7 @@ use crate::{
     tool::{ExecutableTool, ToolContext, ToolResult, ToolSpec},
 };
 
-use super::support::{ScriptedProvider, StaticTool, model_info, ok_stream};
+use super::support::{ScriptedProvider, StaticTool, erroring_stream, model_info, ok_stream};
 
 #[tokio::test]
 async fn run_respects_tool_budget() {
@@ -189,6 +189,15 @@ async fn custom_hooks_observe_model_and_tool_execution() {
     );
     assert!(events.iter().any(|event| matches!(
         event,
+        RuntimeHookEvent::ModelResponseFinished {
+            success: true,
+            stop_reason: Some(reason),
+            usage: None,
+            ..
+        } if reason == "tool_use"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
         RuntimeHookEvent::ToolExecutionStarted { tool_name, .. } if tool_name == "test_tool"
     )));
     assert!(events.iter().any(|event| matches!(
@@ -274,6 +283,133 @@ async fn tool_execution_timeout_returns_tool_error() {
         ContentBlock::ToolResult { content, is_error: true, .. }
             if content.contains("timed out after 20ms")
     ));
+}
+
+#[tokio::test]
+async fn model_response_finished_hook_reports_usage_after_successful_commit() {
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![ok_stream(vec![
+            ProviderEvent::MessageStarted {
+                id: "msg-usage".to_string(),
+                model: model.id.clone(),
+                role: Role::Assistant,
+            },
+            ProviderEvent::ContentBlockStarted {
+                index: 0,
+                kind: ContentBlockStart::Text,
+            },
+            ProviderEvent::ContentBlockDelta {
+                index: 0,
+                delta: ContentBlockDelta::Text("done".to_string()),
+            },
+            ProviderEvent::ContentBlockStopped { index: 0 },
+            ProviderEvent::MessageDelta {
+                stop_reason: Some("end_turn".to_string()),
+                usage: Some(TokenUsage {
+                    input_tokens: Some(12),
+                    output_tokens: Some(5),
+                    total_tokens: Some(17),
+                    ..TokenUsage::default()
+                }),
+            },
+            ProviderEvent::MessageStopped,
+        ])],
+    );
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .with_hook(RecordingHook {
+            events: recorded.clone(),
+        })
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime.spawn("agent", model).unwrap();
+
+    agent
+        .send(vec![ContentBlock::Text {
+            text: "hi".to_string(),
+        }])
+        .await
+        .expect("send");
+
+    let events = recorded.lock().expect("hook events poisoned").clone();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        RuntimeHookEvent::ModelResponseFinished {
+            success: true,
+            stop_reason: Some(reason),
+            usage: Some(TokenUsage {
+                input_tokens: Some(12),
+                output_tokens: Some(5),
+                total_tokens: Some(17),
+                ..
+            }),
+            ..
+        } if reason == "end_turn"
+    )));
+}
+
+#[tokio::test]
+async fn model_response_finished_hook_reports_stream_failures_without_usage() {
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![erroring_stream(
+            vec![
+                ProviderEvent::MessageStarted {
+                    id: "msg-fail".to_string(),
+                    model: model.id.clone(),
+                    role: Role::Assistant,
+                },
+                ProviderEvent::ContentBlockStarted {
+                    index: 0,
+                    kind: ContentBlockStart::Text,
+                },
+                ProviderEvent::ContentBlockDelta {
+                    index: 0,
+                    delta: ContentBlockDelta::Text("par".to_string()),
+                },
+            ],
+            ProviderError::MalformedStream("boom".to_string()),
+        )],
+    );
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .with_hook(RecordingHook {
+            events: recorded.clone(),
+        })
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime.spawn("agent", model).unwrap();
+
+    let error = agent
+        .send(vec![ContentBlock::Text {
+            text: "hi".to_string(),
+        }])
+        .await
+        .expect_err("send should fail");
+    assert!(matches!(
+        error,
+        crate::runtime::RuntimeError::FailedToStreamResponse(ProviderError::MalformedStream(_))
+    ));
+
+    let events = recorded.lock().expect("hook events poisoned").clone();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        RuntimeHookEvent::ModelResponseFinished {
+            success: false,
+            usage: None,
+            error: Some(message),
+            ..
+        } if message.contains("malformed provider stream: boom")
+    )));
 }
 
 #[test]
@@ -373,6 +509,10 @@ fn text_stream(text: &str) -> super::support::StreamScript {
             delta: ContentBlockDelta::Text(text.to_string()),
         },
         ProviderEvent::ContentBlockStopped { index: 0 },
+        ProviderEvent::MessageDelta {
+            stop_reason: Some("end_turn".to_string()),
+            usage: None,
+        },
         ProviderEvent::MessageStopped,
     ])
 }
@@ -401,6 +541,10 @@ fn tool_use_stream(
             delta: ContentBlockDelta::ToolUseInputJson(input_json.to_string()),
         },
         ProviderEvent::ContentBlockStopped { index: 0 },
+        ProviderEvent::MessageDelta {
+            stop_reason: Some("tool_use".to_string()),
+            usage: None,
+        },
         ProviderEvent::MessageStopped,
     ])
 }

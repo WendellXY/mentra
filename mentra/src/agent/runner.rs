@@ -25,6 +25,11 @@ pub(super) struct TurnRunner<'a> {
     tool_runtime: ToolRuntime,
 }
 
+struct StreamedTurn {
+    attempt: usize,
+    pending: PendingAssistantTurn,
+}
+
 impl<'a> TurnRunner<'a> {
     pub(super) fn new(agent: &'a mut Agent, options: RunOptions) -> Self {
         let tool_runtime = ToolRuntime::new(agent);
@@ -49,10 +54,26 @@ impl<'a> TurnRunner<'a> {
 
             rounds += 1;
             self.agent.update_run_state("awaiting_model", None)?;
-            let pending = self.stream_turn().await?;
-            self.commit_assistant_message(&pending)?;
+            let streamed = self.stream_turn().await?;
+            if let Err(error) = self.commit_assistant_message(&streamed.pending) {
+                self.emit_model_response_finished(
+                    streamed.attempt,
+                    false,
+                    Some(error.to_string()),
+                    None,
+                    None,
+                )?;
+                return Err(error);
+            }
+            self.emit_model_response_finished(
+                streamed.attempt,
+                true,
+                None,
+                streamed.pending.stop_reason().map(str::to_string),
+                streamed.pending.usage().cloned(),
+            )?;
 
-            let tool_calls = pending.ready_tool_calls()?;
+            let tool_calls = streamed.pending.ready_tool_calls()?;
             if tool_calls.is_empty() {
                 self.agent.note_round_without_task();
                 return Ok(());
@@ -77,7 +98,7 @@ impl<'a> TurnRunner<'a> {
         }
     }
 
-    async fn stream_turn(&mut self) -> Result<PendingAssistantTurn, RuntimeError> {
+    async fn stream_turn(&mut self) -> Result<StreamedTurn, RuntimeError> {
         self.agent.inject_team_inbox()?;
         self.agent.inject_background_notifications()?;
         self.agent.set_status(AgentStatus::AwaitingModel);
@@ -176,9 +197,44 @@ impl<'a> TurnRunner<'a> {
         self.agent.sync_memory_snapshot();
 
         while let Some(event) = stream.recv().await {
-            self.options.check_limits()?;
-            let event = event.map_err(RuntimeError::FailedToStreamResponse)?;
-            let derived_events = pending.apply(event)?;
+            if let Err(error) = self.options.check_limits() {
+                self.emit_model_response_finished(
+                    attempt,
+                    false,
+                    Some(error.to_string()),
+                    None,
+                    None,
+                )?;
+                return Err(error);
+            }
+            let event = match event {
+                Ok(event) => event,
+                Err(error) => {
+                    let runtime_error = RuntimeError::FailedToStreamResponse(error);
+                    let error_message = runtime_error.to_string();
+                    self.emit_model_response_finished(
+                        attempt,
+                        false,
+                        Some(error_message),
+                        None,
+                        None,
+                    )?;
+                    return Err(runtime_error);
+                }
+            };
+            let derived_events = match pending.apply(event) {
+                Ok(derived_events) => derived_events,
+                Err(error) => {
+                    self.emit_model_response_finished(
+                        attempt,
+                        false,
+                        Some(error.to_string()),
+                        None,
+                        None,
+                    )?;
+                    return Err(error);
+                }
+            };
             self.agent
                 .memory
                 .update_pending_turn(Self::pending_state(&pending))?;
@@ -189,7 +245,7 @@ impl<'a> TurnRunner<'a> {
             }
         }
 
-        Ok(pending)
+        Ok(StreamedTurn { attempt, pending })
     }
 
     fn commit_assistant_message(
@@ -213,6 +269,27 @@ impl<'a> TurnRunner<'a> {
             pending.current_text().to_string(),
             pending.pending_tool_use_summaries(),
         )
+    }
+
+    fn emit_model_response_finished(
+        &self,
+        attempt: usize,
+        success: bool,
+        error: Option<String>,
+        stop_reason: Option<String>,
+        usage: Option<crate::provider::TokenUsage>,
+    ) -> Result<(), RuntimeError> {
+        self.agent
+            .runtime
+            .emit_hook(RuntimeHookEvent::ModelResponseFinished {
+                agent_id: self.agent.id().to_string(),
+                model: self.agent.model().to_string(),
+                attempt,
+                success,
+                error,
+                stop_reason,
+                usage,
+            })
     }
 
     async fn recalled_memory_message(&self, request_history: &[Message]) -> Option<Message> {

@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    provider::ProviderError,
+    provider::{ProviderError, TokenUsage},
     runtime::{AuditStore, RuleMatch, error::RuntimeError},
 };
 
@@ -38,6 +38,15 @@ pub enum RuntimeHookEvent {
         attempt: usize,
         success: bool,
         error: Option<String>,
+    },
+    ModelResponseFinished {
+        agent_id: String,
+        model: String,
+        attempt: usize,
+        success: bool,
+        error: Option<String>,
+        stop_reason: Option<String>,
+        usage: Option<TokenUsage>,
     },
     ToolExecutionStarted {
         agent_id: String,
@@ -120,6 +129,7 @@ impl RuntimeHookEvent {
             } => runtime_instance_id.clone(),
             Self::ModelRequestStarted { agent_id, .. }
             | Self::ModelRequestFinished { agent_id, .. }
+            | Self::ModelResponseFinished { agent_id, .. }
             | Self::ToolExecutionStarted { agent_id, .. }
             | Self::ToolExecutionFinished { agent_id, .. }
             | Self::PolicyDenied { agent_id, .. }
@@ -143,6 +153,7 @@ impl RuntimeHookEvent {
             Self::RecoveryPrepared { .. } => "recovery_prepared",
             Self::ModelRequestStarted { .. } => "model_request_started",
             Self::ModelRequestFinished { .. } => "model_request_finished",
+            Self::ModelResponseFinished { .. } => "model_response_finished",
             Self::ToolExecutionStarted { .. } => "tool_execution_started",
             Self::ToolExecutionFinished { .. } => "tool_execution_finished",
             Self::PolicyDenied { .. } => "policy_denied",
