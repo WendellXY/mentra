@@ -2,8 +2,9 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use crate::tool::{
-    ExecutableTool, ParallelToolContext, ToolCapability, ToolDurability, ToolExecutionMode,
-    ToolResult, ToolSideEffectLevel, ToolSpec, context::RuntimeContext,
+    ExecutableTool, ParallelToolContext, ToolAuthorizationPreview, ToolCapability,
+    ToolDurability, ToolExecutionMode, ToolResult, ToolSideEffectLevel, ToolSpec,
+    context::RuntimeContext,
 };
 
 pub struct ShellTool;
@@ -105,6 +106,37 @@ where
     ))
 }
 
+fn shell_authorization_preview(
+    ctx: &ParallelToolContext,
+    input: &Value,
+    background: bool,
+    spec: ToolSpec,
+) -> Result<ToolAuthorizationPreview, String> {
+    let ShellCommandOutput {
+        command,
+        working_directory,
+        justification,
+        requested_timeout,
+    } = parse_command_input(input)?;
+    let working_directory = ctx.resolve_working_directory(working_directory)?;
+
+    Ok(ToolAuthorizationPreview {
+        working_directory: working_directory.clone(),
+        capabilities: spec.capabilities,
+        side_effect_level: spec.side_effect_level,
+        durability: spec.durability,
+        raw_input: input.clone(),
+        structured_input: json!({
+            "kind": if background { "background_run" } else { "shell" },
+            "command": command,
+            "working_directory": working_directory,
+            "timeout_ms": requested_timeout.map(|timeout| timeout.as_millis()),
+            "justification": justification,
+            "background": background,
+        }),
+    })
+}
+
 #[async_trait]
 impl ExecutableTool for ShellTool {
     fn spec(&self) -> ToolSpec {
@@ -140,6 +172,14 @@ impl ExecutableTool for ShellTool {
 
     fn execution_mode(&self, _input: &Value) -> ToolExecutionMode {
         ToolExecutionMode::Parallel
+    }
+
+    fn authorization_preview(
+        &self,
+        ctx: &ParallelToolContext,
+        input: &Value,
+    ) -> Result<ToolAuthorizationPreview, String> {
+        shell_authorization_preview(ctx, input, false, self.spec())
     }
 
     async fn execute(&self, ctx: ParallelToolContext, input: Value) -> ToolResult {
@@ -183,6 +223,14 @@ impl ExecutableTool for BackgroundRunTool {
 
     fn execution_mode(&self, _input: &Value) -> ToolExecutionMode {
         ToolExecutionMode::Parallel
+    }
+
+    fn authorization_preview(
+        &self,
+        ctx: &ParallelToolContext,
+        input: &Value,
+    ) -> Result<ToolAuthorizationPreview, String> {
+        shell_authorization_preview(ctx, input, true, self.spec())
     }
 
     async fn execute(&self, ctx: ParallelToolContext, input: Value) -> ToolResult {

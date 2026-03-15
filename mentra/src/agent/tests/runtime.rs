@@ -12,6 +12,8 @@ use crate::{
     provider::{ContentBlockDelta, ContentBlockStart, ProviderError, ProviderEvent, TokenUsage},
     runtime::{
         RunOptions, Runtime, RuntimeHook, RuntimeHookEvent, RuntimePolicy,
+        ToolAuthorizationDecision, ToolAuthorizationOutcome, ToolAuthorizationRequest,
+        ToolAuthorizer,
         is_transient_runtime_error,
     },
     tool::{ExecutableTool, ToolContext, ToolResult, ToolSpec},
@@ -149,6 +151,202 @@ async fn approval_required_shell_emits_hook_and_returns_tool_error() {
             && parsed_kind == "unknown"
             && justification.as_deref() == Some("needed for validation")
     )));
+}
+
+#[tokio::test]
+async fn tool_authorizer_allows_tool_execution_and_captures_preview() {
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(&model.id, "tool-1", "test_tool", r#"{"value":"hi"}"#),
+            text_stream("done"),
+        ],
+    );
+    let requests = Arc::new(Mutex::new(Vec::new()));
+
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .with_tool(StaticTool::success("test_tool", "ok"))
+        .with_tool_authorizer(RecordingAuthorizer::allow(requests.clone()))
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime.spawn("agent", model).unwrap();
+
+    agent
+        .send(vec![ContentBlock::Text {
+            text: "hi".to_string(),
+        }])
+        .await
+        .expect("send");
+
+    assert!(matches!(
+        &agent.history()[2].content[0],
+        ContentBlock::ToolResult { content, is_error: false, .. } if content == "ok"
+    ));
+
+    let requests = requests.lock().expect("requests poisoned");
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].tool_name, "test_tool");
+    assert_eq!(
+        requests[0].preview.structured_input,
+        json!({ "value": "hi" })
+    );
+}
+
+#[tokio::test]
+async fn tool_authorizer_can_prompt_shell_tool_and_emit_hooks() {
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(
+                &model.id,
+                "tool-shell",
+                "shell",
+                r#"{"command":"python -c 'print(1)'","justification":"needed for validation"}"#,
+            ),
+            text_stream("done"),
+        ],
+    );
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .with_policy(RuntimePolicy::default().allow_shell_commands(true))
+        .with_tool_authorizer(RecordingAuthorizer::prompt(
+            "needs manual review",
+            requests.clone(),
+        ))
+        .with_hook(RecordingHook {
+            events: recorded.clone(),
+        })
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime.spawn("agent", model).unwrap();
+
+    agent
+        .send(vec![ContentBlock::Text {
+            text: "run python".to_string(),
+        }])
+        .await
+        .expect("send");
+
+    assert!(matches!(
+        &agent.history()[2].content[0],
+        ContentBlock::ToolResult { content, is_error: true, .. }
+            if content.contains("Tool execution requires approval: needs manual review")
+    ));
+
+    let requests = requests.lock().expect("requests poisoned");
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].tool_name, "shell");
+    assert_eq!(
+        requests[0].preview.structured_input["kind"].as_str(),
+        Some("shell")
+    );
+
+    let events = recorded.lock().expect("hook events poisoned").clone();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        RuntimeHookEvent::ToolAuthorizationStarted { tool_name, .. } if tool_name == "shell"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        RuntimeHookEvent::ToolAuthorizationFinished { tool_name, outcome, .. }
+            if tool_name == "shell" && *outcome == ToolAuthorizationOutcome::Prompt
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        RuntimeHookEvent::ToolAuthorizationBlocked { tool_name, outcome, .. }
+            if tool_name == "shell" && *outcome == ToolAuthorizationOutcome::Prompt
+    )));
+    assert!(!events.iter().any(|event| matches!(
+        event,
+        RuntimeHookEvent::ToolExecutionStarted { tool_name, .. } if tool_name == "shell"
+    )));
+}
+
+#[tokio::test]
+async fn tool_authorizer_errors_block_execution() {
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(&model.id, "tool-1", "test_tool", r#"{"value":"hi"}"#),
+            text_stream("done"),
+        ],
+    );
+
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .with_tool(StaticTool::success("test_tool", "ok"))
+        .with_tool_authorizer(RecordingAuthorizer::error("authorizer unavailable"))
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime.spawn("agent", model).unwrap();
+
+    agent
+        .send(vec![ContentBlock::Text {
+            text: "hi".to_string(),
+        }])
+        .await
+        .expect("send");
+
+    assert!(matches!(
+        &agent.history()[2].content[0],
+        ContentBlock::ToolResult { content, is_error: true, .. }
+            if content.contains("authorizer unavailable")
+    ));
+}
+
+#[tokio::test]
+async fn files_tool_authorization_preview_exposes_resolved_paths() {
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(
+                &model.id,
+                "files-read",
+                "files",
+                r#"{"operations":[{"op":"read","path":"README.md","offset":1,"limit":1}]}"#,
+            ),
+            text_stream("done"),
+        ],
+    );
+    let requests = Arc::new(Mutex::new(Vec::new()));
+
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .with_tool_authorizer(RecordingAuthorizer::allow(requests.clone()))
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime.spawn("agent", model).unwrap();
+
+    agent
+        .send(vec![ContentBlock::Text {
+            text: "read the readme".to_string(),
+        }])
+        .await
+        .expect("send");
+
+    let requests = requests.lock().expect("requests poisoned");
+    assert_eq!(requests.len(), 1);
+    let operations = requests[0].preview.structured_input["operations"]
+        .as_array()
+        .expect("operations array");
+    assert_eq!(operations[0]["op"].as_str(), Some("read"));
+    assert!(operations[0]["resolved_path"]
+        .as_str()
+        .expect("resolved path")
+        .ends_with("README.md"));
+    assert!(operations[0].get("content").is_none());
 }
 
 #[tokio::test]
@@ -490,6 +688,63 @@ impl RuntimeHook for RecordingHook {
             .expect("hook events poisoned")
             .push(event.clone());
         Ok(())
+    }
+}
+
+enum AuthorizerBehavior {
+    Allow,
+    Prompt(String),
+    Error(String),
+}
+
+struct RecordingAuthorizer {
+    behavior: AuthorizerBehavior,
+    requests: Arc<Mutex<Vec<ToolAuthorizationRequest>>>,
+}
+
+impl RecordingAuthorizer {
+    fn allow(requests: Arc<Mutex<Vec<ToolAuthorizationRequest>>>) -> Self {
+        Self {
+            behavior: AuthorizerBehavior::Allow,
+            requests,
+        }
+    }
+
+    fn prompt(reason: &str, requests: Arc<Mutex<Vec<ToolAuthorizationRequest>>>) -> Self {
+        Self {
+            behavior: AuthorizerBehavior::Prompt(reason.to_string()),
+            requests,
+        }
+    }
+
+    fn error(reason: &str) -> Self {
+        Self {
+            behavior: AuthorizerBehavior::Error(reason.to_string()),
+            requests: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+}
+
+#[async_trait]
+impl ToolAuthorizer for RecordingAuthorizer {
+    async fn authorize(
+        &self,
+        request: &ToolAuthorizationRequest,
+    ) -> Result<ToolAuthorizationDecision, crate::runtime::RuntimeError> {
+        self.requests
+            .lock()
+            .expect("requests poisoned")
+            .push(request.clone());
+
+        match &self.behavior {
+            AuthorizerBehavior::Allow => Ok(ToolAuthorizationDecision::allow()),
+            AuthorizerBehavior::Prompt(reason) => {
+                Ok(ToolAuthorizationDecision::prompt(reason.clone()))
+            }
+            AuthorizerBehavior::Error(reason) => {
+                Err(crate::runtime::RuntimeError::Store(reason.clone()))
+            }
+        }
     }
 }
 

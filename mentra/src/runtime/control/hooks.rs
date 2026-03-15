@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     provider::{ProviderError, TokenUsage},
-    runtime::{AuditStore, RuleMatch, error::RuntimeError},
+    runtime::{AuditStore, RuleMatch, ToolAuthorizationOutcome, error::RuntimeError},
+    tool::ToolAuthorizationPreview,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -14,6 +15,26 @@ pub enum RuntimeHookEvent {
         agent_id: String,
         action: String,
         detail: String,
+    },
+    ToolAuthorizationStarted {
+        agent_id: String,
+        tool_name: String,
+        tool_call_id: String,
+        preview: ToolAuthorizationPreview,
+    },
+    ToolAuthorizationFinished {
+        agent_id: String,
+        tool_name: String,
+        tool_call_id: String,
+        outcome: ToolAuthorizationOutcome,
+        reason: Option<String>,
+    },
+    ToolAuthorizationBlocked {
+        agent_id: String,
+        tool_name: String,
+        tool_call_id: String,
+        outcome: ToolAuthorizationOutcome,
+        reason: Option<String>,
     },
     ShellApprovalRequired {
         agent_id: String,
@@ -123,6 +144,9 @@ impl RuntimeHookEvent {
     fn scope(&self) -> String {
         match self {
             Self::AuthorizationDenied { agent_id, .. } => agent_id.clone(),
+            Self::ToolAuthorizationStarted { agent_id, .. } => agent_id.clone(),
+            Self::ToolAuthorizationFinished { agent_id, .. } => agent_id.clone(),
+            Self::ToolAuthorizationBlocked { agent_id, .. } => agent_id.clone(),
             Self::ShellApprovalRequired { agent_id, .. } => agent_id.clone(),
             Self::RecoveryPrepared {
                 runtime_instance_id,
@@ -149,6 +173,9 @@ impl RuntimeHookEvent {
     fn event_type(&self) -> &'static str {
         match self {
             Self::AuthorizationDenied { .. } => "authorization_denied",
+            Self::ToolAuthorizationStarted { .. } => "tool_authorization_started",
+            Self::ToolAuthorizationFinished { .. } => "tool_authorization_finished",
+            Self::ToolAuthorizationBlocked { .. } => "tool_authorization_blocked",
             Self::ShellApprovalRequired { .. } => "shell_approval_required",
             Self::RecoveryPrepared { .. } => "recovery_prepared",
             Self::ModelRequestStarted { .. } => "model_request_started",

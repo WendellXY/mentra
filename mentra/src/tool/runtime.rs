@@ -6,7 +6,9 @@ use crate::{
     ContentBlock,
     agent::{Agent, AgentEvent, AgentStatus},
     error::RuntimeError,
-    runtime::{RunOptions, RuntimeHookEvent},
+    runtime::{
+        RunOptions, RuntimeHookEvent, ToolAuthorizationOutcome, ToolAuthorizationRequest,
+    },
     tool::{
         ExecutableTool, ParallelToolContext, ToolCall, ToolCapability, ToolContext,
         ToolExecutionMode, ToolSpec,
@@ -149,6 +151,52 @@ impl ToolRuntime {
             });
     }
 
+    fn emit_tool_authorization_started(
+        &self,
+        call: &ToolCall,
+        preview: crate::tool::ToolAuthorizationPreview,
+    ) -> Result<(), RuntimeError> {
+        self.runtime
+            .emit_hook(RuntimeHookEvent::ToolAuthorizationStarted {
+                agent_id: self.agent_id.clone(),
+                tool_name: call.name.clone(),
+                tool_call_id: call.id.clone(),
+                preview,
+            })
+    }
+
+    fn emit_tool_authorization_finished(
+        &self,
+        call: &ToolCall,
+        outcome: ToolAuthorizationOutcome,
+        reason: Option<String>,
+    ) -> Result<(), RuntimeError> {
+        self.runtime
+            .emit_hook(RuntimeHookEvent::ToolAuthorizationFinished {
+                agent_id: self.agent_id.clone(),
+                tool_name: call.name.clone(),
+                tool_call_id: call.id.clone(),
+                outcome,
+                reason,
+            })
+    }
+
+    fn emit_tool_authorization_blocked(
+        &self,
+        call: &ToolCall,
+        outcome: ToolAuthorizationOutcome,
+        reason: Option<String>,
+    ) -> Result<(), RuntimeError> {
+        self.runtime
+            .emit_hook(RuntimeHookEvent::ToolAuthorizationBlocked {
+                agent_id: self.agent_id.clone(),
+                tool_name: call.name.clone(),
+                tool_call_id: call.id.clone(),
+                outcome,
+                reason,
+            })
+    }
+
     fn unavailable_tool_result(&self, call: ToolCall) -> ContentBlock {
         ContentBlock::ToolResult {
             tool_use_id: call.id,
@@ -161,6 +209,31 @@ impl ToolRuntime {
         ContentBlock::ToolResult {
             tool_use_id: call.id.clone(),
             content: format!("Tool execution blocked: {error}"),
+            is_error: true,
+        }
+    }
+
+    fn blocked_authorization_result(
+        &self,
+        call: &ToolCall,
+        outcome: ToolAuthorizationOutcome,
+        reason: Option<String>,
+    ) -> ContentBlock {
+        let content = match outcome {
+            ToolAuthorizationOutcome::Allow => {
+                "Tool execution blocked by authorizer".to_string()
+            }
+            ToolAuthorizationOutcome::Prompt => reason
+                .map(|reason| format!("Tool execution requires approval: {reason}"))
+                .unwrap_or_else(|| "Tool execution requires approval".to_string()),
+            ToolAuthorizationOutcome::Deny => reason
+                .map(|reason| format!("Tool execution denied: {reason}"))
+                .unwrap_or_else(|| "Tool execution denied by authorizer".to_string()),
+        };
+
+        ContentBlock::ToolResult {
+            tool_use_id: call.id.clone(),
+            content,
             is_error: true,
         }
     }
@@ -244,6 +317,80 @@ impl ToolRuntime {
         Some((tool, spec))
     }
 
+    async fn authorize_tool_call(
+        &self,
+        call: &ToolCall,
+        tool: &Arc<dyn ExecutableTool>,
+        ctx: &ParallelToolContext,
+    ) -> Result<Option<ContentBlock>, RuntimeError> {
+        let Some(authorizer) = self.runtime.execution.tool_authorizer.clone() else {
+            return Ok(None);
+        };
+
+        let preview = match tool.authorization_preview(ctx, &call.input) {
+            Ok(preview) => preview,
+            Err(error) => {
+                return Ok(Some(self.blocked_authorization_result(
+                    call,
+                    ToolAuthorizationOutcome::Deny,
+                    Some(error),
+                )));
+            }
+        };
+
+        self.emit_tool_authorization_started(call, preview.clone())?;
+        let request = ToolAuthorizationRequest {
+            agent_id: self.agent_id.clone(),
+            agent_name: ctx.agent_name().to_string(),
+            model: ctx.model().to_string(),
+            history_len: ctx.history_len(),
+            tool_call_id: call.id.clone(),
+            tool_name: call.name.clone(),
+            preview,
+        };
+
+        let result = match authorizer.timeout() {
+            Some(timeout) => match tokio::time::timeout(timeout, authorizer.authorize(&request)).await
+            {
+                Ok(result) => result,
+                Err(_) => {
+                    return self.handle_authorization_block(
+                        call,
+                        ToolAuthorizationOutcome::Deny,
+                        Some(format!("authorizer timed out after {}", format_duration(timeout))),
+                    );
+                }
+            },
+            None => authorizer.authorize(&request).await,
+        };
+
+        match result {
+            Ok(decision) => match decision.outcome {
+                ToolAuthorizationOutcome::Allow => {
+                    self.emit_tool_authorization_finished(call, decision.outcome, decision.reason)?;
+                    Ok(None)
+                }
+                outcome => self.handle_authorization_block(call, outcome, decision.reason),
+            },
+            Err(error) => self.handle_authorization_block(
+                call,
+                ToolAuthorizationOutcome::Deny,
+                Some(error.to_string()),
+            ),
+        }
+    }
+
+    fn handle_authorization_block(
+        &self,
+        call: &ToolCall,
+        outcome: ToolAuthorizationOutcome,
+        reason: Option<String>,
+    ) -> Result<Option<ContentBlock>, RuntimeError> {
+        self.emit_tool_authorization_finished(call, outcome, reason.clone())?;
+        self.emit_tool_authorization_blocked(call, outcome, reason.clone())?;
+        Ok(Some(self.blocked_authorization_result(call, outcome, reason)))
+    }
+
     async fn execute_one_tool(
         &mut self,
         agent: &mut Agent,
@@ -298,6 +445,13 @@ impl ToolRuntime {
                 continue;
             };
 
+            let ctx = self.parallel_tool_context(agent, &call);
+            if let Some(result) = self.authorize_tool_call(&call, &tool, &ctx).await? {
+                let execution = self.completed_execution(agent, &call, &spec, result, false);
+                results[index] = Some(execution);
+                continue;
+            }
+
             if let Err(error) = self.emit_tool_runtime_started(&call) {
                 let result = self.blocked_tool_result(&call, error);
                 let execution = self.completed_execution(agent, &call, &spec, result, false);
@@ -305,7 +459,6 @@ impl ToolRuntime {
                 continue;
             }
 
-            let ctx = self.parallel_tool_context(agent, &call);
             join_set.spawn(async move {
                 let result = execute_tool_future(
                     &call.name,
@@ -375,13 +528,25 @@ impl ToolRuntime {
             };
         };
 
+        let authorization_ctx = self.parallel_tool_context(agent, &call);
+        match self.authorize_tool_call(&call, &tool, &authorization_ctx).await {
+            Ok(Some(result)) => {
+                return self.completed_execution(agent, &call, &spec, result, false);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let result = self.blocked_tool_result(&call, error);
+                return self.completed_execution(agent, &call, &spec, result, false);
+            }
+        }
+
         if let Err(error) = self.emit_tool_runtime_started(&call) {
             let result = self.blocked_tool_result(&call, error);
             return self.completed_execution(agent, &call, &spec, result, false);
         }
 
-        let working_directory = self.working_directory();
-        let runtime = self.runtime.clone();
+        let working_directory = authorization_ctx.working_directory.clone();
+        let runtime = authorization_ctx.runtime.clone();
         let result = Self::tool_result_block(
             &call,
             execute_tool_future(
