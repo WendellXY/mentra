@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use super::{
     ContentBlock, ContentBlockDelta, ContentBlockStart, ProviderError, ProviderEvent,
-    ProviderEventStream, Response, Role,
+    ProviderEventStream, Response, Role, TokenUsage,
 };
 
 pub async fn collect_response_from_stream(
@@ -24,6 +24,7 @@ struct StreamingResponseBuilder {
     role: Option<Role>,
     blocks: BTreeMap<usize, StreamingContentBlock>,
     stop_reason: Option<String>,
+    usage: Option<TokenUsage>,
     stopped: bool,
 }
 
@@ -54,8 +55,9 @@ impl StreamingResponseBuilder {
                 })?;
                 block.mark_complete();
             }
-            ProviderEvent::MessageDelta { stop_reason } => {
+            ProviderEvent::MessageDelta { stop_reason, usage } => {
                 self.stop_reason = stop_reason;
+                self.usage = usage;
             }
             ProviderEvent::MessageStopped => {
                 self.stopped = true;
@@ -98,6 +100,7 @@ impl StreamingResponseBuilder {
             role,
             content,
             stop_reason: self.stop_reason,
+            usage: self.usage,
         })
     }
 }
@@ -235,5 +238,69 @@ impl From<ContentBlockStart> for StreamingContentBlock {
                 complete: false,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::mpsc;
+
+    use crate::provider::model::{ProviderEvent, TokenUsage};
+
+    use super::collect_response_from_stream;
+
+    #[tokio::test]
+    async fn collect_response_keeps_latest_usage_update() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        tx.send(Ok(ProviderEvent::MessageStarted {
+            id: "resp-1".to_string(),
+            model: "model".to_string(),
+            role: crate::provider::Role::Assistant,
+        }))
+        .unwrap();
+        tx.send(Ok(ProviderEvent::ContentBlockStarted {
+            index: 0,
+            kind: crate::provider::ContentBlockStart::Text,
+        }))
+        .unwrap();
+        tx.send(Ok(ProviderEvent::ContentBlockDelta {
+            index: 0,
+            delta: crate::provider::ContentBlockDelta::Text("hello".to_string()),
+        }))
+        .unwrap();
+        tx.send(Ok(ProviderEvent::ContentBlockStopped { index: 0 }))
+            .unwrap();
+        tx.send(Ok(ProviderEvent::MessageDelta {
+            stop_reason: None,
+            usage: Some(TokenUsage {
+                input_tokens: Some(4),
+                ..TokenUsage::default()
+            }),
+        }))
+        .unwrap();
+        tx.send(Ok(ProviderEvent::MessageDelta {
+            stop_reason: Some("stop".to_string()),
+            usage: Some(TokenUsage {
+                input_tokens: Some(4),
+                output_tokens: Some(2),
+                total_tokens: Some(6),
+                ..TokenUsage::default()
+            }),
+        }))
+        .unwrap();
+        tx.send(Ok(ProviderEvent::MessageStopped)).unwrap();
+        drop(tx);
+
+        let response = collect_response_from_stream(rx).await.unwrap();
+        assert_eq!(
+            response.usage,
+            Some(TokenUsage {
+                input_tokens: Some(4),
+                output_tokens: Some(2),
+                total_tokens: Some(6),
+                ..TokenUsage::default()
+            })
+        );
+        assert_eq!(response.stop_reason.as_deref(), Some("stop"));
     }
 }

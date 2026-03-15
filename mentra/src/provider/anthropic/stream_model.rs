@@ -124,6 +124,7 @@ impl AnthropicStreamEvent {
             }
             AnthropicStreamEvent::MessageDelta { delta } => Ok(Some(ProviderEvent::MessageDelta {
                 stop_reason: delta.stop_reason,
+                usage: None,
             })),
             AnthropicStreamEvent::MessageStop => Ok(Some(ProviderEvent::MessageStopped)),
             AnthropicStreamEvent::Ping => Ok(None),

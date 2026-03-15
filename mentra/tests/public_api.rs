@@ -101,6 +101,7 @@ impl Provider for ScriptedProvider {
                 role: Role::Assistant,
                 content: vec![ContentBlock::text(text)],
                 stop_reason: None,
+                usage: None,
             })),
             Turn::ToolCalls(calls) => Ok(provider_event_stream_from_response(Response {
                 id: format!("public-response-{}", now_nanos()),
@@ -116,6 +117,7 @@ impl Provider for ScriptedProvider {
                     })
                     .collect(),
                 stop_reason: Some("tool_use".to_string()),
+                usage: None,
             })),
         }
     }

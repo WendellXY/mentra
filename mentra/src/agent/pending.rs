@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use crate::{
     Message, Role,
     error::RuntimeError,
-    provider::{ContentBlockDelta, ProviderEvent},
+    provider::{ContentBlockDelta, ProviderEvent, TokenUsage},
     tool::ToolCall,
 };
 
@@ -17,6 +17,7 @@ pub struct PendingAssistantTurn {
     blocks: BTreeMap<usize, PendingContentBlock>,
     current_text: String,
     stop_reason: Option<String>,
+    usage: Option<TokenUsage>,
     stopped: bool,
 }
 
@@ -111,7 +112,10 @@ impl PendingAssistantTurn {
                     });
                 }
             }
-            ProviderEvent::MessageDelta { stop_reason } => self.stop_reason = stop_reason,
+            ProviderEvent::MessageDelta { stop_reason, usage } => {
+                self.stop_reason = stop_reason;
+                self.usage = usage;
+            }
             ProviderEvent::MessageStopped => self.stopped = true,
         }
 
@@ -181,5 +185,13 @@ impl PendingAssistantTurn {
 
     pub fn current_text(&self) -> &str {
         &self.current_text
+    }
+
+    pub fn usage(&self) -> Option<&TokenUsage> {
+        self.usage.as_ref()
+    }
+
+    pub fn stop_reason(&self) -> Option<&str> {
+        self.stop_reason.as_deref()
     }
 }

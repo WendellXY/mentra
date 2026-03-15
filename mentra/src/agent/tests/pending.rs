@@ -3,7 +3,7 @@ use serde_json::json;
 use crate::{
     ContentBlock, Message, Role,
     agent::{AgentEvent, PendingAssistantTurn},
-    provider::{ContentBlockDelta, ContentBlockStart, ProviderEvent},
+    provider::{ContentBlockDelta, ContentBlockStart, ProviderEvent, TokenUsage},
     tool::ToolCall,
 };
 
@@ -156,5 +156,59 @@ fn pending_turn_rejects_missing_stop_and_malformed_tool_json() {
         tool_pending
             .apply(ProviderEvent::ContentBlockStopped { index: 0 })
             .is_err()
+    );
+}
+
+#[test]
+fn pending_turn_tracks_latest_usage_without_affecting_message() {
+    let mut pending = PendingAssistantTurn::default();
+    pending
+        .apply(ProviderEvent::MessageStarted {
+            id: "msg-1".to_string(),
+            model: "model".to_string(),
+            role: Role::Assistant,
+        })
+        .unwrap();
+    pending
+        .apply(ProviderEvent::ContentBlockStarted {
+            index: 0,
+            kind: ContentBlockStart::Text,
+        })
+        .unwrap();
+    pending
+        .apply(ProviderEvent::ContentBlockDelta {
+            index: 0,
+            delta: ContentBlockDelta::Text("Hello".to_string()),
+        })
+        .unwrap();
+    pending
+        .apply(ProviderEvent::ContentBlockStopped { index: 0 })
+        .unwrap();
+    pending
+        .apply(ProviderEvent::MessageDelta {
+            stop_reason: Some("stop".to_string()),
+            usage: Some(TokenUsage {
+                input_tokens: Some(12),
+                output_tokens: Some(3),
+                total_tokens: Some(15),
+                ..TokenUsage::default()
+            }),
+        })
+        .unwrap();
+    pending.apply(ProviderEvent::MessageStopped).unwrap();
+
+    assert_eq!(
+        pending.usage(),
+        Some(&TokenUsage {
+            input_tokens: Some(12),
+            output_tokens: Some(3),
+            total_tokens: Some(15),
+            ..TokenUsage::default()
+        })
+    );
+    assert_eq!(pending.stop_reason(), Some("stop"));
+    assert_eq!(
+        pending.to_message().unwrap(),
+        Message::assistant(ContentBlock::text("Hello"))
     );
 }

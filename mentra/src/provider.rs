@@ -13,7 +13,8 @@ pub use model::{
     AnthropicRequestOptions, BuiltinProvider, ContentBlock, ContentBlockDelta, ContentBlockStart,
     ImageSource, Message, ModelInfo, ModelSelector, OpenAIRequestOptions, ProviderDescriptor,
     ProviderError, ProviderEvent, ProviderEventStream, ProviderId, ProviderRequestOptions, Request,
-    Response, Role, ToolChoice, collect_response_from_stream, provider_event_stream_from_response,
+    Response, Role, TokenUsage, ToolChoice, collect_response_from_stream,
+    provider_event_stream_from_response,
 };
 
 /// Transport-neutral interface implemented by model providers.

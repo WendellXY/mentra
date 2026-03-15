@@ -176,6 +176,7 @@ fn parse_frame(frame: &[u8], state: &mut StreamState) -> Result<Vec<ProviderEven
         | OpenAIStreamEvent::ResponseIncomplete { response } => Ok(vec![
             ProviderEvent::MessageDelta {
                 stop_reason: response.stop_reason(),
+                usage: None,
             },
             ProviderEvent::MessageStopped,
         ]),
@@ -475,7 +476,10 @@ mod tests {
         assert_eq!(
             completed,
             vec![
-                ProviderEvent::MessageDelta { stop_reason: None },
+                ProviderEvent::MessageDelta {
+                    stop_reason: None,
+                    usage: None,
+                },
                 ProviderEvent::MessageStopped,
             ]
         );

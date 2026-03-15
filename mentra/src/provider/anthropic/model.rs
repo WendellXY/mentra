@@ -89,6 +89,7 @@ impl TryFrom<AnthropicResponse> for Response {
                 .map(ContentBlock::try_from)
                 .collect::<Result<Vec<_>, _>>()?,
             stop_reason: response.stop_reason,
+            usage: None,
         })
     }
 }

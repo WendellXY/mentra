@@ -240,6 +240,7 @@ fn parse_frame(frame: &[u8], state: &mut StreamState) -> Result<Vec<ProviderEven
             events.extend(state.close_all_blocks());
             events.push(ProviderEvent::MessageDelta {
                 stop_reason: Some(stop_reason),
+                usage: None,
             });
             events.push(ProviderEvent::MessageStopped);
             state.stopped = true;
@@ -251,6 +252,7 @@ fn parse_frame(frame: &[u8], state: &mut StreamState) -> Result<Vec<ProviderEven
         events.extend(state.close_all_blocks());
         events.push(ProviderEvent::MessageDelta {
             stop_reason: Some(prompt_feedback.stop_reason()),
+            usage: None,
         });
         events.push(ProviderEvent::MessageStopped);
         state.stopped = true;
@@ -424,6 +426,7 @@ mod tests {
                 ProviderEvent::ContentBlockStopped { index: 0 },
                 ProviderEvent::MessageDelta {
                     stop_reason: Some("STOP".to_string()),
+                    usage: None,
                 },
                 ProviderEvent::MessageStopped,
             ]
@@ -547,6 +550,7 @@ mod tests {
                 },
                 ProviderEvent::MessageDelta {
                     stop_reason: Some("SAFETY".to_string()),
+                    usage: None,
                 },
                 ProviderEvent::MessageStopped,
             ]

@@ -17,6 +17,33 @@ pub use stream::{
     provider_event_stream_from_response,
 };
 
+/// Provider-neutral token usage metadata for a completed or in-progress response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct TokenUsage {
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub total_tokens: Option<u64>,
+    pub cache_read_input_tokens: Option<u64>,
+    pub cache_creation_input_tokens: Option<u64>,
+    pub reasoning_tokens: Option<u64>,
+    pub thoughts_tokens: Option<u64>,
+    pub tool_input_tokens: Option<u64>,
+}
+
+impl TokenUsage {
+    /// Returns whether the usage payload does not contain any counts.
+    pub fn is_empty(&self) -> bool {
+        self.input_tokens.is_none()
+            && self.output_tokens.is_none()
+            && self.total_tokens.is_none()
+            && self.cache_read_input_tokens.is_none()
+            && self.cache_creation_input_tokens.is_none()
+            && self.reasoning_tokens.is_none()
+            && self.thoughts_tokens.is_none()
+            && self.tool_input_tokens.is_none()
+    }
+}
+
 /// Builtin model providers that Mentra can construct from API keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display, IntoStaticStr)]
 #[strum(serialize_all = "lowercase")]
@@ -217,6 +244,7 @@ pub struct Response {
     pub role: Role,
     pub content: Vec<ContentBlock>,
     pub stop_reason: Option<String>,
+    pub usage: Option<TokenUsage>,
 }
 
 /// Provider-neutral chat role labels.

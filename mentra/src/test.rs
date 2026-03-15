@@ -215,6 +215,7 @@ impl Provider for ScriptedProvider {
                     role: Role::Assistant,
                     content: vec![ContentBlock::text(text)],
                     stop_reason: None,
+                    usage: None,
                 },
             )),
             MockTurn::StreamText(chunks) => Ok(streaming_text_response(&self.models[0], chunks)),
@@ -234,6 +235,7 @@ impl Provider for ScriptedProvider {
                         })
                         .collect(),
                     stop_reason: Some("tool_use".to_string()),
+                    usage: None,
                 },
             )),
             MockTurn::Failure(error) => Err(error),
@@ -271,8 +273,11 @@ fn streaming_text_response(model: &ModelInfo, chunks: Vec<String>) -> ProviderEv
 
     tx.send(Ok(ProviderEvent::ContentBlockStopped { index: 0 }))
         .expect("mock runtime content stop receiver dropped");
-    tx.send(Ok(ProviderEvent::MessageDelta { stop_reason: None }))
-        .expect("mock runtime message delta receiver dropped");
+    tx.send(Ok(ProviderEvent::MessageDelta {
+        stop_reason: None,
+        usage: None,
+    }))
+    .expect("mock runtime message delta receiver dropped");
     tx.send(Ok(ProviderEvent::MessageStopped))
         .expect("mock runtime message stop receiver dropped");
 
