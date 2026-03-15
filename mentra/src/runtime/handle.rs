@@ -20,8 +20,7 @@ use crate::{
     runtime::{
         control::{
             AuditHook, CommandOutput, CommandRequest, CommandSpec, LocalRuntimeExecutor,
-            RuntimeExecutor, RuntimeHookEvent, RuntimeHooks, RuntimePolicy, ToolAuthorizer,
-            read_limited_file,
+            RuntimeExecutor, RuntimeHookEvent, RuntimeHooks, RuntimePolicy, read_limited_file,
         },
         error::RuntimeError,
         store::{RuntimeStore, SqliteRuntimeStore},
@@ -31,7 +30,7 @@ use crate::{
         TeamDispatch, TeamManager, TeamMemberSummary, TeamMessage, TeamProtocolRequestSummary,
         TeamRequestFilter, TeammateHost,
     },
-    tool::{ExecutableTool, ToolRegistry, ToolSpec},
+    tool::{ExecutableTool, ToolAuthorizer, ToolRegistry, ToolSpec},
 };
 
 use super::skill::SkillLoader;

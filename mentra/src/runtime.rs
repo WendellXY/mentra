@@ -28,9 +28,7 @@ pub use crate::team::{
 pub use control::{
     AuditHook, AuditLogHook, CancellationFlag, CancellationToken, CommandOutput, CommandRequest,
     CommandSpec, ExecOutput, RunOptions, RuntimeExecutor, RuntimeHook, RuntimeHookEvent,
-    RuntimeHooks, RuntimePolicy, ToolAuthorizationDecision, ToolAuthorizationOutcome,
-    ToolAuthorizationRequest, ToolAuthorizer, is_transient_provider_error,
-    is_transient_runtime_error,
+    RuntimeHooks, RuntimePolicy, is_transient_provider_error, is_transient_runtime_error,
 };
 pub use error::RuntimeError;
 pub(crate) use handle::RuntimeHandle;
@@ -39,6 +37,8 @@ pub(crate) use intrinsic::RuntimeIntrinsicTool;
 pub use store::{
     AgentStore, AuditStore, LeaseStore, RunStore, RuntimeStore, SqliteRuntimeStore, TaskStore,
 };
+pub use crate::tool::{ToolAuthorizationDecision, ToolAuthorizationRequest, ToolAuthorizer};
+pub use crate::tool::ToolAuthorizationOutcome;
 pub(crate) use store::{LoadedAgentState, PersistedAgentRecord, TaskStateSnapshot};
 pub(crate) use task::TaskIntrinsicTool;
 pub use task::{TaskItem, TaskStatus};

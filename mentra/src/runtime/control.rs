@@ -1,12 +1,8 @@
-mod authorization;
 mod command;
 mod hooks;
 mod policy;
 mod run;
 
-pub use authorization::{
-    ToolAuthorizationDecision, ToolAuthorizationOutcome, ToolAuthorizationRequest, ToolAuthorizer,
-};
 pub use command::{
     CommandOutput, CommandRequest, CommandSpec, ExecOutput, LocalRuntimeExecutor, RuntimeExecutor,
     read_limited_file,
