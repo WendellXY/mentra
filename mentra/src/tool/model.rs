@@ -19,6 +19,7 @@ use crate::runtime::{
     TeamProtocolRequestSummary,
 };
 use crate::runtime::{RuntimeError, TaskIntrinsicTool};
+use crate::tool::ToolAuthorizationPreview;
 
 /// High-level capability labels used for tool metadata and policy decisions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -535,6 +536,23 @@ pub type ToolResult = Result<String, String>;
 pub trait ExecutableTool: Send + Sync {
     /// Returns the static tool metadata used in model requests.
     fn spec(&self) -> ToolSpec;
+
+    /// Returns structured metadata for pre-execution authorization.
+    fn authorization_preview(
+        &self,
+        ctx: &ParallelToolContext,
+        input: &Value,
+    ) -> Result<ToolAuthorizationPreview, String> {
+        let spec = self.spec();
+        Ok(ToolAuthorizationPreview {
+            working_directory: ctx.working_directory().to_path_buf(),
+            capabilities: spec.capabilities,
+            side_effect_level: spec.side_effect_level,
+            durability: spec.durability,
+            raw_input: input.clone(),
+            structured_input: input.clone(),
+        })
+    }
 
     /// Declares whether this tool call may execute in parallel for the given payload.
     fn execution_mode(&self, _input: &Value) -> ToolExecutionMode {

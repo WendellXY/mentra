@@ -77,6 +77,7 @@ impl RuntimeHandle {
             Arc::new(SqliteRuntimeStore::default()),
             Arc::new(LocalRuntimeExecutor),
             Arc::new(RuntimePolicy::default()),
+            None,
             RuntimeHooks::new().with_hook(AuditHook),
             runtime_intrinsics_enabled,
             Arc::<str>::from("default"),
@@ -87,6 +88,7 @@ impl RuntimeHandle {
         store: Arc<dyn RuntimeStore>,
         executor: Arc<dyn RuntimeExecutor>,
         policy: Arc<RuntimePolicy>,
+        tool_authorizer: Option<Arc<dyn ToolAuthorizer>>,
         hooks: RuntimeHooks,
         runtime_intrinsics_enabled: bool,
         persisted_runtime_identifier: Arc<str>,
@@ -103,6 +105,7 @@ impl RuntimeHandle {
             execution: ExecutionServices {
                 executor: executor.clone(),
                 policy,
+                tool_authorizer,
                 hooks: hooks.clone(),
             },
             persistence: PersistenceServices {
@@ -173,6 +176,7 @@ impl RuntimeHandle {
             execution: ExecutionServices {
                 executor: executor.clone(),
                 policy: self.execution.policy.clone(),
+                tool_authorizer: self.execution.tool_authorizer.clone(),
                 hooks: self.execution.hooks.clone(),
             },
             persistence: PersistenceServices {
@@ -208,6 +212,7 @@ impl RuntimeHandle {
             execution: ExecutionServices {
                 executor: self.execution.executor.clone(),
                 policy: Arc::new(policy),
+                tool_authorizer: self.execution.tool_authorizer.clone(),
                 hooks: self.execution.hooks.clone(),
             },
             persistence: PersistenceServices {
@@ -243,6 +248,7 @@ impl RuntimeHandle {
             execution: ExecutionServices {
                 executor: self.execution.executor.clone(),
                 policy: self.execution.policy.clone(),
+                tool_authorizer: self.execution.tool_authorizer.clone(),
                 hooks: hooks.clone(),
             },
             persistence: PersistenceServices {
@@ -296,6 +302,42 @@ impl RuntimeHandle {
             runtime_intrinsics_enabled: self.runtime_intrinsics_enabled,
             runtime_instance_id: format!("runtime-{}", std::process::id()),
             persisted_runtime_identifier: runtime_identifier.into(),
+            lease_keys: Arc::new(Mutex::new(BTreeSet::new())),
+            agent_contexts: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    pub fn with_tool_authorizer(&self, tool_authorizer: Arc<dyn ToolAuthorizer>) -> Self {
+        Self {
+            execution: ExecutionServices {
+                executor: self.execution.executor.clone(),
+                policy: self.execution.policy.clone(),
+                tool_authorizer: Some(tool_authorizer),
+                hooks: self.execution.hooks.clone(),
+            },
+            persistence: PersistenceServices {
+                store: self.persistence.store.clone(),
+                memory: Arc::new(MemoryEngine::new(
+                    self.persistence.store.clone(),
+                    self.execution.hooks.clone(),
+                )),
+            },
+            collaboration: CollaborationServices {
+                background_tasks: BackgroundTaskManager::new(
+                    self.persistence.store.clone(),
+                    self.execution.executor.clone(),
+                    background_hook_sink(
+                        self.persistence.store.clone(),
+                        self.execution.hooks.clone(),
+                    ),
+                ),
+                team: self.collaboration.team.clone(),
+                teammate_host: self.collaboration.teammate_host.clone(),
+            },
+            tooling: clone_tooling_services(&self.tooling),
+            runtime_intrinsics_enabled: self.runtime_intrinsics_enabled,
+            runtime_instance_id: format!("runtime-{}", std::process::id()),
+            persisted_runtime_identifier: self.persisted_runtime_identifier.clone(),
             lease_keys: Arc::new(Mutex::new(BTreeSet::new())),
             agent_contexts: Arc::new(RwLock::new(HashMap::new())),
         }

@@ -4,7 +4,7 @@ use crate::{
     provider::{BuiltinProvider, Provider, ProviderRegistry},
     runtime::{
         RuntimeExecutor, RuntimeHandle, RuntimeHook, RuntimeHooks, RuntimePolicy, RuntimeStore,
-        error::RuntimeError, skill::SkillLoadError,
+        ToolAuthorizer, error::RuntimeError, skill::SkillLoadError,
     },
     tool::ExecutableTool,
 };
@@ -73,6 +73,17 @@ impl RuntimeBuilder {
     pub fn with_policy(self, policy: RuntimePolicy) -> Self {
         Self {
             handle: self.handle.with_policy(policy),
+            provider_registry: self.provider_registry,
+        }
+    }
+
+    /// Installs a pre-tool authorization service for runtime tool calls.
+    pub fn with_tool_authorizer<A>(self, tool_authorizer: A) -> Self
+    where
+        A: ToolAuthorizer + 'static,
+    {
+        Self {
+            handle: self.handle.with_tool_authorizer(Arc::new(tool_authorizer)),
             provider_registry: self.provider_registry,
         }
     }

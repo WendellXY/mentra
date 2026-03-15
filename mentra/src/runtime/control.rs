@@ -1,3 +1,4 @@
+mod authorization;
 mod command;
 mod hooks;
 mod policy;
@@ -5,6 +6,10 @@ mod run;
 mod shell_parse;
 mod shell_types;
 
+pub use authorization::{
+    ToolAuthorizationDecision, ToolAuthorizationOutcome, ToolAuthorizationRequest,
+    ToolAuthorizer,
+};
 pub use command::{
     CommandOutput, CommandRequest, CommandSpec, LocalRuntimeExecutor, RuntimeExecutor,
     read_limited_file,

@@ -30,6 +30,7 @@ pub use control::{
     CommandEvaluation, CommandOutput, CommandParse, CommandRequest, CommandSpec, CommandStage,
     Decision, ExecOutput, ExecRule, ParsedCommand, RuleMatch, RunOptions, RuntimeExecutor,
     RuntimeHook, RuntimeHookEvent, RuntimeHooks, RuntimePolicy, ShellRequest,
+    ToolAuthorizationDecision, ToolAuthorizationOutcome, ToolAuthorizationRequest, ToolAuthorizer,
     is_transient_provider_error, is_transient_runtime_error,
 };
 pub use error::RuntimeError;

@@ -20,7 +20,8 @@ use crate::{
     runtime::{
         control::{
             AuditHook, CommandOutput, CommandRequest, CommandSpec, LocalRuntimeExecutor,
-            RuntimeExecutor, RuntimeHookEvent, RuntimeHooks, RuntimePolicy, read_limited_file,
+            RuntimeExecutor, RuntimeHookEvent, RuntimeHooks, RuntimePolicy, ToolAuthorizer,
+            read_limited_file,
         },
         error::RuntimeError,
         store::{RuntimeStore, SqliteRuntimeStore},
@@ -52,6 +53,7 @@ pub struct RuntimeHandle {
 pub(crate) struct ExecutionServices {
     pub(crate) executor: Arc<dyn RuntimeExecutor>,
     pub(crate) policy: Arc<RuntimePolicy>,
+    pub(crate) tool_authorizer: Option<Arc<dyn ToolAuthorizer>>,
     pub(crate) hooks: RuntimeHooks,
 }
 

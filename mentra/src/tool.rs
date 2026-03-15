@@ -1,3 +1,4 @@
+mod authorization;
 mod builtin;
 mod context;
 mod files;
@@ -6,6 +7,7 @@ mod runtime;
 
 use std::{collections::HashMap, sync::Arc};
 
+pub use authorization::ToolAuthorizationPreview;
 pub use model::{
     ExecutableTool, ParallelToolContext, ToolCall, ToolCapability, ToolContext, ToolDurability,
     ToolExecutionMode, ToolResult, ToolSideEffectLevel, ToolSpec,
