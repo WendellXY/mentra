@@ -179,6 +179,12 @@ impl RuntimeHandle {
             .spawn_teammate(team_dir, summary, actor)
     }
 
+    pub fn wake_teammate(&self, team_dir: &Path, teammate_name: &str) -> Result<(), RuntimeError> {
+        self.collaboration
+            .team
+            .wake_teammate(team_dir, teammate_name)
+    }
+
     pub fn send_team_message(
         &self,
         team_dir: &Path,

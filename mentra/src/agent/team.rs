@@ -108,7 +108,8 @@ impl Agent {
         let team_dir = self.config.team.team_dir.clone();
         let actor = Arc::new(AsyncMutex::new(self));
         let actor_handle = runtime.spawn_teammate_actor(&team_dir, &summary.name, actor)?;
-        runtime.register_teammate(&team_dir, summary, actor_handle)?;
+        runtime.register_teammate(&team_dir, summary.clone(), actor_handle)?;
+        runtime.wake_teammate(&team_dir, &summary.name)?;
         Ok(())
     }
 

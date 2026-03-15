@@ -16,6 +16,7 @@ use crate::{
     agent::{AgentConfig, AgentSnapshot, AgentStatus, TeamConfig},
     provider::{ContentBlockDelta, ContentBlockStart, ProviderEvent},
     runtime::{AgentStore, Runtime, SqliteRuntimeStore, TeamMemberStatus},
+    team::{TeamMessage, TeamStore},
     tool::{
         ExecutableTool, ToolContext, ToolDurability, ToolResult, ToolSideEffectLevel, ToolSpec,
     },
@@ -476,6 +477,86 @@ async fn resume_revives_persisted_teammate_actors_for_lead_runtime() {
     let inbox = latest_team_inbox_text(&requests[2]).expect("team inbox");
     assert!(inbox.contains("alice"));
     assert!(inbox.contains("revived and responsive"));
+}
+
+#[tokio::test]
+async fn resume_wakes_revived_teammate_for_persisted_inbox_work() {
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let store = temp_store("teammate-revive-pending-inbox");
+    let runtime_identifier = "teammate-revive-pending-inbox";
+    let team_dir = temp_team_dir("resume-pending-inbox-team");
+
+    let initial_runtime = Runtime::builder()
+        .with_runtime_identifier(runtime_identifier)
+        .with_store(store.clone())
+        .with_provider_instance(ScriptedProvider::new(
+            BuiltinProvider::Anthropic,
+            vec![model.clone()],
+            Vec::new(),
+        ))
+        .build()
+        .expect("build initial runtime");
+    let mut lead = initial_runtime
+        .spawn_with_config(
+            "lead",
+            model.clone(),
+            AgentConfig {
+                team: team_config(team_dir.clone()),
+                ..Default::default()
+            },
+        )
+        .expect("spawn lead");
+    lead.spawn_teammate("alice", "researcher", None)
+        .await
+        .expect("spawn teammate");
+    drop(lead);
+    drop(initial_runtime);
+    clear_leases(&store);
+
+    <SqliteRuntimeStore as TeamStore>::append_team_message(
+        &store,
+        team_dir.as_path(),
+        "alice",
+        &TeamMessage::message(
+            "lead".to_string(),
+            "Handle this persisted inbox work after restart".to_string(),
+        ),
+    )
+    .expect("append persisted inbox message");
+
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(
+                &model.id,
+                "persisted-inbox-send",
+                "team_send",
+                r#"{"to":"lead","content":"processed persisted inbox"}"#,
+            ),
+            text_stream(&model.id, "done"),
+        ],
+    );
+    let provider_handle = provider.clone();
+    let runtime = Runtime::builder()
+        .with_runtime_identifier(runtime_identifier)
+        .with_store(store)
+        .with_provider_instance(provider)
+        .build()
+        .expect("build resumed runtime");
+
+    let mut resumed = runtime.resume(runtime_identifier).expect("resume runtime");
+    assert_eq!(resumed.len(), 1);
+    let lead = resumed.pop().expect("lead agent");
+    assert!(!lead.is_teammate());
+
+    wait_for_recorded_requests(&provider_handle, 2).await;
+    wait_for_teammate_status(&lead, TeamMemberStatus::Idle).await;
+
+    let requests = provider_handle.recorded_requests().await;
+    assert_eq!(requests.len(), 2);
+    let inbox = latest_team_inbox_text(&requests[0]).expect("team inbox");
+    assert!(inbox.contains("Handle this persisted inbox work after restart"));
 }
 
 struct BlockingTool {
