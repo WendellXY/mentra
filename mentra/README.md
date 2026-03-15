@@ -7,6 +7,7 @@ MSRV: Rust 1.85.
 ## Current Features
 
 - streaming model response handling
+- provider-neutral token usage reporting across OpenAI, Anthropic, and Gemini
 - custom tool execution through the async `ExecutableTool` trait
 - builtin `shell`, `background_run`, `check_background`, and `files` tools
 - builtin `task` subagents with isolated child context and parent-side tracking
