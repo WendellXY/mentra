@@ -6,9 +6,7 @@ use crate::{
     ContentBlock,
     agent::{Agent, AgentEvent, AgentStatus},
     error::RuntimeError,
-    runtime::{
-        RunOptions, RuntimeHookEvent, ToolAuthorizationOutcome, ToolAuthorizationRequest,
-    },
+    runtime::{RunOptions, RuntimeHookEvent, ToolAuthorizationOutcome, ToolAuthorizationRequest},
     tool::{
         ExecutableTool, ParallelToolContext, ToolCall, ToolCapability, ToolContext,
         ToolExecutionMode, ToolSpec,
@@ -220,9 +218,7 @@ impl ToolRuntime {
         reason: Option<String>,
     ) -> ContentBlock {
         let content = match outcome {
-            ToolAuthorizationOutcome::Allow => {
-                "Tool execution blocked by authorizer".to_string()
-            }
+            ToolAuthorizationOutcome::Allow => "Tool execution blocked by authorizer".to_string(),
             ToolAuthorizationOutcome::Prompt => reason
                 .map(|reason| format!("Tool execution requires approval: {reason}"))
                 .unwrap_or_else(|| "Tool execution requires approval".to_string()),
@@ -350,17 +346,21 @@ impl ToolRuntime {
         };
 
         let result = match authorizer.timeout() {
-            Some(timeout) => match tokio::time::timeout(timeout, authorizer.authorize(&request)).await
-            {
-                Ok(result) => result,
-                Err(_) => {
-                    return self.handle_authorization_block(
-                        call,
-                        ToolAuthorizationOutcome::Deny,
-                        Some(format!("authorizer timed out after {}", format_duration(timeout))),
-                    );
+            Some(timeout) => {
+                match tokio::time::timeout(timeout, authorizer.authorize(&request)).await {
+                    Ok(result) => result,
+                    Err(_) => {
+                        return self.handle_authorization_block(
+                            call,
+                            ToolAuthorizationOutcome::Deny,
+                            Some(format!(
+                                "authorizer timed out after {}",
+                                format_duration(timeout)
+                            )),
+                        );
+                    }
                 }
-            },
+            }
             None => authorizer.authorize(&request).await,
         };
 
@@ -388,7 +388,9 @@ impl ToolRuntime {
     ) -> Result<Option<ContentBlock>, RuntimeError> {
         self.emit_tool_authorization_finished(call, outcome, reason.clone())?;
         self.emit_tool_authorization_blocked(call, outcome, reason.clone())?;
-        Ok(Some(self.blocked_authorization_result(call, outcome, reason)))
+        Ok(Some(
+            self.blocked_authorization_result(call, outcome, reason),
+        ))
     }
 
     async fn execute_one_tool(
@@ -529,7 +531,10 @@ impl ToolRuntime {
         };
 
         let authorization_ctx = self.parallel_tool_context(agent, &call);
-        match self.authorize_tool_call(&call, &tool, &authorization_ctx).await {
+        match self
+            .authorize_tool_call(&call, &tool, &authorization_ctx)
+            .await
+        {
             Ok(Some(result)) => {
                 return self.completed_execution(agent, &call, &spec, result, false);
             }

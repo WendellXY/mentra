@@ -2,9 +2,8 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use crate::tool::{
-    ExecutableTool, ParallelToolContext, ToolAuthorizationPreview, ToolCapability,
-    ToolDurability, ToolExecutionMode, ToolResult, ToolSideEffectLevel, ToolSpec,
-    context::RuntimeContext,
+    ExecutableTool, ParallelToolContext, ToolAuthorizationPreview, ToolCapability, ToolDurability,
+    ToolExecutionMode, ToolResult, ToolSideEffectLevel, ToolSpec, context::RuntimeContext,
 };
 
 pub struct ShellTool;

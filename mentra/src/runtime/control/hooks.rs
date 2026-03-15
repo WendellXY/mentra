@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     provider::{ProviderError, TokenUsage},
-    runtime::{AuditStore, RuleMatch, ToolAuthorizationOutcome, error::RuntimeError},
+    runtime::{AuditStore, ToolAuthorizationOutcome, error::RuntimeError},
     tool::ToolAuthorizationPreview,
 };
 
@@ -35,15 +35,6 @@ pub enum RuntimeHookEvent {
         tool_call_id: String,
         outcome: ToolAuthorizationOutcome,
         reason: Option<String>,
-    },
-    ShellApprovalRequired {
-        agent_id: String,
-        tool_name: String,
-        command: String,
-        cwd: PathBuf,
-        parsed_kind: String,
-        matched_rules: Vec<RuleMatch>,
-        justification: Option<String>,
     },
     RecoveryPrepared {
         runtime_instance_id: String,
@@ -147,7 +138,6 @@ impl RuntimeHookEvent {
             Self::ToolAuthorizationStarted { agent_id, .. } => agent_id.clone(),
             Self::ToolAuthorizationFinished { agent_id, .. } => agent_id.clone(),
             Self::ToolAuthorizationBlocked { agent_id, .. } => agent_id.clone(),
-            Self::ShellApprovalRequired { agent_id, .. } => agent_id.clone(),
             Self::RecoveryPrepared {
                 runtime_instance_id,
             } => runtime_instance_id.clone(),
@@ -176,7 +166,6 @@ impl RuntimeHookEvent {
             Self::ToolAuthorizationStarted { .. } => "tool_authorization_started",
             Self::ToolAuthorizationFinished { .. } => "tool_authorization_finished",
             Self::ToolAuthorizationBlocked { .. } => "tool_authorization_blocked",
-            Self::ShellApprovalRequired { .. } => "shell_approval_required",
             Self::RecoveryPrepared { .. } => "recovery_prepared",
             Self::ModelRequestStarted { .. } => "model_request_started",
             Self::ModelRequestFinished { .. } => "model_request_finished",

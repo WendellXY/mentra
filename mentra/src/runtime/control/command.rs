@@ -11,7 +11,22 @@ use tokio::{
     process::{Child, Command},
 };
 
-use super::ExecOutput;
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecOutput {
+    pub stdout: String,
+    pub stderr: String,
+    pub success: bool,
+    pub status_code: Option<i32>,
+    pub timed_out: bool,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
+}
+
+impl ExecOutput {
+    pub fn success(&self) -> bool {
+        self.success
+    }
+}
 
 pub type CommandOutput = ExecOutput;
 

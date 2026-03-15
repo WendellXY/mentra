@@ -260,9 +260,16 @@ fn build_files_authorization_preview(
     })
 }
 
-fn preview_file_operation(working_directory: &std::path::Path, operation: FileOperation) -> Result<Value, String> {
+fn preview_file_operation(
+    working_directory: &std::path::Path,
+    operation: FileOperation,
+) -> Result<Value, String> {
     match operation {
-        FileOperation::Read { path, offset, limit } => Ok(json!({
+        FileOperation::Read {
+            path,
+            offset,
+            limit,
+        } => Ok(json!({
             "op": "read",
             "resolved_path": resolve_preview_path(working_directory, &path)?,
             "offset": offset,

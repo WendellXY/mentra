@@ -1102,48 +1102,6 @@ async fn files_tool_search_handles_symlink_loops() {
 }
 
 #[tokio::test]
-async fn background_run_reuses_shell_policy_evaluation() {
-    let model = model_info("model", BuiltinProvider::Anthropic);
-    let provider = ScriptedProvider::new(
-        BuiltinProvider::Anthropic,
-        vec![model.clone()],
-        vec![
-            tool_use_stream(
-                &model.id,
-                "tool-bg",
-                "background_run",
-                r#"{"command":"python -c 'print(1)'","justification":"background probe"}"#,
-            ),
-            text_stream(&model.id, "handled"),
-        ],
-    );
-
-    let runtime = Runtime::builder()
-        .with_policy(
-            RuntimePolicy::default()
-                .allow_shell_commands(true)
-                .allow_background_commands(true),
-        )
-        .with_provider_instance(provider)
-        .build()
-        .expect("build runtime");
-    let mut agent = runtime.spawn("agent", model).unwrap();
-
-    agent
-        .send(vec![ContentBlock::Text {
-            text: "run an unknown background command".to_string(),
-        }])
-        .await
-        .expect("send");
-
-    assert!(matches!(
-        &agent.history()[2].content[0],
-        ContentBlock::ToolResult { content, is_error: true, .. }
-            if content.contains("Command requires approval")
-    ));
-}
-
-#[tokio::test]
 async fn run_options_tool_budget_blocks_second_tool_call() {
     let model = model_info("model", BuiltinProvider::Anthropic);
     let provider = ScriptedProvider::new(

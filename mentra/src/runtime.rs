@@ -26,12 +26,11 @@ pub use crate::team::{
     TeamProtocolRequestSummary, TeamProtocolStatus,
 };
 pub use control::{
-    ApprovalPolicy, AuditHook, AuditLogHook, CancellationFlag, CancellationToken,
-    CommandEvaluation, CommandOutput, CommandParse, CommandRequest, CommandSpec, CommandStage,
-    Decision, ExecOutput, ExecRule, ParsedCommand, RuleMatch, RunOptions, RuntimeExecutor,
-    RuntimeHook, RuntimeHookEvent, RuntimeHooks, RuntimePolicy, ShellRequest,
-    ToolAuthorizationDecision, ToolAuthorizationOutcome, ToolAuthorizationRequest, ToolAuthorizer,
-    is_transient_provider_error, is_transient_runtime_error,
+    AuditHook, AuditLogHook, CancellationFlag, CancellationToken, CommandOutput, CommandRequest,
+    CommandSpec, ExecOutput, RunOptions, RuntimeExecutor, RuntimeHook, RuntimeHookEvent,
+    RuntimeHooks, RuntimePolicy, ToolAuthorizationDecision, ToolAuthorizationOutcome,
+    ToolAuthorizationRequest, ToolAuthorizer, is_transient_provider_error,
+    is_transient_runtime_error,
 };
 pub use error::RuntimeError;
 pub(crate) use handle::RuntimeHandle;

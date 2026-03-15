@@ -4,11 +4,6 @@ use std::{
     time::Duration,
 };
 
-use super::{
-    ApprovalPolicy, CommandEvaluation, Decision, ExecRule, ParsedCommand, RuleMatch, ShellRequest,
-    parse_command,
-};
-
 /// Authorization policy for builtin shell, background, and file tools.
 #[derive(Debug, Clone)]
 pub struct RuntimePolicy {
@@ -18,8 +13,6 @@ pub struct RuntimePolicy {
     allowed_read_roots: Vec<PathBuf>,
     allowed_write_roots: Vec<PathBuf>,
     allowed_env_vars: Vec<String>,
-    approval_policy: ApprovalPolicy,
-    exec_rules: Vec<ExecRule>,
     pub(crate) background_task_limit: Option<usize>,
     pub(crate) default_command_timeout: Duration,
     pub(crate) max_command_timeout: Duration,
@@ -35,8 +28,6 @@ impl Default for RuntimePolicy {
             allowed_read_roots: Vec::new(),
             allowed_write_roots: Vec::new(),
             allowed_env_vars: vec!["PATH".to_string()],
-            approval_policy: ApprovalPolicy::UnlessAllowed,
-            exec_rules: Vec::new(),
             background_task_limit: Some(8),
             default_command_timeout: Duration::from_secs(30),
             max_command_timeout: Duration::from_secs(30),
@@ -51,7 +42,6 @@ impl RuntimePolicy {
         Self {
             allow_shell_commands: true,
             allow_background_commands: true,
-            approval_policy: ApprovalPolicy::Never,
             ..Self::default()
         }
     }
@@ -92,18 +82,6 @@ impl RuntimePolicy {
         self
     }
 
-    /// Adds an explicit shell execution rule.
-    pub fn with_exec_rule(mut self, rule: ExecRule) -> Self {
-        self.exec_rules.push(rule);
-        self
-    }
-
-    /// Sets the approval policy for evaluated shell commands.
-    pub fn with_approval_policy(mut self, policy: ApprovalPolicy) -> Self {
-        self.approval_policy = policy;
-        self
-    }
-
     /// Sets the maximum number of concurrently tracked background tasks per agent.
     pub fn with_max_background_tasks(mut self, limit: usize) -> Self {
         self.background_task_limit = Some(limit);
@@ -135,75 +113,13 @@ impl RuntimePolicy {
         self
     }
 
-    pub(crate) fn evaluate_shell_request(
+    pub(crate) fn authorize_command_execution(
         &self,
         base_dir: &Path,
-        request: &ShellRequest,
-    ) -> Result<CommandEvaluation, String> {
-        self.authorize_command_roots(base_dir, &request.cwd, request.background)?;
-
-        let parsed = parse_command(&request.command, &request.cwd);
-        let mut decision = Decision::Allow;
-        let mut matched_rules = Vec::new();
-
-        for stage in &parsed.stages {
-            for argv in &stage.commands {
-                if let Some(rule) = self.exec_rules.iter().find(|rule| rule.matches(argv)) {
-                    decision = decision.merge(rule.decision);
-                    matched_rules.push(RuleMatch {
-                        summary: rule.summary(),
-                        decision: rule.decision,
-                        justification: rule.justification.clone(),
-                    });
-                }
-            }
-        }
-
-        if matched_rules.is_empty() {
-            decision = parsed
-                .stages
-                .iter()
-                .fold(Decision::Allow, |current, stage| {
-                    current.merge(match stage.parsed {
-                        ParsedCommand::Read { .. }
-                        | ParsedCommand::Search { .. }
-                        | ParsedCommand::ListFiles { .. } => Decision::Allow,
-                        ParsedCommand::Unknown { .. } => Decision::Prompt,
-                    })
-                });
-        }
-
-        decision = match self.approval_policy {
-            ApprovalPolicy::Never => {
-                if decision == Decision::Prompt {
-                    Decision::Allow
-                } else {
-                    decision
-                }
-            }
-            ApprovalPolicy::Always => {
-                if decision == Decision::Allow {
-                    Decision::Prompt
-                } else {
-                    decision
-                }
-            }
-            ApprovalPolicy::UnlessAllowed => decision,
-            ApprovalPolicy::OnRequest => {
-                if decision == Decision::Allow && request.justification.is_some() {
-                    Decision::Prompt
-                } else {
-                    decision
-                }
-            }
-        };
-
-        Ok(CommandEvaluation {
-            parsed: parsed.parsed,
-            stages: parsed.stages,
-            decision,
-            matched_rules,
-        })
+        cwd: &Path,
+        background: bool,
+    ) -> Result<(), String> {
+        self.authorize_command_roots(base_dir, cwd, background)
     }
 
     pub(crate) fn effective_timeout(&self, requested: Option<Duration>) -> Duration {
@@ -401,80 +317,27 @@ mod tests {
     };
 
     #[test]
-    fn heuristic_fallback_allows_safe_commands_and_prompts_unknown() {
-        let cwd = PathBuf::from("/tmp/repo");
-        let policy = RuntimePolicy::default().allow_shell_commands(true);
-
-        let safe = policy
-            .evaluate_shell_request(
-                &cwd,
-                &ShellRequest {
-                    command: "cat README.md".to_string(),
-                    cwd: cwd.clone(),
-                    requested_timeout: None,
-                    justification: None,
-                    background: false,
-                },
-            )
-            .expect("safe request");
-        assert_eq!(safe.decision, Decision::Allow);
-
-        let unknown = policy
-            .evaluate_shell_request(
-                &cwd,
-                &ShellRequest {
-                    command: "python -c 'print(1)'".to_string(),
-                    cwd: cwd.clone(),
-                    requested_timeout: None,
-                    justification: None,
-                    background: false,
-                },
-            )
-            .expect("unknown request");
-        assert_eq!(unknown.decision, Decision::Prompt);
-    }
-
-    #[test]
-    fn explicit_rules_override_heuristics() {
-        let cwd = PathBuf::from("/tmp/repo");
-        let policy = RuntimePolicy::default()
-            .allow_shell_commands(true)
-            .with_exec_rule(ExecRule::new("cat", ["README.md"], Decision::Forbidden));
-        let result = policy
-            .evaluate_shell_request(
-                &cwd,
-                &ShellRequest {
-                    command: "cat README.md".to_string(),
-                    cwd: cwd.clone(),
-                    requested_timeout: None,
-                    justification: None,
-                    background: false,
-                },
-            )
-            .expect("evaluated request");
-        assert_eq!(result.decision, Decision::Forbidden);
-        assert_eq!(result.matched_rules.len(), 1);
-    }
-
-    #[test]
     fn shell_roots_and_background_switches_short_circuit() {
         let cwd = PathBuf::from("/tmp/repo");
         let policy = RuntimePolicy::default()
             .allow_shell_commands(true)
             .allow_background_commands(false);
         let error = policy
-            .evaluate_shell_request(
-                &cwd,
-                &ShellRequest {
-                    command: "cat README.md".to_string(),
-                    cwd: cwd.clone(),
-                    requested_timeout: None,
-                    justification: None,
-                    background: true,
-                },
-            )
+            .authorize_command_execution(&cwd, &cwd, true)
             .expect_err("background should be disabled");
         assert!(error.contains("Background command execution is disabled"));
+    }
+
+    #[test]
+    fn authorize_command_execution_rejects_working_directory_outside_roots() {
+        let base_dir = PathBuf::from("/tmp/repo");
+        let cwd = PathBuf::from("/tmp/other");
+        let policy = RuntimePolicy::default().allow_shell_commands(true);
+
+        let error = policy
+            .authorize_command_execution(&base_dir, &cwd, false)
+            .expect_err("working directory should be rejected");
+        assert!(error.contains("outside the runtime policy roots"));
     }
 
     #[test]
