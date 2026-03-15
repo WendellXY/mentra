@@ -147,6 +147,22 @@ fn merge_usage(base: Option<TokenUsage>, update: Option<TokenUsage>) -> Option<T
     }
 }
 
+fn find_frame_boundary(buffer: &[u8]) -> Option<(usize, usize)> {
+    for (index, window) in buffer.windows(2).enumerate() {
+        if window == b"\n\n" {
+            return Some((index, 2));
+        }
+    }
+
+    for (index, window) in buffer.windows(4).enumerate() {
+        if window == b"\r\n\r\n" {
+            return Some((index, 4));
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::{StreamState, parse_frame};
@@ -207,20 +223,4 @@ mod tests {
             }]
         );
     }
-}
-
-fn find_frame_boundary(buffer: &[u8]) -> Option<(usize, usize)> {
-    for (index, window) in buffer.windows(2).enumerate() {
-        if window == b"\n\n" {
-            return Some((index, 2));
-        }
-    }
-
-    for (index, window) in buffer.windows(4).enumerate() {
-        if window == b"\r\n\r\n" {
-            return Some((index, 4));
-        }
-    }
-
-    None
 }
