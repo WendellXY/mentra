@@ -8,6 +8,8 @@ MSRV: Rust 1.85.
 
 - streaming model response handling
 - provider-neutral token usage reporting across OpenAI, Anthropic, and Gemini
+- optional tool authorization with structured previews and fail-closed execution blocking
+- recoverable malformed tool-call input handling that feeds retry guidance back to the model
 - custom tool execution through the async `ExecutableTool` trait
 - builtin `shell`, `background_run`, `check_background`, and `files` tools
 - builtin `task` subagents with isolated child context and parent-side tracking
