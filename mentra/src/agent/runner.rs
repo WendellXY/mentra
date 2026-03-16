@@ -1,7 +1,7 @@
 use std::{borrow::Cow, time::Duration};
 
 use crate::{
-    ContentBlock, Message,
+    ContentBlock, Message, Role,
     background::BackgroundNotification,
     error::RuntimeError,
     memory::journal::PendingTurnState,
@@ -12,7 +12,7 @@ use crate::{
     tool::ToolRuntime,
 };
 
-use super::{Agent, AgentEvent, AgentStatus, PendingAssistantTurn};
+use super::{Agent, AgentEvent, AgentStatus, PendingAssistantTurn, pending::InvalidToolUse};
 
 const PROVIDER_RETRY_BASE_DELAY: Duration = Duration::from_millis(500);
 const PROVIDER_RETRY_MAX_DELAY: Duration = Duration::from_secs(5);
@@ -55,6 +55,7 @@ impl<'a> TurnRunner<'a> {
             rounds += 1;
             self.agent.update_run_state("awaiting_model", None)?;
             let streamed = self.stream_turn().await?;
+            let invalid_tool_uses = streamed.pending.invalid_tool_uses().to_vec();
             if let Err(error) = self.commit_assistant_message(&streamed.pending) {
                 self.emit_model_response_finished(
                     streamed.attempt,
@@ -73,6 +74,13 @@ impl<'a> TurnRunner<'a> {
                 streamed.pending.usage().cloned(),
             )?;
 
+            if !invalid_tool_uses.is_empty() {
+                self.append_invalid_tool_input_feedback(&invalid_tool_uses)?;
+                self.agent.note_round_without_task();
+                self.agent.persist_agent_record()?;
+                continue;
+            }
+
             let tool_calls = streamed.pending.ready_tool_calls()?;
             if tool_calls.is_empty() {
                 self.agent.note_round_without_task();
@@ -84,7 +92,10 @@ impl<'a> TurnRunner<'a> {
                 .execute_calls(self.agent, &self.options, tool_calls)
                 .await?;
 
-            self.agent.memory.append_tool_results(execution.results)?;
+            self.agent.memory.append_message(Message {
+                role: Role::User,
+                content: execution.results,
+            })?;
             self.agent.sync_memory_snapshot();
             if execution.successful_task {
                 self.agent.record_task_activity();
@@ -253,6 +264,11 @@ impl<'a> TurnRunner<'a> {
         pending: &PendingAssistantTurn,
     ) -> Result<(), RuntimeError> {
         let assistant_message = pending.to_message()?;
+        if assistant_message.content.is_empty() {
+            self.agent.memory.clear_pending_turn()?;
+            self.agent.sync_memory_snapshot();
+            return Ok(());
+        }
         self.agent
             .memory
             .commit_assistant_message(assistant_message.clone())?;
@@ -261,6 +277,19 @@ impl<'a> TurnRunner<'a> {
             .emit_event(AgentEvent::AssistantMessageCommitted {
                 message: assistant_message,
             });
+        Ok(())
+    }
+
+    fn append_invalid_tool_input_feedback(
+        &mut self,
+        invalid_tool_uses: &[InvalidToolUse],
+    ) -> Result<(), RuntimeError> {
+        self.agent
+            .memory
+            .append_message(Message::user(ContentBlock::text(
+                format_invalid_tool_input_feedback(invalid_tool_uses),
+            )))?;
+        self.agent.sync_memory_snapshot();
         Ok(())
     }
 
@@ -336,6 +365,34 @@ fn provider_retry_delay(attempt: usize) -> Duration {
         .checked_mul(factor)
         .unwrap_or(PROVIDER_RETRY_MAX_DELAY)
         .min(PROVIDER_RETRY_MAX_DELAY)
+}
+
+fn format_invalid_tool_input_feedback(invalid_tool_uses: &[InvalidToolUse]) -> String {
+    let mut feedback = String::from(
+        "One or more tool calls could not be executed because their JSON arguments were invalid. \
+Please retry with valid JSON that matches the tool schema exactly.\n\n",
+    );
+
+    for invalid in invalid_tool_uses {
+        feedback.push_str(&format!(
+            "Tool '{}' ({}) failed to parse: {}.\nRaw arguments (truncated): {}\n\n",
+            invalid.name,
+            invalid.id,
+            invalid.error,
+            truncate_tool_input(&invalid.input_json, 240)
+        ));
+    }
+
+    feedback.truncate(feedback.trim_end().len());
+    feedback
+}
+
+fn truncate_tool_input(input: &str, max_chars: usize) -> String {
+    let mut truncated = input.chars().take(max_chars).collect::<String>();
+    if input.chars().count() > max_chars {
+        truncated.push_str("...");
+    }
+    truncated
 }
 
 impl Agent {

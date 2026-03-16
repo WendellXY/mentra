@@ -216,6 +216,84 @@ async fn tool_execution_error_is_wrapped_and_loop_continues() {
 }
 
 #[tokio::test]
+async fn malformed_tool_json_is_reported_back_to_model_instead_of_aborting() {
+    let model = model_info("model", BuiltinProvider::OpenAI);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::OpenAI,
+        vec![model.clone()],
+        vec![
+            ok_stream(vec![
+                ProviderEvent::MessageStarted {
+                    id: "msg-1".to_string(),
+                    model: model.id.clone(),
+                    role: Role::Assistant,
+                },
+                ProviderEvent::ContentBlockStarted {
+                    index: 0,
+                    kind: ContentBlockStart::ToolUse {
+                        id: "tool-1".to_string(),
+                        name: "files".to_string(),
+                    },
+                },
+                ProviderEvent::ContentBlockDelta {
+                    index: 0,
+                    delta: ContentBlockDelta::ToolUseInputJson(
+                        r#"{"path":"src/main.rs"#.to_string(),
+                    ),
+                },
+                ProviderEvent::ContentBlockStopped { index: 0 },
+                ProviderEvent::MessageStopped,
+            ]),
+            text_stream(&model.id, "recovered"),
+        ],
+    );
+
+    let provider_handle = provider.clone();
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime.spawn("agent", model).unwrap();
+    let mut events = agent.subscribe_events();
+
+    agent
+        .send(vec![ContentBlock::Text {
+            text: "inspect the file".to_string(),
+        }])
+        .await
+        .unwrap();
+
+    assert_eq!(agent.history().len(), 3);
+    assert_eq!(
+        agent.history()[1],
+        Message::user(ContentBlock::text(
+            "One or more tool calls could not be executed because their JSON arguments were invalid. Please retry with valid JSON that matches the tool schema exactly.\n\nTool 'files' (tool-1) failed to parse: EOF while parsing a string at line 1 column 20.\nRaw arguments (truncated): {\"path\":\"src/main.rs"
+        ))
+    );
+    assert_eq!(
+        agent.last_message(),
+        Some(&Message::assistant(ContentBlock::text("recovered")))
+    );
+
+    let events = collect_events(&mut events);
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ToolUseReady { .. }))
+    );
+
+    let requests = provider_handle.recorded_requests().await;
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1].messages.len(), 2);
+    assert_eq!(
+        requests[1].messages[1],
+        Message::user(ContentBlock::text(
+            "One or more tool calls could not be executed because their JSON arguments were invalid. Please retry with valid JSON that matches the tool schema exactly.\n\nTool 'files' (tool-1) failed to parse: EOF while parsing a string at line 1 column 20.\nRaw arguments (truncated): {\"path\":\"src/main.rs"
+        ))
+    );
+}
+
+#[tokio::test]
 async fn background_run_tool_starts_task_and_continues_the_turn() {
     let model = model_info("model", BuiltinProvider::Anthropic);
     let provider = ScriptedProvider::new(

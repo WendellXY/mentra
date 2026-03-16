@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use crate::{ContentBlock, Message, Role, error::RuntimeError, runtime::RuntimeStore};
+use crate::{Message, error::RuntimeError, runtime::RuntimeStore};
 
 use super::{
     recovery::RecoveryOutcome,
@@ -56,21 +56,17 @@ impl AgentMemory {
         self.persist()
     }
 
+    pub fn clear_pending_turn(&mut self) -> Result<(), RuntimeError> {
+        self.state.pending_turn = None;
+        self.persist()
+    }
+
     pub fn commit_assistant_message(&mut self, message: Message) -> Result<(), RuntimeError> {
         self.state.transcript.push(message);
         self.state.pending_turn = None;
         if let Some(run) = &mut self.state.run {
             run.assistant_committed = true;
         }
-        self.persist()
-    }
-
-    pub fn append_tool_results(&mut self, results: Vec<ContentBlock>) -> Result<(), RuntimeError> {
-        self.state.transcript.push(Message {
-            role: Role::User,
-            content: results,
-        });
-        self.state.pending_turn = None;
         self.persist()
     }
 

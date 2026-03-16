@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    Message, Role,
+    ContentBlock, Message, Role,
     error::RuntimeError,
     provider::{ContentBlockDelta, ProviderEvent, TokenUsage},
     tool::ToolCall,
@@ -15,10 +15,20 @@ pub struct PendingAssistantTurn {
     model: Option<String>,
     role: Option<Role>,
     blocks: BTreeMap<usize, PendingContentBlock>,
+    invalid_tool_uses: Vec<InvalidToolUse>,
     current_text: String,
     stop_reason: Option<String>,
     usage: Option<TokenUsage>,
     stopped: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct InvalidToolUse {
+    pub index: usize,
+    pub id: String,
+    pub name: String,
+    pub input_json: String,
+    pub error: String,
 }
 
 impl PendingAssistantTurn {
@@ -94,22 +104,27 @@ impl PendingAssistantTurn {
                     ..
                 } = block
                 {
-                    let input = serde_json::from_str(input_json).map_err(|source| {
-                        RuntimeError::InvalidToolUseInput {
-                            id: id.clone(),
-                            name: name.clone(),
-                            source,
+                    match serde_json::from_str(input_json) {
+                        Ok(input) => {
+                            derived_events.push(AgentEvent::ToolUseReady {
+                                index,
+                                call: ToolCall {
+                                    id: id.clone(),
+                                    name: name.clone(),
+                                    input,
+                                },
+                            });
                         }
-                    })?;
-
-                    derived_events.push(AgentEvent::ToolUseReady {
-                        index,
-                        call: ToolCall {
-                            id: id.clone(),
-                            name: name.clone(),
-                            input,
-                        },
-                    });
+                        Err(source) => {
+                            self.invalid_tool_uses.push(InvalidToolUse {
+                                index,
+                                id: id.clone(),
+                                name: name.clone(),
+                                input_json: input_json.clone(),
+                                error: source.to_string(),
+                            });
+                        }
+                    }
                 }
             }
             ProviderEvent::MessageDelta { stop_reason, usage } => {
@@ -140,7 +155,23 @@ impl PendingAssistantTurn {
                     "content block {index} did not complete"
                 )));
             }
-            content.push(block.to_content_block()?);
+            match block {
+                PendingContentBlock::ToolUse {
+                    id,
+                    name,
+                    input_json,
+                    ..
+                } => {
+                    if let Ok(input) = serde_json::from_str(input_json) {
+                        content.push(ContentBlock::ToolUse {
+                            id: id.clone(),
+                            name: name.clone(),
+                            input,
+                        });
+                    }
+                }
+                _ => content.push(block.to_content_block()?),
+            }
         }
 
         Ok(Message { role, content })
@@ -158,18 +189,13 @@ impl PendingAssistantTurn {
             } = block
                 && *complete
             {
-                let input = serde_json::from_str(input_json).map_err(|source| {
-                    RuntimeError::InvalidToolUseInput {
+                if let Ok(input) = serde_json::from_str(input_json) {
+                    tool_calls.push(ToolCall {
                         id: id.clone(),
                         name: name.clone(),
-                        source,
-                    }
-                })?;
-                tool_calls.push(ToolCall {
-                    id: id.clone(),
-                    name: name.clone(),
-                    input,
-                });
+                        input,
+                    });
+                }
             }
         }
 
@@ -181,6 +207,10 @@ impl PendingAssistantTurn {
             .values()
             .filter_map(PendingContentBlock::tool_use_summary)
             .collect()
+    }
+
+    pub(crate) fn invalid_tool_uses(&self) -> &[InvalidToolUse] {
+        &self.invalid_tool_uses
     }
 
     pub fn current_text(&self) -> &str {

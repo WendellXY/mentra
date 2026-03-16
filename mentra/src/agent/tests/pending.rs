@@ -103,7 +103,7 @@ fn tool_use_turn_emits_ready_event_and_parses_call() {
 }
 
 #[test]
-fn pending_turn_rejects_missing_stop_and_malformed_tool_json() {
+fn pending_turn_rejects_missing_stop_and_recovers_from_malformed_tool_json() {
     let mut text_pending = PendingAssistantTurn::default();
     text_pending
         .apply(ProviderEvent::MessageStarted {
@@ -155,7 +155,19 @@ fn pending_turn_rejects_missing_stop_and_malformed_tool_json() {
     assert!(
         tool_pending
             .apply(ProviderEvent::ContentBlockStopped { index: 0 })
-            .is_err()
+            .unwrap()
+            .is_empty()
+    );
+    tool_pending.apply(ProviderEvent::MessageStopped).unwrap();
+
+    assert!(tool_pending.ready_tool_calls().unwrap().is_empty());
+    assert_eq!(tool_pending.invalid_tool_uses().len(), 1);
+    assert_eq!(
+        tool_pending.to_message().unwrap(),
+        Message {
+            role: Role::Assistant,
+            content: Vec::new(),
+        }
     );
 }
 
