@@ -467,6 +467,7 @@ mod tests {
             max_output_tokens: None,
             metadata: Cow::Owned(BTreeMap::new()),
             provider_request_options: ProviderRequestOptions {
+                tool_search_mode: crate::provider::ToolSearchMode::Disabled,
                 openai: Default::default(),
                 anthropic: AnthropicRequestOptions {
                     disable_parallel_tool_use: Some(true),

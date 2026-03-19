@@ -217,9 +217,20 @@ impl Request<'_> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ProviderRequestOptions {
     #[serde(default)]
+    pub tool_search_mode: ToolSearchMode,
+    #[serde(default)]
     pub openai: OpenAIRequestOptions,
     #[serde(default)]
     pub anthropic: AnthropicRequestOptions,
+}
+
+/// Provider-neutral tool search behavior requested for a model call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolSearchMode {
+    #[default]
+    Disabled,
+    Hosted,
 }
 
 /// OpenAI-specific request options.

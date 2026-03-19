@@ -10,6 +10,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::{Deserialize, Serialize};
 
 use crate::provider::{ProviderRequestOptions, ToolChoice};
+#[cfg(test)]
+use crate::provider::ToolSearchMode;
 
 #[cfg(test)]
 static NEXT_TEST_TRANSCRIPT_DIR_ID: AtomicU64 = AtomicU64::new(1);
@@ -330,5 +332,43 @@ mod tests {
         .expect("deserialize config without tool profile");
 
         assert_eq!(config.tool_profile, ToolProfile::default());
+    }
+
+    #[test]
+    fn provider_request_options_default_to_disabled_tool_search() {
+        let options = ProviderRequestOptions::default();
+
+        assert_eq!(options.tool_search_mode, ToolSearchMode::Disabled);
+    }
+
+    #[test]
+    fn agent_config_deserializes_without_tool_search_mode() {
+        let config: AgentConfig = serde_json::from_value(json!({
+            "system": null,
+            "tool_choice": serde_json::to_value(ToolChoice::Auto).expect("serialize tool choice"),
+            "temperature": null,
+            "max_output_tokens": 8192,
+            "metadata": {},
+            "provider_request_options": {
+                "openai": {
+                    "parallel_tool_calls": true
+                }
+            },
+            "team": TeamConfig::default(),
+            "task": TaskConfig::default(),
+            "workspace": WorkspaceConfig::default(),
+            "memory": MemoryConfig::default(),
+            "context_compaction": ContextCompactionConfig::default()
+        }))
+        .expect("deserialize config without tool search mode");
+
+        assert_eq!(
+            config.provider_request_options.tool_search_mode,
+            ToolSearchMode::Disabled
+        );
+        assert_eq!(
+            config.provider_request_options.openai.parallel_tool_calls,
+            Some(true)
+        );
     }
 }

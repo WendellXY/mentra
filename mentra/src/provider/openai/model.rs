@@ -511,6 +511,7 @@ mod tests {
             max_output_tokens: None,
             metadata: Cow::Owned(BTreeMap::new()),
             provider_request_options: ProviderRequestOptions {
+                tool_search_mode: crate::provider::ToolSearchMode::Disabled,
                 openai: OpenAIRequestOptions {
                     parallel_tool_calls: Some(true),
                 },
