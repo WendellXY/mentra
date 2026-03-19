@@ -8,8 +8,9 @@ use crate::{
     BuiltinProvider,
     provider::model::{
         ContentBlock, ImageSource, Message, ModelInfo, ProviderError, Request, Role, ToolChoice,
+        ToolSearchMode,
     },
-    tool::ToolSpec,
+    tool::{ToolLoadingPolicy, ToolSpec},
 };
 
 #[derive(Deserialize)]
@@ -74,7 +75,11 @@ impl<'a> TryFrom<Request<'a>> for OpenAIResponsesRequest {
             model: value.model.into_owned(),
             instructions: value.system.map(Cow::into_owned),
             input,
-            tools: value.tools.iter().map(|tool| tool.into()).collect(),
+            tools: build_openai_tools(
+                value.tools.as_ref(),
+                value.tool_choice.as_ref(),
+                value.provider_request_options.tool_search_mode,
+            )?,
             tool_choice: value.tool_choice.map(Into::into),
             temperature: value.temperature,
             max_output_tokens: value.max_output_tokens,
@@ -244,30 +249,65 @@ pub(crate) struct OpenAIFunctionCallOutputInput {
 }
 
 #[derive(Serialize)]
-pub(crate) struct OpenAITool {
-    #[serde(rename = "type")]
-    kind: &'static str,
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-    parameters: serde_json::Value,
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(crate) enum OpenAITool {
+    Function {
+        name: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        parameters: serde_json::Value,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        defer_loading: bool,
+    },
+    ToolSearch {},
 }
 
-impl From<ToolSpec> for OpenAITool {
-    fn from(tool: ToolSpec) -> Self {
-        OpenAITool::from(&tool)
-    }
-}
-
-impl From<&ToolSpec> for OpenAITool {
-    fn from(tool: &ToolSpec) -> Self {
-        OpenAITool {
-            kind: "function",
+impl OpenAITool {
+    fn function(tool: &ToolSpec, force_immediate: bool) -> Self {
+        Self::Function {
             name: tool.name.clone(),
             description: tool.description.clone(),
             parameters: tool.input_schema.clone(),
+            defer_loading: tool.loading_policy == ToolLoadingPolicy::Deferred && !force_immediate,
         }
     }
+
+    fn tool_search() -> Self {
+        Self::ToolSearch {}
+    }
+}
+
+fn build_openai_tools(
+    tools: &[ToolSpec],
+    tool_choice: Option<&ToolChoice>,
+    tool_search_mode: ToolSearchMode,
+) -> Result<Vec<OpenAITool>, ProviderError> {
+    let forced_tool_name = match tool_choice {
+        Some(ToolChoice::Tool { name }) => Some(name.as_str()),
+        _ => None,
+    };
+
+    let has_deferred_tools = tools.iter().any(|tool| {
+        tool.loading_policy == ToolLoadingPolicy::Deferred
+            && forced_tool_name != Some(tool.name.as_str())
+    });
+
+    if has_deferred_tools && tool_search_mode != ToolSearchMode::Hosted {
+        return Err(ProviderError::InvalidRequest(
+            "OpenAI deferred tools require hosted tool search".to_string(),
+        ));
+    }
+
+    let mut provider_tools = tools
+        .iter()
+        .map(|tool| OpenAITool::function(tool, forced_tool_name == Some(tool.name.as_str())))
+        .collect::<Vec<_>>();
+
+    if has_deferred_tools {
+        provider_tools.push(OpenAITool::tool_search());
+    }
+
+    Ok(provider_tools)
 }
 
 #[derive(Serialize)]
@@ -313,10 +353,10 @@ mod tests {
 
     use crate::{
         provider::model::{
-            ContentBlock, Message, OpenAIRequestOptions, ProviderRequestOptions, Request, Role,
-            ToolChoice,
+            ContentBlock, Message, OpenAIRequestOptions, ProviderError, ProviderRequestOptions,
+            Request, Role, ToolChoice, ToolSearchMode,
         },
-        tool::ToolSpec,
+        tool::{ToolLoadingPolicy, ToolSpec},
     };
 
     use super::{OpenAIModel, OpenAIResponsesRequest};
@@ -390,6 +430,7 @@ mod tests {
         assert_eq!(payload["input"][3]["type"], "function_call_output");
         assert_eq!(payload["input"][3]["output"], "README contents");
         assert_eq!(payload["tools"][0]["type"], "function");
+        assert!(payload["tools"][0].get("defer_loading").is_none());
         assert_eq!(payload["tool_choice"]["type"], "function");
         assert_eq!(payload["tool_choice"]["name"], "files");
         let temperature = payload["temperature"]
@@ -523,5 +564,108 @@ mod tests {
             .expect("request should serialize");
 
         assert_eq!(payload["parallel_tool_calls"], true);
+    }
+
+    #[test]
+    fn hosted_tool_search_adds_search_tool_for_deferred_tools() {
+        let request = Request {
+            model: Cow::Borrowed("gpt-5.4"),
+            system: None,
+            messages: Cow::Owned(vec![Message::user(ContentBlock::text("hello"))]),
+            tools: Cow::Owned(vec![ToolSpec {
+                name: "lookup_order".to_string(),
+                description: Some("Look up an order".to_string()),
+                input_schema: json!({"type":"object"}),
+                capabilities: vec![],
+                side_effect_level: crate::tool::ToolSideEffectLevel::None,
+                durability: crate::tool::ToolDurability::ReplaySafe,
+                loading_policy: ToolLoadingPolicy::Deferred,
+                execution_timeout: None,
+            }]),
+            tool_choice: Some(ToolChoice::Auto),
+            temperature: None,
+            max_output_tokens: None,
+            metadata: Cow::Owned(BTreeMap::new()),
+            provider_request_options: ProviderRequestOptions {
+                tool_search_mode: ToolSearchMode::Hosted,
+                ..Default::default()
+            },
+        };
+
+        let payload = serde_json::to_value(OpenAIResponsesRequest::try_from(request).unwrap())
+            .expect("request should serialize");
+
+        assert_eq!(payload["tools"][0]["type"], "function");
+        assert_eq!(payload["tools"][0]["name"], "lookup_order");
+        assert_eq!(payload["tools"][0]["defer_loading"], true);
+        assert_eq!(payload["tools"][1]["type"], "tool_search");
+    }
+
+    #[test]
+    fn rejects_deferred_tools_without_hosted_tool_search() {
+        let request = Request {
+            model: Cow::Borrowed("gpt-5.4"),
+            system: None,
+            messages: Cow::Owned(vec![]),
+            tools: Cow::Owned(vec![ToolSpec {
+                name: "lookup_order".to_string(),
+                description: None,
+                input_schema: json!({"type":"object"}),
+                capabilities: vec![],
+                side_effect_level: crate::tool::ToolSideEffectLevel::None,
+                durability: crate::tool::ToolDurability::ReplaySafe,
+                loading_policy: ToolLoadingPolicy::Deferred,
+                execution_timeout: None,
+            }]),
+            tool_choice: Some(ToolChoice::Auto),
+            temperature: None,
+            max_output_tokens: None,
+            metadata: Cow::Owned(BTreeMap::new()),
+            provider_request_options: ProviderRequestOptions::default(),
+        };
+
+        let error = OpenAIResponsesRequest::try_from(request)
+            .err()
+            .expect("request should fail");
+        match error {
+            ProviderError::InvalidRequest(message) => {
+                assert!(message.contains("deferred tools require hosted tool search"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn forced_deferred_tool_serializes_as_immediate() {
+        let request = Request {
+            model: Cow::Borrowed("gpt-5.4"),
+            system: None,
+            messages: Cow::Owned(vec![]),
+            tools: Cow::Owned(vec![ToolSpec {
+                name: "lookup_order".to_string(),
+                description: Some("Look up an order".to_string()),
+                input_schema: json!({"type":"object"}),
+                capabilities: vec![],
+                side_effect_level: crate::tool::ToolSideEffectLevel::None,
+                durability: crate::tool::ToolDurability::ReplaySafe,
+                loading_policy: ToolLoadingPolicy::Deferred,
+                execution_timeout: None,
+            }]),
+            tool_choice: Some(ToolChoice::Tool {
+                name: "lookup_order".to_string(),
+            }),
+            temperature: None,
+            max_output_tokens: None,
+            metadata: Cow::Owned(BTreeMap::new()),
+            provider_request_options: ProviderRequestOptions::default(),
+        };
+
+        let payload = serde_json::to_value(OpenAIResponsesRequest::try_from(request).unwrap())
+            .expect("request should serialize");
+
+        assert_eq!(payload["tools"][0]["type"], "function");
+        assert!(payload["tools"][0].get("defer_loading").is_none());
+        assert!(payload["tools"].get(1).is_none());
+        assert_eq!(payload["tool_choice"]["name"], "lookup_order");
     }
 }
