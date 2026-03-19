@@ -579,6 +579,7 @@ impl ExecutableTool for BlockingTool {
             capabilities: vec![],
             side_effect_level: ToolSideEffectLevel::None,
             durability: ToolDurability::ReplaySafe,
+            loading_policy: crate::tool::ToolLoadingPolicy::Immediate,
             execution_timeout: None,
         }
     }

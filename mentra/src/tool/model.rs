@@ -61,6 +61,14 @@ pub enum ToolExecutionMode {
     Parallel,
 }
 
+/// Declares whether a tool is loaded eagerly or deferred for provider-native tool search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ToolLoadingPolicy {
+    #[default]
+    Immediate,
+    Deferred,
+}
+
 /// Provider-facing description of a tool and its input schema.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolSpec {
@@ -70,6 +78,8 @@ pub struct ToolSpec {
     pub capabilities: Vec<ToolCapability>,
     pub side_effect_level: ToolSideEffectLevel,
     pub durability: ToolDurability,
+    #[serde(default)]
+    pub loading_policy: ToolLoadingPolicy,
     /// Optional runtime-enforced timeout for the tool implementation itself.
     pub execution_timeout: Option<Duration>,
 }
@@ -87,6 +97,7 @@ impl ToolSpec {
             capabilities: Vec::new(),
             side_effect_level: ToolSideEffectLevel::None,
             durability: ToolDurability::Ephemeral,
+            loading_policy: ToolLoadingPolicy::Immediate,
             execution_timeout: None,
         }
     }
@@ -100,6 +111,7 @@ pub struct ToolSpecBuilder {
     capabilities: Vec<ToolCapability>,
     side_effect_level: ToolSideEffectLevel,
     durability: ToolDurability,
+    loading_policy: ToolLoadingPolicy,
     execution_timeout: Option<Duration>,
 }
 
@@ -134,6 +146,19 @@ impl ToolSpecBuilder {
         self
     }
 
+    pub fn loading_policy(mut self, loading_policy: ToolLoadingPolicy) -> Self {
+        self.loading_policy = loading_policy;
+        self
+    }
+
+    pub fn defer_loading(self, defer_loading: bool) -> Self {
+        self.loading_policy(if defer_loading {
+            ToolLoadingPolicy::Deferred
+        } else {
+            ToolLoadingPolicy::Immediate
+        })
+    }
+
     pub fn execution_timeout(mut self, execution_timeout: Duration) -> Self {
         self.execution_timeout = Some(execution_timeout);
         self
@@ -147,8 +172,56 @@ impl ToolSpecBuilder {
             capabilities: self.capabilities,
             side_effect_level: self.side_effect_level,
             durability: self.durability,
+            loading_policy: self.loading_policy,
             execution_timeout: self.execution_timeout,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ToolLoadingPolicy, ToolSpec};
+    use serde_json::json;
+
+    #[test]
+    fn tool_spec_builder_defaults_to_immediate_loading() {
+        let spec = ToolSpec::builder("echo_tool")
+            .description("Echo a value.")
+            .input_schema(json!({
+                "type": "object",
+                "properties": {
+                    "value": { "type": "string" }
+                }
+            }))
+            .build();
+
+        assert_eq!(spec.loading_policy, ToolLoadingPolicy::Immediate);
+    }
+
+    #[test]
+    fn tool_spec_builder_supports_deferred_loading() {
+        let spec = ToolSpec::builder("echo_tool").defer_loading(true).build();
+
+        assert_eq!(spec.loading_policy, ToolLoadingPolicy::Deferred);
+    }
+
+    #[test]
+    fn tool_spec_deserialization_defaults_loading_policy() {
+        let spec: ToolSpec = serde_json::from_value(json!({
+            "name": "echo_tool",
+            "description": "Echo a value.",
+            "input_schema": {
+                "type": "object",
+                "properties": {}
+            },
+            "capabilities": [],
+            "side_effect_level": "None",
+            "durability": "Ephemeral",
+            "execution_timeout": null
+        }))
+        .expect("deserialize tool spec");
+
+        assert_eq!(spec.loading_policy, ToolLoadingPolicy::Immediate);
     }
 }
 

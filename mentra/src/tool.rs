@@ -13,7 +13,7 @@ pub use authorization::{
 };
 pub use model::{
     ExecutableTool, ParallelToolContext, ToolCall, ToolCapability, ToolContext, ToolDurability,
-    ToolExecutionMode, ToolResult, ToolSideEffectLevel, ToolSpec,
+    ToolExecutionMode, ToolLoadingPolicy, ToolResult, ToolSideEffectLevel, ToolSpec,
 };
 pub(crate) use runtime::ToolRuntime;
 

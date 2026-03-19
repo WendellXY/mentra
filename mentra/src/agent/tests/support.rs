@@ -141,6 +141,7 @@ impl ExecutableTool for StaticTool {
             capabilities: vec![],
             side_effect_level: crate::tool::ToolSideEffectLevel::None,
             durability: crate::tool::ToolDurability::ReplaySafe,
+            loading_policy: crate::tool::ToolLoadingPolicy::Immediate,
             execution_timeout: None,
         }
     }
@@ -207,6 +208,7 @@ impl ExecutableTool for ProbeTool {
             capabilities: vec![],
             side_effect_level: crate::tool::ToolSideEffectLevel::None,
             durability: crate::tool::ToolDurability::ReplaySafe,
+            loading_policy: crate::tool::ToolLoadingPolicy::Immediate,
             execution_timeout: None,
         }
     }
