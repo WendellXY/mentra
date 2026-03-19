@@ -21,6 +21,7 @@ use crate::{
     memory::{MemoryRecord, MemoryRecordKind, MemoryStore},
     provider::{
         ContentBlockDelta, ContentBlockStart, ProviderError, ProviderEvent, Request, ToolChoice,
+        ToolSearchMode,
     },
     runtime::{
         CancellationToken, HybridRuntimeStore, RunOptions, Runtime, RuntimeError, RuntimePolicy,
@@ -1909,6 +1910,102 @@ async fn hidden_tool_profile_tool_choice_falls_back_to_auto() {
     let requests = provider_handle.recorded_requests().await;
     assert_eq!(requests[0].tool_choice, Some(ToolChoice::Auto));
     assert!(!tool_names(&requests[0]).contains("shell"));
+}
+
+#[tokio::test]
+async fn hidden_tool_profile_filters_deferred_tools_before_provider_request() {
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![text_stream(&model.id, "ok")],
+    );
+    let provider_handle = provider.clone();
+
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .with_tool(StaticTool::deferred_success("deferred_tool", "echoed"))
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime
+        .spawn_with_config(
+            "agent",
+            model,
+            AgentConfig {
+                tool_profile: ToolProfile::hide(["deferred_tool"]),
+                provider_request_options: crate::provider::ProviderRequestOptions {
+                    tool_search_mode: ToolSearchMode::Hosted,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+    agent.send(vec![ContentBlock::text("hello")]).await.unwrap();
+
+    let requests = provider_handle.recorded_requests().await;
+    assert_eq!(
+        requests[0].provider_request_options.tool_search_mode,
+        ToolSearchMode::Hosted
+    );
+    assert!(!tool_names(&requests[0]).contains("deferred_tool"));
+}
+
+#[tokio::test]
+async fn deferred_tool_choice_reaches_provider_request_unchanged() {
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![text_stream(&model.id, "ok")],
+    );
+    let provider_handle = provider.clone();
+
+    let runtime = Runtime::builder()
+        .with_provider_instance(provider)
+        .with_tool(StaticTool::deferred_success("deferred_tool", "echoed"))
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime
+        .spawn_with_config(
+            "agent",
+            model,
+            AgentConfig {
+                tool_choice: Some(ToolChoice::Tool {
+                    name: "deferred_tool".to_string(),
+                }),
+                provider_request_options: crate::provider::ProviderRequestOptions {
+                    tool_search_mode: ToolSearchMode::Hosted,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+    agent.send(vec![ContentBlock::text("hello")]).await.unwrap();
+
+    let requests = provider_handle.recorded_requests().await;
+    assert_eq!(
+        requests[0].tool_choice,
+        Some(ToolChoice::Tool {
+            name: "deferred_tool".to_string(),
+        })
+    );
+    let deferred_tool = requests[0]
+        .tools
+        .iter()
+        .find(|tool| tool.name == "deferred_tool")
+        .expect("deferred tool present");
+    assert_eq!(
+        deferred_tool.loading_policy,
+        crate::tool::ToolLoadingPolicy::Deferred
+    );
+    assert_eq!(
+        requests[0].provider_request_options.tool_search_mode,
+        ToolSearchMode::Hosted
+    );
 }
 
 #[tokio::test]

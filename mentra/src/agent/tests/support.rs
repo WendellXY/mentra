@@ -108,6 +108,7 @@ pub(super) fn controlled_stream() -> (
 pub(super) struct StaticTool {
     name: &'static str,
     result: ToolResult,
+    loading_policy: crate::tool::ToolLoadingPolicy,
 }
 
 impl StaticTool {
@@ -115,6 +116,7 @@ impl StaticTool {
         Self {
             name,
             result: Ok(output.to_string()),
+            loading_policy: crate::tool::ToolLoadingPolicy::Immediate,
         }
     }
 
@@ -122,6 +124,15 @@ impl StaticTool {
         Self {
             name,
             result: Err(error.to_string()),
+            loading_policy: crate::tool::ToolLoadingPolicy::Immediate,
+        }
+    }
+
+    pub(super) fn deferred_success(name: &'static str, output: &str) -> Self {
+        Self {
+            name,
+            result: Ok(output.to_string()),
+            loading_policy: crate::tool::ToolLoadingPolicy::Deferred,
         }
     }
 }
@@ -141,7 +152,7 @@ impl ExecutableTool for StaticTool {
             capabilities: vec![],
             side_effect_level: crate::tool::ToolSideEffectLevel::None,
             durability: crate::tool::ToolDurability::ReplaySafe,
-            loading_policy: crate::tool::ToolLoadingPolicy::Immediate,
+            loading_policy: self.loading_policy,
             execution_timeout: None,
         }
     }
