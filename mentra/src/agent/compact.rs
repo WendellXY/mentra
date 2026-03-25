@@ -2,6 +2,7 @@ use crate::memory::journal::CompactionOutcome;
 use crate::{
     ContentBlock, Message,
     agent::AgentEvent,
+    compaction::compaction_request_from_agent,
     error::RuntimeError,
     memory::{
         estimated_request_tokens, micro_compact_history, required_tail_start_for_continuation,
@@ -14,7 +15,7 @@ impl Agent {
     pub(crate) fn micro_compacted_history(&self) -> Vec<Message> {
         micro_compact_history(
             self.history(),
-            self.config.context_compaction.keep_recent_tool_results,
+            self.config.compaction.keep_recent_tool_results,
         )
     }
 
@@ -23,7 +24,7 @@ impl Agent {
     }
 
     pub(crate) async fn auto_compact_if_needed(&mut self) -> Result<(), RuntimeError> {
-        let Some(threshold) = self.config.context_compaction.auto_compact_threshold_tokens else {
+        let Some(threshold) = self.config.compaction.auto_compact_threshold_tokens else {
             return Ok(());
         };
 
@@ -49,7 +50,7 @@ impl Agent {
         }
 
         let preserve_from = preserve_from.min(self.history().len());
-        let summary_target = &self.history()[..preserve_from];
+        let summary_target = &self.transcript().items()[..preserve_from];
         if summary_target.is_empty() {
             return Ok(None);
         }
@@ -57,35 +58,35 @@ impl Agent {
         let base_revision = self.memory.revision();
         let Some(proposal) = self
             .runtime
-            .memory_engine()
+            .compaction_engine()
             .compact(
                 self.provider.clone(),
-                crate::memory::CompactRequest {
-                    agent_id: self.id().to_string(),
-                    base_revision,
-                    history: self.history().to_vec(),
-                    preserve_from,
-                    trigger: trigger.clone(),
-                    transcript_dir: self.config.context_compaction.transcript_dir.clone(),
-                    summary_max_input_chars: self.config.context_compaction.summary_max_input_chars,
-                    summary_max_output_tokens: self
-                        .config
-                        .context_compaction
-                        .summary_max_output_tokens,
-                    model: self.model.clone(),
-                    provider_request_options: self.config.provider_request_options.clone(),
-                },
+                compaction_request_from_agent(
+                    self.id(),
+                    self.name(),
+                    self.model(),
+                    self.transcript().clone(),
+                    trigger.clone(),
+                    &self.config.compaction,
+                    self.config.provider_request_options.clone(),
+                ),
             )
             .await?
         else {
             return Ok(None);
         };
         let transcript_path = proposal.transcript_path.clone();
-        let replaced_messages = proposal.replaced_messages;
-        let preserved_messages = proposal.preserved_messages;
+        let replaced_items = proposal.replaced_items;
+        let preserved_items = proposal.preserved_items;
         let summary = proposal.summary.clone();
+        self.runtime
+            .emit_hook(crate::runtime::RuntimeHookEvent::MemoryCompactionProposed {
+                agent_id: self.id().to_string(),
+                base_revision,
+                transcript_path: transcript_path.clone(),
+            })?;
         let applied = self.memory.try_apply_compaction(
-            proposal.base_revision,
+            base_revision,
             CompactionOutcome {
                 transcript_path: proposal.transcript_path,
                 transcript: proposal.transcript,
@@ -103,7 +104,7 @@ impl Agent {
         self.runtime.memory_engine().store_compaction_summary(
             self.id(),
             self.memory.revision(),
-            &summary,
+            &summary.render_for_handoff(),
         )?;
         self.sync_memory_snapshot();
         let _ = self
@@ -111,15 +112,19 @@ impl Agent {
             .emit_hook(crate::runtime::RuntimeHookEvent::MemoryCompactionApplied {
                 agent_id: self.id().to_string(),
                 base_revision,
-                resulting_history_len: self.history().len(),
+                resulting_history_len: self.transcript().len(),
             });
 
         let details = ContextCompactionDetails {
             trigger,
+            mode: proposal.mode,
+            agent_id: self.id().to_string(),
             transcript_path,
-            replaced_messages,
-            preserved_messages,
-            resulting_history_len: self.history().len(),
+            replaced_items,
+            preserved_items,
+            preserved_user_turns: proposal.preserved_user_turns,
+            preserved_delegation_results: proposal.preserved_delegation_results,
+            resulting_transcript_len: self.transcript().len(),
         };
         self.emit_event(AgentEvent::ContextCompacted {
             details: details.clone(),
@@ -132,7 +137,7 @@ impl Agent {
         let Some(identity) = &self.teammate_identity else {
             return;
         };
-        if messages.len() > 3 {
+        if messages.len() > 5 {
             return;
         }
 

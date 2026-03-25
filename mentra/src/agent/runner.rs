@@ -9,6 +9,9 @@ use crate::{
     provider::Request,
     runtime::{RunOptions, RuntimeHookEvent, control::is_transient_provider_error},
     team::format_inbox,
+    transcript::{
+        DelegationArtifact, DelegationKind, DelegationStatus, TranscriptItem,
+    },
     tool::ToolRuntime,
 };
 
@@ -405,8 +408,23 @@ impl Agent {
         }
 
         self.inflight_team_messages.extend(messages.iter().cloned());
-        self.memory
-            .append_message(Message::user(ContentBlock::text(format_inbox(&messages))))?;
+        for message in &messages {
+            let content = format_inbox(std::slice::from_ref(message));
+            self.memory.append_transcript_item(TranscriptItem::delegation_request(
+                Message::user(ContentBlock::text(content)),
+                DelegationArtifact {
+                    kind: DelegationKind::Teammate,
+                    agent_id: message.sender.clone(),
+                    agent_name: message.sender.clone(),
+                    role: Some("teammate".to_string()),
+                    status: DelegationStatus::Requested,
+                    task_summary: message.content.clone(),
+                    result_summary: None,
+                    artifacts: Vec::new(),
+                },
+                None,
+            ))?;
+        }
         self.sync_memory_snapshot();
         Ok(())
     }
@@ -436,8 +454,8 @@ impl Agent {
         self.inflight_background_notifications
             .extend(notifications.iter().cloned());
         self.memory
-            .append_message(Message::user(ContentBlock::text(
-                format_background_results(&notifications),
+            .append_transcript_item(TranscriptItem::canonical_context(Message::user(
+                ContentBlock::text(format_background_results(&notifications)),
             )))?;
         self.sync_memory_snapshot();
         Ok(())
