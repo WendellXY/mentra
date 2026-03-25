@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::error::ProviderError;
 
@@ -19,6 +20,11 @@ pub enum AuthScheme {
 }
 
 /// Provider credentials resolved at runtime.
+///
+/// `bearer_token` is the provider's primary auth secret and is applied according
+/// to the provider definition's [`AuthScheme`]. For example, Responses-family
+/// providers send it as `Authorization: Bearer ...`, while header/query auth
+/// providers can reuse the same resolved secret in a different location.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ProviderCredentials {
     pub bearer_token: Option<String>,
@@ -37,5 +43,30 @@ pub trait CredentialSource: Send + Sync {
             .await?
             .bearer_token
             .ok_or_else(|| ProviderError::InvalidRequest("missing bearer token".to_string()))
+    }
+}
+
+/// Supplies a fixed auth secret to the provider.
+#[derive(Clone)]
+pub struct StaticCredentialSource {
+    secret: Arc<str>,
+}
+
+impl StaticCredentialSource {
+    pub fn new(secret: impl Into<String>) -> Self {
+        Self {
+            secret: Arc::from(secret.into()),
+        }
+    }
+}
+
+#[async_trait]
+impl CredentialSource for StaticCredentialSource {
+    async fn credentials(&self) -> Result<ProviderCredentials, ProviderError> {
+        Ok(ProviderCredentials {
+            bearer_token: Some(self.secret.to_string()),
+            account_id: None,
+            headers: HashMap::new(),
+        })
     }
 }

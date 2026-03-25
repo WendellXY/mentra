@@ -1,50 +1,59 @@
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
-use url::Url;
+use std::sync::Arc;
 
 pub(crate) mod model;
 pub(crate) mod sse;
 pub(crate) mod stream_model;
 
 use crate::{
-    AuthScheme, BuiltinProvider, ModelCatalog, ModelInfo, ProviderCapabilities, ProviderDefinition,
-    ProviderError, ProviderEventStream, ProviderSession, ProviderSessionFactory,
-    RegisteredProvider, Request, WireApi,
+    AuthScheme, BuiltinProvider, CredentialSource, ModelCatalog, ModelInfo, ProviderCapabilities,
+    ProviderDefinition, ProviderError, ProviderEventStream, ProviderSession,
+    ProviderSessionFactory, RegisteredProvider, Request, StaticCredentialSource, WireApi,
 };
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
-#[derive(Clone)]
-pub struct AnthropicProvider {
+pub struct AnthropicProvider<C = StaticCredentialSource> {
     client: reqwest::Client,
-    base_url: Url,
+    credential_source: Arc<C>,
     definition: ProviderDefinition,
 }
 
-impl AnthropicProvider {
-    pub fn new(api_key: impl Into<String>) -> Self {
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            "x-api-key",
-            api_key.into().parse().expect("Failed to parse API key"),
-        );
-        headers.insert(
-            "anthropic-version",
-            ANTHROPIC_VERSION
-                .parse()
-                .expect("Failed to parse Anthropic version"),
-        );
+impl<C> Clone for AnthropicProvider<C> {
+    fn clone(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            credential_source: Arc::clone(&self.credential_source),
+            definition: self.definition.clone(),
+        }
+    }
+}
 
+impl AnthropicProvider<StaticCredentialSource> {
+    pub fn new(api_key: impl Into<String>) -> Self {
+        Self::with_credential_source(StaticCredentialSource::new(api_key))
+    }
+}
+
+impl<C> AnthropicProvider<C>
+where
+    C: CredentialSource + 'static,
+{
+    pub fn with_credential_source(credential_source: C) -> Self {
+        Self::with_shared_credential_source(Arc::new(credential_source))
+    }
+
+    pub fn with_shared_credential_source(credential_source: Arc<C>) -> Self {
         let client = reqwest::Client::builder()
-            .default_headers(headers)
             .build()
             .expect("Failed to build client");
 
         Self {
             client,
-            base_url: Url::parse(DEFAULT_BASE_URL).expect("Failed to parse default base URL"),
+            credential_source,
             definition: Self::definition(),
         }
     }
@@ -74,26 +83,29 @@ impl AnthropicProvider {
 }
 
 #[async_trait]
-impl ModelCatalog for AnthropicProvider {
+impl<C> ModelCatalog for AnthropicProvider<C>
+where
+    C: CredentialSource + 'static,
+{
     async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
         let mut models = Vec::new();
         let mut after_id = None;
 
         loop {
-            let response = self
+            let credentials = self.credential_source.credentials().await?;
+            let request = self
                 .client
                 .get(
-                    self.base_url
-                        .join("v1/models")
-                        .expect("Failed to join models URL"),
+                    self.definition
+                        .request_url_with_auth_for_path("v1/models", &credentials)?,
                 )
+                .headers(self.definition.build_headers(&credentials)?)
                 .query(&[
                     ("limit", "1000"),
                     ("after_id", after_id.as_deref().unwrap_or("")),
-                ])
-                .send()
-                .await
-                .map_err(ProviderError::Transport)?;
+                ]);
+
+            let response = request.send().await.map_err(ProviderError::Transport)?;
 
             if !response.status().is_success() {
                 return Err(ProviderError::Http {
@@ -120,14 +132,20 @@ impl ModelCatalog for AnthropicProvider {
 }
 
 #[async_trait]
-impl ProviderSessionFactory for AnthropicProvider {
+impl<C> ProviderSessionFactory for AnthropicProvider<C>
+where
+    C: CredentialSource + 'static,
+{
     async fn create_session(&self) -> Result<Box<dyn ProviderSession>, ProviderError> {
-        Ok(Box::new(self.clone()))
+        Ok(Box::new((*self).clone()))
     }
 }
 
 #[async_trait]
-impl ProviderSession for AnthropicProvider {
+impl<C> ProviderSession for AnthropicProvider<C>
+where
+    C: CredentialSource + 'static,
+{
     async fn stream(&self, request: Request<'_>) -> Result<ProviderEventStream, ProviderError> {
         let response = self.send_message(request, true).await?;
         Ok(sse::spawn_event_stream(response))
@@ -135,13 +153,19 @@ impl ProviderSession for AnthropicProvider {
 }
 
 #[async_trait]
-impl RegisteredProvider for AnthropicProvider {
+impl<C> RegisteredProvider for AnthropicProvider<C>
+where
+    C: CredentialSource + 'static,
+{
     fn definition(&self) -> ProviderDefinition {
         self.definition.clone()
     }
 }
 
-impl AnthropicProvider {
+impl<C> AnthropicProvider<C>
+where
+    C: CredentialSource + 'static,
+{
     async fn send_message(
         &self,
         request: Request<'_>,
@@ -152,13 +176,14 @@ impl AnthropicProvider {
         if stream {
             body["stream"] = Value::Bool(true);
         }
+        let credentials = self.credential_source.credentials().await?;
         let response = self
             .client
             .post(
-                self.base_url
-                    .join("v1/messages")
-                    .expect("Failed to join messages URL"),
+                self.definition
+                    .request_url_with_auth_for_path("v1/messages", &credentials)?,
             )
+            .headers(self.definition.build_headers(&credentials)?)
             .json(&body)
             .send()
             .await

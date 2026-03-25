@@ -1,43 +1,55 @@
 use async_trait::async_trait;
-use url::Url;
+use std::sync::Arc;
 
 pub(crate) mod model;
 pub(crate) mod sse;
 
 use crate::{
-    AuthScheme, BuiltinProvider, ModelCatalog, ModelInfo, ProviderCapabilities, ProviderDefinition,
-    ProviderError, ProviderEventStream, ProviderSession, ProviderSessionFactory,
-    RegisteredProvider, Request, WireApi,
+    AuthScheme, BuiltinProvider, CredentialSource, ModelCatalog, ModelInfo, ProviderCapabilities,
+    ProviderDefinition, ProviderError, ProviderEventStream, ProviderSession,
+    ProviderSessionFactory, RegisteredProvider, Request, StaticCredentialSource, WireApi,
 };
 
 const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/";
 
-#[derive(Clone)]
-pub struct GeminiProvider {
+pub struct GeminiProvider<C = StaticCredentialSource> {
     client: reqwest::Client,
-    base_url: Url,
+    credential_source: Arc<C>,
     definition: ProviderDefinition,
 }
 
-impl GeminiProvider {
-    pub fn new(api_key: impl Into<String>) -> Self {
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            "x-goog-api-key",
-            api_key
-                .into()
-                .parse()
-                .expect("Failed to parse Gemini API key"),
-        );
+impl<C> Clone for GeminiProvider<C> {
+    fn clone(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            credential_source: Arc::clone(&self.credential_source),
+            definition: self.definition.clone(),
+        }
+    }
+}
 
+impl GeminiProvider<StaticCredentialSource> {
+    pub fn new(api_key: impl Into<String>) -> Self {
+        Self::with_credential_source(StaticCredentialSource::new(api_key))
+    }
+}
+
+impl<C> GeminiProvider<C>
+where
+    C: CredentialSource + 'static,
+{
+    pub fn with_credential_source(credential_source: C) -> Self {
+        Self::with_shared_credential_source(Arc::new(credential_source))
+    }
+
+    pub fn with_shared_credential_source(credential_source: Arc<C>) -> Self {
         let client = reqwest::Client::builder()
-            .default_headers(headers)
             .build()
             .expect("Failed to build client");
 
         Self {
             client,
-            base_url: Url::parse(DEFAULT_BASE_URL).expect("Failed to parse default base URL"),
+            credential_source,
             definition: Self::definition(),
         }
     }
@@ -64,19 +76,23 @@ impl GeminiProvider {
 }
 
 #[async_trait]
-impl ModelCatalog for GeminiProvider {
+impl<C> ModelCatalog for GeminiProvider<C>
+where
+    C: CredentialSource + 'static,
+{
     async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
         let mut models = Vec::new();
         let mut page_token = None::<String>;
 
         loop {
+            let credentials = self.credential_source.credentials().await?;
             let mut request = self
                 .client
                 .get(
-                    self.base_url
-                        .join("v1beta/models")
-                        .expect("Failed to join Gemini models URL"),
+                    self.definition
+                        .request_url_with_auth_for_path("v1beta/models", &credentials)?,
                 )
+                .headers(self.definition.build_headers(&credentials)?)
                 .query(&[("pageSize", "1000")]);
 
             if let Some(token) = page_token.as_deref() {
@@ -114,27 +130,34 @@ impl ModelCatalog for GeminiProvider {
 }
 
 #[async_trait]
-impl ProviderSessionFactory for GeminiProvider {
+impl<C> ProviderSessionFactory for GeminiProvider<C>
+where
+    C: CredentialSource + 'static,
+{
     async fn create_session(&self) -> Result<Box<dyn ProviderSession>, ProviderError> {
-        Ok(Box::new(self.clone()))
+        Ok(Box::new((*self).clone()))
     }
 }
 
 #[async_trait]
-impl ProviderSession for GeminiProvider {
+impl<C> ProviderSession for GeminiProvider<C>
+where
+    C: CredentialSource + 'static,
+{
     async fn stream(&self, request: Request<'_>) -> Result<ProviderEventStream, ProviderError> {
         let model_name = request.model.to_string();
         let request = model::GeminiGenerateContentRequest::try_from(request)?;
+        let credentials = self.credential_source.credentials().await?;
         let response = self
             .client
-            .post(
-                self.base_url
-                    .join(&format!(
-                        "v1beta/{}:streamGenerateContent",
-                        normalize_model_name(&model_name)
-                    ))
-                    .expect("Failed to join Gemini stream URL"),
-            )
+            .post(self.definition.request_url_with_auth_for_path(
+                &format!(
+                    "v1beta/{}:streamGenerateContent",
+                    normalize_model_name(&model_name)
+                ),
+                &credentials,
+            )?)
+            .headers(self.definition.build_headers(&credentials)?)
             .query(&[("alt", "sse")])
             .json(&request)
             .send()
@@ -153,7 +176,10 @@ impl ProviderSession for GeminiProvider {
 }
 
 #[async_trait]
-impl RegisteredProvider for GeminiProvider {
+impl<C> RegisteredProvider for GeminiProvider<C>
+where
+    C: CredentialSource + 'static,
+{
     fn definition(&self) -> ProviderDefinition {
         self.definition.clone()
     }

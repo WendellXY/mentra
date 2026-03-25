@@ -1,3 +1,4 @@
+use http::{HeaderMap, HeaderName, HeaderValue, header};
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::HashMap, fmt::Display, time::Duration};
 use strum::{Display as StrumDisplay, IntoStaticStr};
@@ -219,6 +220,59 @@ impl ProviderDefinition {
         url
     }
 
+    pub fn build_headers(
+        &self,
+        credentials: &crate::ProviderCredentials,
+    ) -> Result<HeaderMap, crate::ProviderError> {
+        let mut headers = HeaderMap::new();
+
+        if let Some(configured_headers) = &self.headers {
+            for (name, value) in configured_headers {
+                insert_header(&mut headers, name, value)?;
+            }
+        }
+
+        for (name, value) in &credentials.headers {
+            insert_header(&mut headers, name, value)?;
+        }
+
+        match &self.auth_scheme {
+            crate::AuthScheme::None | crate::AuthScheme::QueryParam { .. } => {}
+            crate::AuthScheme::BearerToken => {
+                let token = required_auth_value(credentials)?;
+                let auth_value =
+                    HeaderValue::from_str(&format!("Bearer {token}")).map_err(|error| {
+                        crate::ProviderError::InvalidRequest(format!(
+                            "invalid bearer token header: {error}"
+                        ))
+                    })?;
+                headers.insert(header::AUTHORIZATION, auth_value);
+            }
+            crate::AuthScheme::Header { name } => {
+                let token = required_auth_value(credentials)?;
+                insert_header(&mut headers, name, token)?;
+            }
+        }
+
+        Ok(headers)
+    }
+
+    pub fn request_url_with_auth_for_path(
+        &self,
+        path: &str,
+        credentials: &crate::ProviderCredentials,
+    ) -> Result<Url, crate::ProviderError> {
+        let mut url = Url::parse(&self.url_for_path(path))
+            .map_err(|error| crate::ProviderError::InvalidRequest(error.to_string()))?;
+
+        if let crate::AuthScheme::QueryParam { name } = &self.auth_scheme {
+            let token = required_auth_value(credentials)?;
+            url.query_pairs_mut().append_pair(name, token);
+        }
+
+        Ok(url)
+    }
+
     pub fn websocket_url_for_path(&self, path: &str) -> Result<Url, url::ParseError> {
         let mut url = Url::parse(&self.url_for_path(path))?;
 
@@ -230,5 +284,105 @@ impl ProviderDefinition {
         };
         let _ = url.set_scheme(scheme);
         Ok(url)
+    }
+
+    pub fn websocket_url_with_auth_for_path(
+        &self,
+        path: &str,
+        credentials: &crate::ProviderCredentials,
+    ) -> Result<Url, crate::ProviderError> {
+        let mut url = self
+            .websocket_url_for_path(path)
+            .map_err(|error| crate::ProviderError::InvalidRequest(error.to_string()))?;
+
+        if let crate::AuthScheme::QueryParam { name } = &self.auth_scheme {
+            let token = required_auth_value(credentials)?;
+            url.query_pairs_mut().append_pair(name, token);
+        }
+
+        Ok(url)
+    }
+}
+
+fn insert_header(
+    headers: &mut HeaderMap,
+    name: &str,
+    value: &str,
+) -> Result<(), crate::ProviderError> {
+    let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|error| {
+        crate::ProviderError::InvalidRequest(format!(
+            "invalid provider header name {name:?}: {error}"
+        ))
+    })?;
+    let header_value = HeaderValue::from_str(value).map_err(|error| {
+        crate::ProviderError::InvalidRequest(format!(
+            "invalid provider header value for {name:?}: {error}"
+        ))
+    })?;
+    headers.insert(header_name, header_value);
+    Ok(())
+}
+
+fn required_auth_value(
+    credentials: &crate::ProviderCredentials,
+) -> Result<&str, crate::ProviderError> {
+    credentials.bearer_token.as_deref().ok_or_else(|| {
+        crate::ProviderError::InvalidRequest("missing provider auth credential".to_string())
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_headers_applies_bearer_auth_and_static_headers() {
+        let mut definition = ProviderDefinition::new("test");
+        definition.auth_scheme = crate::AuthScheme::BearerToken;
+        definition.headers = Some(HashMap::from([(
+            "x-provider-header".to_string(),
+            "static".to_string(),
+        )]));
+
+        let headers = definition
+            .build_headers(&crate::ProviderCredentials {
+                bearer_token: Some("secret".to_string()),
+                account_id: None,
+                headers: HashMap::from([("x-runtime-header".to_string(), "dynamic".to_string())]),
+            })
+            .expect("headers should build");
+
+        assert_eq!(headers["x-provider-header"], "static");
+        assert_eq!(headers["x-runtime-header"], "dynamic");
+        assert_eq!(headers[header::AUTHORIZATION], "Bearer secret");
+    }
+
+    #[test]
+    fn request_url_with_auth_appends_query_param_auth() {
+        let mut definition = ProviderDefinition::new("test");
+        definition.base_url = Some("https://example.com/v1".to_string());
+        definition.query_params = Some(HashMap::from([(
+            "api-version".to_string(),
+            "2026".to_string(),
+        )]));
+        definition.auth_scheme = crate::AuthScheme::QueryParam {
+            name: "api-key".to_string(),
+        };
+
+        let url = definition
+            .request_url_with_auth_for_path(
+                "responses",
+                &crate::ProviderCredentials {
+                    bearer_token: Some("secret".to_string()),
+                    account_id: None,
+                    headers: HashMap::new(),
+                },
+            )
+            .expect("url should build");
+
+        assert_eq!(
+            url.as_str(),
+            "https://example.com/v1/responses?api-version=2026&api-key=secret"
+        );
     }
 }

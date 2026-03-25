@@ -5,12 +5,11 @@ pub mod sse;
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use http::{HeaderMap, HeaderName, HeaderValue, header};
 
 use crate::{
     AuthScheme, BuiltinProvider, CredentialSource, ModelCatalog, ModelInfo, ProviderCapabilities,
-    ProviderCredentials, ProviderDefinition, ProviderError, ProviderSessionFactory,
-    RegisteredProvider, RetryPolicy, WireApi,
+    ProviderDefinition, ProviderError, ProviderSessionFactory, RegisteredProvider, RetryPolicy,
+    StaticCredentialSource, WireApi,
 };
 
 use self::session::{ResponsesSession, ResponsesSessionState};
@@ -24,6 +23,20 @@ pub fn openai(api_key: impl Into<String>) -> ResponsesProvider<StaticCredentialS
 
 pub fn openrouter(api_key: impl Into<String>) -> ResponsesProvider<StaticCredentialSource> {
     ResponsesProvider::openrouter(api_key)
+}
+
+pub fn openai_with_credential_source<C>(credential_source: C) -> ResponsesProvider<C>
+where
+    C: CredentialSource + 'static,
+{
+    ResponsesProvider::openai_with_credential_source(credential_source)
+}
+
+pub fn openrouter_with_credential_source<C>(credential_source: C) -> ResponsesProvider<C>
+where
+    C: CredentialSource + 'static,
+{
+    ResponsesProvider::openrouter_with_credential_source(credential_source)
 }
 
 /// Shared Responses-family provider implementation.
@@ -73,32 +86,42 @@ where
             Arc::clone(&self.session_state),
         )
     }
+
+    pub fn openai_with_credential_source(credential_source: C) -> Self {
+        Self::with_shared_credential_source(openai_definition(), Arc::new(credential_source))
+    }
+
+    pub fn openrouter_with_credential_source(credential_source: C) -> Self {
+        Self::with_shared_credential_source(openrouter_definition(), Arc::new(credential_source))
+    }
 }
 
 impl ResponsesProvider<StaticCredentialSource> {
     pub fn openai(api_key: impl Into<String>) -> Self {
-        Self::with_shared_credential_source(
-            build_definition(
-                BuiltinProvider::OpenAI,
-                "OpenAI",
-                "OpenAI Responses API provider",
-                DEFAULT_OPENAI_BASE_URL,
-            ),
-            Arc::new(StaticCredentialSource::new(api_key)),
-        )
+        Self::openai_with_credential_source(StaticCredentialSource::new(api_key))
     }
 
     pub fn openrouter(api_key: impl Into<String>) -> Self {
-        Self::with_shared_credential_source(
-            build_definition(
-                BuiltinProvider::OpenRouter,
-                "OpenRouter",
-                "OpenRouter Responses API provider",
-                DEFAULT_OPENROUTER_BASE_URL,
-            ),
-            Arc::new(StaticCredentialSource::new(api_key)),
-        )
+        Self::openrouter_with_credential_source(StaticCredentialSource::new(api_key))
     }
+}
+
+pub fn openai_definition() -> ProviderDefinition {
+    build_definition(
+        BuiltinProvider::OpenAI,
+        "OpenAI",
+        "OpenAI Responses API provider",
+        DEFAULT_OPENAI_BASE_URL,
+    )
+}
+
+pub fn openrouter_definition() -> ProviderDefinition {
+    build_definition(
+        BuiltinProvider::OpenRouter,
+        "OpenRouter",
+        "OpenRouter Responses API provider",
+        DEFAULT_OPENROUTER_BASE_URL,
+    )
 }
 
 fn build_definition(
@@ -125,85 +148,6 @@ fn build_definition(
     definition
 }
 
-pub(crate) fn build_header_map(
-    headers: Option<&HashMap<String, String>>,
-) -> Result<HeaderMap, ProviderError> {
-    let mut map = HeaderMap::new();
-
-    if let Some(headers) = headers {
-        for (name, value) in headers {
-            let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|error| {
-                ProviderError::InvalidRequest(format!(
-                    "invalid provider header name {name:?}: {error}"
-                ))
-            })?;
-            let header_value = HeaderValue::from_str(value).map_err(|error| {
-                ProviderError::InvalidRequest(format!(
-                    "invalid provider header value for {name:?}: {error}"
-                ))
-            })?;
-            map.insert(header_name, header_value);
-        }
-    }
-
-    Ok(map)
-}
-
-pub(crate) fn build_request_headers(
-    definition: &ProviderDefinition,
-    credentials: &ProviderCredentials,
-) -> Result<HeaderMap, ProviderError> {
-    let mut headers = build_header_map(definition.headers.as_ref())?;
-
-    for (name, value) in &credentials.headers {
-        let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|error| {
-            ProviderError::InvalidRequest(format!(
-                "invalid credential header name {name:?}: {error}"
-            ))
-        })?;
-        let header_value = HeaderValue::from_str(value).map_err(|error| {
-            ProviderError::InvalidRequest(format!(
-                "invalid credential header value for {name:?}: {error}"
-            ))
-        })?;
-        headers.insert(header_name, header_value);
-    }
-
-    if let Some(token) = &credentials.bearer_token {
-        let auth_value = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|error| {
-            ProviderError::InvalidRequest(format!("invalid bearer token header: {error}"))
-        })?;
-        headers.insert(header::AUTHORIZATION, auth_value);
-    }
-
-    Ok(headers)
-}
-
-/// Supplies a static bearer token to the provider.
-#[derive(Clone)]
-pub struct StaticCredentialSource {
-    api_key: Arc<str>,
-}
-
-impl StaticCredentialSource {
-    pub fn new(api_key: impl Into<String>) -> Self {
-        Self {
-            api_key: Arc::from(api_key.into()),
-        }
-    }
-}
-
-#[async_trait]
-impl CredentialSource for StaticCredentialSource {
-    async fn credentials(&self) -> Result<ProviderCredentials, ProviderError> {
-        Ok(ProviderCredentials {
-            bearer_token: Some(self.api_key.to_string()),
-            account_id: None,
-            headers: HashMap::new(),
-        })
-    }
-}
-
 #[async_trait]
 impl<C> ModelCatalog for ResponsesProvider<C>
 where
@@ -211,9 +155,13 @@ where
 {
     async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
         let credentials = self.credential_source.credentials().await?;
-        let mut request = self.client.get(self.definition.url_for_path("v1/models"));
-        let headers = build_request_headers(&self.definition, &credentials)?;
-        request = request.headers(headers);
+        let request = self
+            .client
+            .get(
+                self.definition
+                    .request_url_with_auth_for_path("v1/models", &credentials)?,
+            )
+            .headers(self.definition.build_headers(&credentials)?);
 
         let response = request.send().await.map_err(ProviderError::Transport)?;
 

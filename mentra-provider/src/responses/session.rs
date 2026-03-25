@@ -16,7 +16,6 @@ use crate::{
     ProviderSession, Request, Response, Role, TokenUsage,
 };
 
-use super::build_request_headers;
 use super::model::{ResponsesModelsPage, ResponsesRequest};
 use super::sse::spawn_event_stream;
 
@@ -137,7 +136,7 @@ where
         credentials: &ProviderCredentials,
         turn_metadata_header: Option<&str>,
     ) -> Result<HeaderMap, ProviderError> {
-        let mut headers = build_request_headers(&self.definition, credentials)?;
+        let mut headers = self.definition.build_headers(credentials)?;
         if let Some(turn_state) = self.state.turn_state.get()
             && let Ok(value) = HeaderValue::from_str(turn_state)
         {
@@ -163,8 +162,11 @@ where
         let credentials = self.credential_source.credentials().await?;
         let response = self
             .client
-            .get(self.request_url_for_path("v1/models")?)
-            .headers(build_request_headers(&self.definition, &credentials)?)
+            .get(
+                self.definition
+                    .request_url_with_auth_for_path("v1/models", &credentials)?,
+            )
+            .headers(self.definition.build_headers(&credentials)?)
             .send()
             .await
             .map_err(ProviderError::Transport)?;
@@ -198,8 +200,11 @@ where
         let credentials = self.credential_source.credentials().await?;
         let response = self
             .client
-            .post(self.request_url_for_path("v1/responses")?)
-            .headers(build_request_headers(&self.definition, &credentials)?)
+            .post(
+                self.definition
+                    .request_url_with_auth_for_path("v1/responses", &credentials)?,
+            )
+            .headers(self.definition.build_headers(&credentials)?)
             .header(reqwest::header::ACCEPT, "text/event-stream")
             .json(&request)
             .send()

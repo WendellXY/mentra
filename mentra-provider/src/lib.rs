@@ -11,7 +11,7 @@ pub mod responses;
 mod stream;
 mod tool;
 
-pub use auth::{AuthScheme, CredentialSource, ProviderCredentials};
+pub use auth::{AuthScheme, CredentialSource, ProviderCredentials, StaticCredentialSource};
 pub use definition::{
     BuiltinProvider, ProviderCapabilities, ProviderDefinition, ProviderDescriptor, ProviderId,
     RetryPolicy, WireApi,

@@ -157,8 +157,6 @@ pub mod openai {
 
     use crate::provider::model::ModelInfo;
 
-    const DEFAULT_BASE_URL: &str = "https://api.openai.com/";
-
     /// Supplies OpenAI API credentials on demand.
     #[async_trait]
     pub trait OpenAICredentialSource: Send + Sync {
@@ -211,8 +209,7 @@ pub mod openai {
         }
 
         pub fn with_shared_credential_source(source: Arc<dyn OpenAICredentialSource>) -> Self {
-            let provider = mentra_provider::responses::ResponsesProvider::new(
-                openai_definition(),
+            let provider = mentra_provider::responses::openai_with_credential_source(
                 OpenAICredentialAdapter { source },
             );
             Self {
@@ -274,25 +271,6 @@ pub mod openai {
                 headers: Default::default(),
             })
         }
-    }
-
-    fn openai_definition() -> ProviderDefinition {
-        let mut definition = ProviderDefinition::new(BuiltinProvider::OpenAI);
-        definition.descriptor.display_name = Some("OpenAI".to_string());
-        definition.descriptor.description = Some("OpenAI Responses API provider".to_string());
-        definition.wire_api = WireApi::Responses;
-        definition.auth_scheme = AuthScheme::BearerToken;
-        definition.capabilities = ProviderCapabilities {
-            supports_model_listing: true,
-            supports_streaming: true,
-            supports_websockets: true,
-            supports_tool_calls: true,
-            supports_images: true,
-        };
-        definition.base_url = Some(DEFAULT_BASE_URL.to_string());
-        definition.headers = Some(HashMap::new());
-        definition.retry = RetryPolicy::default();
-        definition
     }
 }
 
