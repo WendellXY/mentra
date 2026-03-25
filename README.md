@@ -42,8 +42,8 @@ major pieces:
 * Tool execution primitives, including builtin `shell`, `background_run`,
   `check_background`, `files`, `task`, and team coordination tools.
 
-* Provider integrations for OpenAI, OpenRouter, Anthropic, and Gemini, with streaming
-  responses and normalized token usage reporting.
+* Provider integrations for OpenAI, OpenRouter, Anthropic, Gemini, Ollama, and
+  LM Studio, with streaming responses and normalized token usage reporting.
 
 * Persistence and coordination for agents, subagents, teams, task boards,
   snapshots, memory compaction, and background notifications.

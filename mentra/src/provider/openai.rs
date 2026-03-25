@@ -48,6 +48,9 @@ pub struct OpenAIProvider {
     client: reqwest::Client,
     base_url: Url,
     credential_source: Arc<dyn OpenAICredentialSource>,
+    provider: BuiltinProvider,
+    display_name: &'static str,
+    description: &'static str,
 }
 
 impl OpenAIProvider {
@@ -60,12 +63,47 @@ impl OpenAIProvider {
     }
 
     pub fn with_shared_credential_source(source: Arc<dyn OpenAICredentialSource>) -> Self {
+        Self::with_provider_details(
+            BuiltinProvider::OpenAI,
+            "OpenAI",
+            "OpenAI Responses API provider",
+            DEFAULT_BASE_URL,
+            source,
+        )
+    }
+
+    pub(crate) fn openai_compatible(
+        provider: BuiltinProvider,
+        display_name: &'static str,
+        description: &'static str,
+        base_url: &str,
+        api_key: impl Into<String>,
+    ) -> Self {
+        Self::with_provider_details(
+            provider,
+            display_name,
+            description,
+            base_url,
+            Arc::new(StaticOpenAICredentialSource::new(api_key)),
+        )
+    }
+
+    fn with_provider_details(
+        provider: BuiltinProvider,
+        display_name: &'static str,
+        description: &'static str,
+        base_url: &str,
+        credential_source: Arc<dyn OpenAICredentialSource>,
+    ) -> Self {
         Self {
             client: reqwest::Client::builder()
                 .build()
                 .expect("Failed to build client"),
-            base_url: Url::parse(DEFAULT_BASE_URL).expect("Failed to parse default base URL"),
-            credential_source: source,
+            base_url: Url::parse(base_url).expect("Failed to parse provider base URL"),
+            credential_source,
+            provider,
+            display_name,
+            description,
         }
     }
 }
@@ -74,9 +112,9 @@ impl OpenAIProvider {
 impl Provider for OpenAIProvider {
     fn descriptor(&self) -> ProviderDescriptor {
         ProviderDescriptor {
-            id: BuiltinProvider::OpenAI.into(),
-            display_name: Some("OpenAI".to_string()),
-            description: Some("OpenAI Responses API provider".to_string()),
+            id: self.provider.into(),
+            display_name: Some(self.display_name.to_string()),
+            description: Some(self.description.to_string()),
         }
     }
 
@@ -106,7 +144,7 @@ impl Provider for OpenAIProvider {
             .await
             .map_err(ProviderError::Decode)?;
 
-        Ok(models.data.into_iter().map(Into::into).collect())
+        Ok(models.into_model_info(self.provider))
     }
 
     async fn stream(&self, request: Request<'_>) -> Result<ProviderEventStream, ProviderError> {
@@ -129,7 +167,7 @@ impl OpenAIProvider {
         stream: bool,
     ) -> Result<reqwest::Response, ProviderError> {
         let api_key = self.load_api_key().await?;
-        let request = model::OpenAIResponsesRequest::try_from(request)?;
+        let request = model::OpenAIResponsesRequest::try_from_request(request, self.display_name)?;
         let mut body = serde_json::to_value(request).map_err(ProviderError::Serialize)?;
         if stream {
             body["stream"] = Value::Bool(true);

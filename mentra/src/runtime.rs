@@ -218,6 +218,16 @@ impl Runtime {
             .register_builtin_provider(id, api_key)
     }
 
+    /// Registers the local Ollama provider using its default OpenAI-compatible endpoint.
+    pub fn register_ollama(&mut self) {
+        self.provider_registry.register_ollama();
+    }
+
+    /// Registers the local LM Studio provider using its default OpenAI-compatible endpoint.
+    pub fn register_lmstudio(&mut self) {
+        self.provider_registry.register_lmstudio();
+    }
+
     /// Registers a custom provider implementation.
     ///
     /// This is the supported seam for injecting a scripted provider in tests or

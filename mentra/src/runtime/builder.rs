@@ -147,6 +147,18 @@ impl RuntimeBuilder {
         self
     }
 
+    /// Registers the local Ollama provider using its default OpenAI-compatible endpoint.
+    pub fn with_ollama(mut self) -> Self {
+        self.provider_registry.register_ollama();
+        self
+    }
+
+    /// Registers the local LM Studio provider using its default OpenAI-compatible endpoint.
+    pub fn with_lmstudio(mut self) -> Self {
+        self.provider_registry.register_lmstudio();
+        self
+    }
+
     /// Registers a custom provider implementation.
     ///
     /// This is the supported seam for test-time provider injection when you

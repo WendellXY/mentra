@@ -7,7 +7,7 @@ MSRV: Rust 1.85.
 ## Current Features
 
 - streaming model response handling
-- provider-neutral token usage reporting across OpenAI, OpenRouter, Anthropic, and Gemini
+- provider-neutral token usage reporting across OpenAI, OpenRouter, Anthropic, Gemini, Ollama, and LM Studio
 - optional tool authorization with structured previews and fail-closed execution blocking
 - recoverable malformed tool-call input handling that feeds retry guidance back to the model
 - custom tool execution through the async `ExecutableTool` trait
@@ -20,6 +20,8 @@ MSRV: Rust 1.85.
 - Gemini Developer API provider support
 - OpenAI provider support via the Responses API
 - OpenRouter provider support via the Responses API
+- Ollama provider support via the OpenAI-compatible Responses API
+- LM Studio provider support via the OpenAI-compatible Responses API
 - image inputs for OpenAI and Anthropic, plus inline image bytes for Gemini
 
 ## Quickstart Example
@@ -50,12 +52,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             BuiltinProvider::Gemini,
             std::env::var("GEMINI_API_KEY").ok(),
         )
+        .with_ollama()
+        .with_lmstudio()
         .build()?;
 
     let _ = runtime;
     Ok(())
 }
 ```
+
+`with_ollama()` targets `http://127.0.0.1:11434/` and `with_lmstudio()` targets
+`http://127.0.0.1:1234/`, using each server's OpenAI-compatible API surface.
 
 ## Architecture
 

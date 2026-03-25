@@ -428,6 +428,48 @@ async fn resolve_model_supports_openrouter_provider() {
 }
 
 #[tokio::test]
+async fn resolve_model_supports_ollama_provider_registration() {
+    let runtime = Runtime::empty_builder()
+        .with_ollama()
+        .build()
+        .expect("build runtime");
+
+    let model = runtime
+        .resolve_model(
+            BuiltinProvider::Ollama,
+            ModelSelector::Id("qwen2.5-coder".to_string()),
+        )
+        .await
+        .expect("resolve explicit model");
+
+    assert_eq!(
+        model,
+        ModelInfo::new("qwen2.5-coder", BuiltinProvider::Ollama)
+    );
+}
+
+#[tokio::test]
+async fn resolve_model_supports_lmstudio_provider_registration() {
+    let runtime = Runtime::empty_builder()
+        .with_lmstudio()
+        .build()
+        .expect("build runtime");
+
+    let model = runtime
+        .resolve_model(
+            BuiltinProvider::LmStudio,
+            ModelSelector::Id("local-model".to_string()),
+        )
+        .await
+        .expect("resolve explicit model");
+
+    assert_eq!(
+        model,
+        ModelInfo::new("local-model", BuiltinProvider::LmStudio)
+    );
+}
+
+#[tokio::test]
 async fn resolve_model_reports_missing_provider() {
     let harness = Harness::new(vec![Turn::Text("unused".to_string())]);
 

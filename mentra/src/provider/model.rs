@@ -52,6 +52,8 @@ pub enum BuiltinProvider {
     OpenAI,
     OpenRouter,
     Gemini,
+    Ollama,
+    LmStudio,
 }
 
 impl From<BuiltinProvider> for ProviderId {

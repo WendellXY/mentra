@@ -4,13 +4,15 @@ use async_trait::async_trait;
 
 pub mod anthropic;
 pub mod gemini;
+pub mod lmstudio;
 mod model;
+pub mod ollama;
 pub mod openai;
 pub mod openrouter;
 
 use self::{
-    anthropic::AnthropicProvider, gemini::GeminiProvider, openai::OpenAIProvider,
-    openrouter::OpenRouterProvider,
+    anthropic::AnthropicProvider, gemini::GeminiProvider, lmstudio::LmStudioProvider,
+    ollama::OllamaProvider, openai::OpenAIProvider, openrouter::OpenRouterProvider,
 };
 
 pub use model::{
@@ -56,6 +58,8 @@ impl ProviderRegistry {
             BuiltinProvider::Gemini => Arc::new(GeminiProvider::new(api_key)),
             BuiltinProvider::OpenAI => Arc::new(OpenAIProvider::new(api_key)),
             BuiltinProvider::OpenRouter => Arc::new(OpenRouterProvider::new(api_key)),
+            BuiltinProvider::Ollama => Arc::new(OllamaProvider::new()),
+            BuiltinProvider::LmStudio => Arc::new(LmStudioProvider::new()),
         };
 
         let id: ProviderId = id.into();
@@ -80,6 +84,14 @@ impl ProviderRegistry {
         }
 
         self.providers.insert(id, Arc::new(provider));
+    }
+
+    pub(crate) fn register_ollama(&mut self) {
+        self.register_provider_instance(OllamaProvider::new());
+    }
+
+    pub(crate) fn register_lmstudio(&mut self) {
+        self.register_provider_instance(LmStudioProvider::new());
     }
 
     pub(crate) fn get_provider(&self, id: Option<&ProviderId>) -> Option<Arc<dyn Provider>> {
