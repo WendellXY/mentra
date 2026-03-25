@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     BackgroundTaskSummary, ContentBlock, Message, TeamMemberSummary, TeamProtocolRequestSummary,
-    runtime::TaskItem, tool::ToolCall,
+    compaction::CompactionExecutionMode, runtime::TaskItem, tool::ToolCall,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -46,19 +46,26 @@ pub struct SpawnedAgentSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ContextCompactionTrigger {
+pub enum CompactionTrigger {
     Auto,
     Manual,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ContextCompactionDetails {
-    pub trigger: ContextCompactionTrigger,
+pub struct CompactionDetails {
+    pub trigger: CompactionTrigger,
+    pub mode: CompactionExecutionMode,
+    pub agent_id: String,
     pub transcript_path: PathBuf,
-    pub replaced_messages: usize,
-    pub preserved_messages: usize,
-    pub resulting_history_len: usize,
+    pub replaced_items: usize,
+    pub preserved_items: usize,
+    pub preserved_user_turns: usize,
+    pub preserved_delegation_results: usize,
+    pub resulting_transcript_len: usize,
 }
+
+pub type ContextCompactionTrigger = CompactionTrigger;
+pub type ContextCompactionDetails = CompactionDetails;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AgentSnapshot {
@@ -78,7 +85,7 @@ pub struct AgentSnapshot {
 pub enum AgentEvent {
     RunStarted,
     ContextCompacted {
-        details: ContextCompactionDetails,
+        details: CompactionDetails,
     },
     SubagentSpawned {
         agent: SpawnedAgentSummary,

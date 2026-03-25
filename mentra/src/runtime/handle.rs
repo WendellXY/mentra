@@ -16,6 +16,7 @@ use tokio::sync::{broadcast, watch};
 use crate::{
     agent::{AgentEvent, AgentSnapshot},
     background::{BackgroundNotification, BackgroundTaskManager, BackgroundTaskSummary},
+    compaction::CompactionEngine,
     memory::MemoryEngine,
     runtime::{
         control::{
@@ -60,6 +61,7 @@ pub(crate) struct ExecutionServices {
 pub(crate) struct PersistenceServices {
     pub(crate) store: Arc<dyn RuntimeStore>,
     pub(crate) memory: Arc<MemoryEngine>,
+    pub(crate) compaction: Arc<dyn CompactionEngine>,
 }
 
 #[derive(Clone)]
@@ -116,5 +118,9 @@ impl Drop for RuntimeHandle {
 impl RuntimeHandle {
     pub(crate) fn memory_engine(&self) -> Arc<MemoryEngine> {
         self.persistence.memory.clone()
+    }
+
+    pub(crate) fn compaction_engine(&self) -> Arc<dyn CompactionEngine> {
+        self.persistence.compaction.clone()
     }
 }

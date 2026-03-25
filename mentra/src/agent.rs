@@ -34,17 +34,19 @@ use crate::{
         handle::{AgentExecutionConfig, AgentObserver, RuntimeHandle},
     },
     team::TeamMessage,
+    transcript::TranscriptItem,
 };
 
 pub(crate) use team::parse_task_input;
 
 pub use config::{
-    AgentConfig, ContextCompactionConfig, MemoryConfig, TaskConfig, TeamAutonomyConfig, TeamConfig,
-    ToolProfile, WorkspaceConfig,
+    AgentConfig, CompactionConfig, ContextCompactionConfig, MemoryConfig, TaskConfig,
+    TeamAutonomyConfig, TeamConfig, ToolProfile, WorkspaceConfig,
 };
 pub use events::{
-    AgentEvent, AgentSnapshot, AgentStatus, ContextCompactionDetails, ContextCompactionTrigger,
-    PendingToolUseSummary, SpawnedAgentStatus, SpawnedAgentSummary,
+    AgentEvent, AgentSnapshot, AgentStatus, CompactionDetails, CompactionTrigger,
+    ContextCompactionDetails, ContextCompactionTrigger, PendingToolUseSummary,
+    SpawnedAgentStatus, SpawnedAgentSummary,
 };
 pub use pending::PendingAssistantTurn;
 use runner::TurnRunner;
@@ -267,7 +269,19 @@ impl Agent {
 
     /// Returns the committed transcript history.
     pub fn history(&self) -> &[Message] {
+        self.memory.history()
+    }
+
+    /// Returns the canonical transcript items stored for this agent.
+    pub fn transcript(&self) -> &crate::AgentTranscript {
         self.memory.transcript()
+    }
+
+    pub(crate) fn append_transcript_item(
+        &mut self,
+        item: TranscriptItem,
+    ) -> Result<(), RuntimeError> {
+        self.memory.append_transcript_item(item)
     }
 
     pub(crate) fn memory_revision(&self) -> u64 {

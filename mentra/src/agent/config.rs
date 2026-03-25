@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
+use crate::compaction::CompactionMode;
 #[cfg(test)]
 use crate::provider::ToolSearchMode;
 use crate::provider::{ProviderRequestOptions, ToolChoice};
@@ -64,15 +65,19 @@ impl Default for TeamConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ContextCompactionConfig {
+pub struct CompactionConfig {
     pub keep_recent_tool_results: usize,
     pub auto_compact_threshold_tokens: Option<usize>,
     pub transcript_dir: PathBuf,
     pub summary_max_input_chars: usize,
     pub summary_max_output_tokens: u32,
+    #[serde(default)]
+    pub mode: CompactionMode,
+    pub preserve_recent_user_tokens: usize,
+    pub preserve_recent_delegation_results: usize,
 }
 
-impl Default for ContextCompactionConfig {
+impl Default for CompactionConfig {
     fn default() -> Self {
         Self {
             keep_recent_tool_results: 3,
@@ -80,9 +85,14 @@ impl Default for ContextCompactionConfig {
             transcript_dir: default_transcript_dir(),
             summary_max_input_chars: 80_000,
             summary_max_output_tokens: 2_000,
+            mode: CompactionMode::LocalOnly,
+            preserve_recent_user_tokens: 20_000,
+            preserve_recent_delegation_results: 8,
         }
     }
 }
+
+pub type ContextCompactionConfig = CompactionConfig;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceConfig {
@@ -222,7 +232,8 @@ pub struct AgentConfig {
     pub workspace: WorkspaceConfig,
     #[serde(default)]
     pub memory: MemoryConfig,
-    pub context_compaction: ContextCompactionConfig,
+    #[serde(alias = "context_compaction")]
+    pub compaction: CompactionConfig,
 }
 
 impl Default for AgentConfig {
@@ -239,7 +250,7 @@ impl Default for AgentConfig {
             task: TaskConfig::default(),
             workspace: WorkspaceConfig::default(),
             memory: MemoryConfig::default(),
-            context_compaction: ContextCompactionConfig::default(),
+            compaction: CompactionConfig::default(),
         }
     }
 }
@@ -266,7 +277,7 @@ mod tests {
                 team_dir: team_dir.clone(),
                 ..Default::default()
             },
-            context_compaction: ContextCompactionConfig {
+            compaction: ContextCompactionConfig {
                 transcript_dir: transcript_dir.clone(),
                 ..Default::default()
             },
@@ -275,7 +286,7 @@ mod tests {
 
         assert_eq!(config.task.tasks_dir, tasks_dir);
         assert_eq!(config.team.team_dir, team_dir);
-        assert_eq!(config.context_compaction.transcript_dir, transcript_dir);
+        assert_eq!(config.compaction.transcript_dir, transcript_dir);
     }
 
     #[test]

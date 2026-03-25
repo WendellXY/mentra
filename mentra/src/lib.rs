@@ -9,6 +9,8 @@ pub mod agent;
 /// Optional OAuth helpers for provider authentication.
 #[cfg(feature = "openai-oauth")]
 pub mod auth;
+/// Transcript compaction engine and related types.
+pub mod compaction;
 /// Background task coordination types and services.
 pub mod background;
 /// Working-memory journal and long-term memory services.
@@ -24,6 +26,8 @@ pub mod team;
 pub mod test;
 /// Tool traits, metadata, and builtin tools.
 pub mod tool;
+/// Canonical runtime transcript primitives.
+pub mod transcript;
 
 pub use mentra_provider::{
     AnthropicRequestOptions, BuiltinProvider, ContentBlock, ContentBlockDelta, ContentBlockStart,
@@ -39,6 +43,7 @@ pub use provider::{Provider, ProviderRegistry};
 
 pub use agent::{Agent, AgentConfig};
 pub use background::{BackgroundNotification, BackgroundTaskStatus, BackgroundTaskSummary};
+pub use compaction::{CompactionEngine, CompactionMode, StandardCompactionEngine};
 pub use runtime::{
     AgentStore, AuditStore, HybridRuntimeStore, LeaseStore, RunStore, Runtime, RuntimePolicy,
     TaskStore,
@@ -46,6 +51,10 @@ pub use runtime::{
 pub use team::{
     TeamDispatch, TeamMemberStatus, TeamMemberSummary, TeamMessage, TeamMessageKind,
     TeamProtocolRequestSummary, TeamProtocolStatus,
+};
+pub use transcript::{
+    AgentTranscript, CompactionSummary, DelegationArtifact, DelegationEdge, DelegationKind,
+    DelegationStatus, TranscriptItem, TranscriptKind,
 };
 
 pub mod error {

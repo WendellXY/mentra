@@ -1,5 +1,6 @@
 use super::*;
 use crate::background::BackgroundHookSink;
+use crate::compaction::StandardCompactionEngine;
 use crate::memory::MemoryEngine;
 
 #[derive(Clone)]
@@ -79,6 +80,7 @@ impl RuntimeHandle {
             Arc::new(RuntimePolicy::default()),
             None,
             RuntimeHooks::new().with_hook(AuditHook),
+            Arc::new(StandardCompactionEngine),
             runtime_intrinsics_enabled,
             Arc::<str>::from("default"),
         )
@@ -90,6 +92,7 @@ impl RuntimeHandle {
         policy: Arc<RuntimePolicy>,
         tool_authorizer: Option<Arc<dyn ToolAuthorizer>>,
         hooks: RuntimeHooks,
+        compaction: Arc<dyn crate::compaction::CompactionEngine>,
         runtime_intrinsics_enabled: bool,
         persisted_runtime_identifier: Arc<str>,
     ) -> Self {
@@ -111,6 +114,7 @@ impl RuntimeHandle {
             persistence: PersistenceServices {
                 store: store.clone(),
                 memory,
+                compaction,
             },
             collaboration: CollaborationServices {
                 background_tasks: BackgroundTaskManager::new(
@@ -148,6 +152,7 @@ impl RuntimeHandle {
                     store.clone(),
                     self.execution.hooks.clone(),
                 )),
+                compaction: self.persistence.compaction.clone(),
             },
             collaboration: CollaborationServices {
                 background_tasks: BackgroundTaskManager::new(
@@ -185,6 +190,7 @@ impl RuntimeHandle {
                     self.persistence.store.clone(),
                     self.execution.hooks.clone(),
                 )),
+                compaction: self.persistence.compaction.clone(),
             },
             collaboration: CollaborationServices {
                 background_tasks: BackgroundTaskManager::new(
@@ -221,6 +227,7 @@ impl RuntimeHandle {
                     self.persistence.store.clone(),
                     self.execution.hooks.clone(),
                 )),
+                compaction: self.persistence.compaction.clone(),
             },
             collaboration: CollaborationServices {
                 background_tasks: BackgroundTaskManager::new(
@@ -257,6 +264,7 @@ impl RuntimeHandle {
                     self.persistence.store.clone(),
                     hooks.clone(),
                 )),
+                compaction: self.persistence.compaction.clone(),
             },
             collaboration: CollaborationServices {
                 background_tasks: BackgroundTaskManager::new(
@@ -285,6 +293,7 @@ impl RuntimeHandle {
                     self.persistence.store.clone(),
                     self.execution.hooks.clone(),
                 )),
+                compaction: self.persistence.compaction.clone(),
             },
             collaboration: CollaborationServices {
                 background_tasks: BackgroundTaskManager::new(
@@ -321,6 +330,42 @@ impl RuntimeHandle {
                     self.persistence.store.clone(),
                     self.execution.hooks.clone(),
                 )),
+                compaction: self.persistence.compaction.clone(),
+            },
+            collaboration: CollaborationServices {
+                background_tasks: BackgroundTaskManager::new(
+                    self.persistence.store.clone(),
+                    self.execution.executor.clone(),
+                    background_hook_sink(
+                        self.persistence.store.clone(),
+                        self.execution.hooks.clone(),
+                    ),
+                ),
+                team: self.collaboration.team.clone(),
+                teammate_host: self.collaboration.teammate_host.clone(),
+            },
+            tooling: clone_tooling_services(&self.tooling),
+            runtime_intrinsics_enabled: self.runtime_intrinsics_enabled,
+            runtime_instance_id: format!("runtime-{}", std::process::id()),
+            persisted_runtime_identifier: self.persisted_runtime_identifier.clone(),
+            lease_keys: Arc::new(Mutex::new(BTreeSet::new())),
+            agent_contexts: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    pub fn with_compaction_engine(
+        &self,
+        compaction: Arc<dyn crate::compaction::CompactionEngine>,
+    ) -> Self {
+        Self {
+            execution: self.execution.clone(),
+            persistence: PersistenceServices {
+                store: self.persistence.store.clone(),
+                memory: Arc::new(MemoryEngine::new(
+                    self.persistence.store.clone(),
+                    self.execution.hooks.clone(),
+                )),
+                compaction,
             },
             collaboration: CollaborationServices {
                 background_tasks: BackgroundTaskManager::new(

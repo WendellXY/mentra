@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
+    AgentTranscript,
     ContentBlock, Message,
     memory::journal::{AgentMemory, AgentMemoryState, CompactionOutcome, PendingTurnState},
     runtime::SqliteRuntimeStore,
@@ -80,7 +81,9 @@ fn rollback_and_compaction_update_memory_state() {
     memory
         .compact(CompactionOutcome {
             transcript_path: path.clone(),
-            transcript: vec![Message::user(ContentBlock::text("summary"))],
+            transcript: AgentTranscript::from_messages(vec![Message::user(ContentBlock::text(
+                "summary",
+            ))]),
         })
         .expect("compact");
     assert_eq!(memory.transcript().len(), 1);

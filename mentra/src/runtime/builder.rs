@@ -1,6 +1,7 @@
 use std::{any::Any, path::Path, sync::Arc};
 
 use crate::{
+    compaction::CompactionEngine,
     provider::{Provider, ProviderRegistry},
     runtime::{
         RuntimeExecutor, RuntimeHandle, RuntimeHook, RuntimeHooks, RuntimePolicy, RuntimeStore,
@@ -66,6 +67,17 @@ impl RuntimeBuilder {
     {
         Self {
             handle: self.handle.with_executor(Arc::new(executor)),
+            provider_registry: self.provider_registry,
+        }
+    }
+
+    /// Replaces the compaction engine used for transcript summarization.
+    pub fn with_compaction_engine<C>(self, engine: C) -> Self
+    where
+        C: CompactionEngine + 'static,
+    {
+        Self {
+            handle: self.handle.with_compaction_engine(Arc::new(engine)),
             provider_registry: self.provider_registry,
         }
     }

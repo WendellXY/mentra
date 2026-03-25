@@ -1,6 +1,9 @@
 use std::{path::PathBuf, sync::Arc};
 
-use crate::{Message, error::RuntimeError, runtime::RuntimeStore};
+use crate::{
+    Message, error::RuntimeError, runtime::RuntimeStore,
+    transcript::{AgentTranscript, TranscriptItem, transcript_item_from_message},
+};
 
 use super::{
     recovery::RecoveryOutcome,
@@ -12,13 +15,14 @@ use super::{
 #[derive(Debug, Clone)]
 pub(crate) struct CompactionOutcome {
     pub transcript_path: PathBuf,
-    pub transcript: Vec<Message>,
+    pub transcript: AgentTranscript,
 }
 
 pub(crate) struct AgentMemory {
     agent_id: String,
     store: Arc<dyn RuntimeStore>,
     state: AgentMemoryState,
+    history_cache: Vec<Message>,
 }
 
 impl AgentMemory {
@@ -27,10 +31,12 @@ impl AgentMemory {
         store: Arc<dyn RuntimeStore>,
         state: AgentMemoryState,
     ) -> Self {
+        let history_cache = state.transcript.to_messages();
         Self {
             agent_id: agent_id.into(),
             store,
             state,
+            history_cache,
         }
     }
 
@@ -42,12 +48,20 @@ impl AgentMemory {
         });
         self.state.pending_turn = None;
         self.state.resumable_user_message = Some(user_message.clone());
-        self.state.transcript.push(user_message);
+        self.state
+            .transcript
+            .push(transcript_item_from_message(user_message));
+        self.sync_history_cache();
         self.persist()
     }
 
     pub fn append_message(&mut self, message: Message) -> Result<(), RuntimeError> {
-        self.state.transcript.push(message);
+        self.append_transcript_item(transcript_item_from_message(message))
+    }
+
+    pub fn append_transcript_item(&mut self, item: TranscriptItem) -> Result<(), RuntimeError> {
+        self.state.transcript.push(item);
+        self.sync_history_cache();
         self.persist()
     }
 
@@ -62,7 +76,10 @@ impl AgentMemory {
     }
 
     pub fn commit_assistant_message(&mut self, message: Message) -> Result<(), RuntimeError> {
-        self.state.transcript.push(message);
+        self.state
+            .transcript
+            .push(transcript_item_from_message(message));
+        self.sync_history_cache();
         self.state.pending_turn = None;
         if let Some(run) = &mut self.state.run {
             run.assistant_committed = true;
@@ -73,6 +90,7 @@ impl AgentMemory {
     #[allow(dead_code)]
     pub fn compact(&mut self, outcome: CompactionOutcome) -> Result<(), RuntimeError> {
         self.state.transcript = outcome.transcript;
+        self.sync_history_cache();
         self.state.compaction.last_compacted_transcript_path = Some(outcome.transcript_path);
         self.persist()
     }
@@ -81,6 +99,7 @@ impl AgentMemory {
         if let Some(run) = self.state.run.take() {
             self.state.transcript = run.baseline_transcript;
         }
+        self.sync_history_cache();
         self.state.pending_turn = None;
         self.persist()
     }
@@ -100,6 +119,7 @@ impl AgentMemory {
         let had_pending_turn = self.state.pending_turn.take().is_some();
         if had_pending_turn || !run.assistant_committed {
             self.state.transcript = run.baseline_transcript;
+            self.sync_history_cache();
         } else {
             self.state.resumable_user_message = None;
         }
@@ -111,8 +131,12 @@ impl AgentMemory {
         })
     }
 
-    pub fn transcript(&self) -> &[Message] {
+    pub fn transcript(&self) -> &AgentTranscript {
         &self.state.transcript
+    }
+
+    pub fn history(&self) -> &[Message] {
+        &self.history_cache
     }
 
     pub fn revision(&self) -> u64 {
@@ -120,7 +144,7 @@ impl AgentMemory {
     }
 
     pub fn last_message(&self) -> Option<&Message> {
-        self.state.transcript.last()
+        self.history_cache.last()
     }
 
     pub fn resumable_user_message(&self) -> Option<&Message> {
@@ -139,9 +163,9 @@ impl AgentMemory {
         let run = self.state.run.as_ref()?;
         let start = run.baseline_transcript.len();
         if start >= self.state.transcript.len() {
-            return Some(self.state.transcript.clone());
+            return Some(self.history_cache.clone());
         }
-        Some(self.state.transcript[start..].to_vec())
+        Some(self.state.transcript.projected_messages_from(start))
     }
 
     pub fn try_apply_compaction(
@@ -153,9 +177,14 @@ impl AgentMemory {
             return Ok(false);
         }
         self.state.transcript = outcome.transcript;
+        self.sync_history_cache();
         self.state.compaction.last_compacted_transcript_path = Some(outcome.transcript_path);
         self.persist()?;
         Ok(true)
+    }
+
+    fn sync_history_cache(&mut self) {
+        self.history_cache = self.state.transcript.to_messages();
     }
 
     fn persist(&mut self) -> Result<(), RuntimeError> {

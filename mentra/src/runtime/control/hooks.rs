@@ -263,7 +263,8 @@ pub fn is_transient_provider_error(error: &ProviderError) -> bool {
         | ProviderError::Deserialize(_)
         | ProviderError::InvalidRequest(_)
         | ProviderError::InvalidResponse(_)
-        | ProviderError::MalformedStream(_) => false,
+        | ProviderError::MalformedStream(_)
+        | ProviderError::UnsupportedCapability(_) => false,
     }
 }
 
