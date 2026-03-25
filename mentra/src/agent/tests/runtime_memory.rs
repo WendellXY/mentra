@@ -180,7 +180,7 @@ async fn compacted_summaries_are_searchable() {
             "agent",
             model,
             AgentConfig {
-                context_compaction: ContextCompactionConfig {
+                compaction: ContextCompactionConfig {
                     auto_compact_threshold_tokens: None,
                     transcript_dir: temp_dir("searchable-compact"),
                     ..Default::default()

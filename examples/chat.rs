@@ -182,7 +182,7 @@ async fn load_or_create_agent(
                     "You are a helpful CLI agent. When the user asks to spawn, manage, monitor, or keep working with a named persistent teammate across turns, you must use `team_spawn` and the team protocol tools rather than the disposable `task` tool or persisted task tools. Autonomous teammates can scan persisted tasks, claim ready unowned work themselves, and continue from the task board without manual assignment when team autonomy is enabled. Do not satisfy teammate-management requests by creating project tasks. For plan review workflows, send the teammate a normal message asking for the proposal, let the teammate submit a `plan_approval` request back to you, then use `team_respond` on that inbound request. Do not open a `plan_approval` request to the teammate yourself. Use `task` only for short-lived disposable delegation that does not need mailbox coordination, protocol review, or ongoing status tracking."
                         .to_string(),
                 ),
-                context_compaction: example_compaction_config(),
+                compaction: example_compaction_config(),
                 team: mentra::agent::TeamConfig {
                     autonomy: TeamAutonomyConfig {
                         enabled: true,

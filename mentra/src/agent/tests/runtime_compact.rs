@@ -41,7 +41,7 @@ async fn micro_compaction_only_rewrites_old_tool_results_in_requests() {
             "agent",
             model,
             AgentConfig {
-                context_compaction: ContextCompactionConfig {
+                compaction: ContextCompactionConfig {
                     keep_recent_tool_results: 2,
                     auto_compact_threshold_tokens: None,
                     ..Default::default()
@@ -105,7 +105,7 @@ async fn auto_compaction_persists_transcript_and_rewrites_history() {
             "agent",
             model,
             AgentConfig {
-                context_compaction: ContextCompactionConfig {
+                compaction: ContextCompactionConfig {
                     auto_compact_threshold_tokens: Some(1),
                     transcript_dir: transcript_dir.clone(),
                     ..Default::default()
@@ -129,12 +129,11 @@ async fn auto_compaction_persists_transcript_and_rewrites_history() {
         .await
         .unwrap();
 
-    assert_eq!(agent.history().len(), 3);
+    assert_eq!(agent.history().len(), 4);
     assert_eq!(agent.history()[0].role, Role::User);
-    assert_eq!(
-        message_text(&agent.history()[0]),
-        "[Compressed context]\n\nsummary"
-    );
+    assert_eq!(message_text(&agent.history()[0]), "first");
+    assert!(message_text(&agent.history()[1]).contains("[Compaction summary]"));
+    assert!(message_text(&agent.history()[1]).contains("Progress: summary"));
 
     let transcripts = fs::read_dir(&transcript_dir)
         .expect("read transcript dir")
@@ -149,9 +148,12 @@ async fn auto_compaction_persists_transcript_and_rewrites_history() {
     assert_eq!(requests.len(), 3);
     assert!(requests[1].tools.is_empty());
     assert_eq!(requests[1].tool_choice, None);
-    assert_eq!(
-        message_text(&requests[2].messages[0]),
-        "[Compressed context]\n\nsummary"
+    assert_eq!(message_text(&requests[2].messages[0]), "first");
+    assert!(
+        requests[2]
+            .messages
+            .iter()
+            .any(|message| message_text(message).contains("Progress: summary"))
     );
 
     let compaction = collect_events(&mut events)
@@ -162,9 +164,11 @@ async fn auto_compaction_persists_transcript_and_rewrites_history() {
         })
         .expect("expected compaction event");
     assert_eq!(compaction.trigger, ContextCompactionTrigger::Auto);
-    assert_eq!(compaction.replaced_messages, 2);
-    assert_eq!(compaction.preserved_messages, 1);
-    assert_eq!(compaction.resulting_history_len, 2);
+    assert_eq!(compaction.replaced_items, 2);
+    assert_eq!(compaction.preserved_items, 1);
+    assert_eq!(compaction.preserved_user_turns, 1);
+    assert_eq!(compaction.preserved_delegation_results, 0);
+    assert_eq!(compaction.resulting_transcript_len, 3);
     assert!(compaction.transcript_path.starts_with(&transcript_dir));
 }
 
@@ -192,7 +196,7 @@ async fn compact_tool_compacts_history_and_continues() {
             "agent",
             model,
             AgentConfig {
-                context_compaction: ContextCompactionConfig {
+                compaction: ContextCompactionConfig {
                     auto_compact_threshold_tokens: None,
                     transcript_dir,
                     ..Default::default()
@@ -210,13 +214,12 @@ async fn compact_tool_compacts_history_and_continues() {
         .await
         .unwrap();
 
-    assert_eq!(agent.history().len(), 4);
-    assert_eq!(
-        message_text(&agent.history()[0]),
-        "[Compressed context]\n\nsummary"
-    );
+    assert_eq!(agent.history().len(), 5);
+    assert_eq!(message_text(&agent.history()[0]), "please compact");
+    assert!(message_text(&agent.history()[1]).contains("[Compaction summary]"));
+    assert!(message_text(&agent.history()[1]).contains("Progress: summary"));
     assert!(matches!(
-        &agent.history()[2].content[0],
+        &agent.history()[3].content[0],
         ContentBlock::ToolResult { is_error: false, content, .. }
             if content.starts_with("Context compacted. Transcript saved to ")
     ));
@@ -225,9 +228,12 @@ async fn compact_tool_compacts_history_and_continues() {
     assert_eq!(requests.len(), 3);
     assert!(requests[1].tools.is_empty());
     assert_eq!(requests[1].tool_choice, None);
-    assert_eq!(
-        message_text(&requests[2].messages[0]),
-        "[Compressed context]\n\nsummary"
+    assert_eq!(message_text(&requests[2].messages[0]), "please compact");
+    assert!(
+        requests[2]
+            .messages
+            .iter()
+            .any(|message| message_text(message).contains("Progress: summary"))
     );
     assert!(tool_names(&requests[0]).contains("compact"));
 
@@ -239,9 +245,11 @@ async fn compact_tool_compacts_history_and_continues() {
         })
         .expect("expected compaction event");
     assert_eq!(compaction.trigger, ContextCompactionTrigger::Manual);
-    assert_eq!(compaction.replaced_messages, 1);
-    assert_eq!(compaction.preserved_messages, 1);
-    assert_eq!(compaction.resulting_history_len, 2);
+    assert_eq!(compaction.replaced_items, 1);
+    assert_eq!(compaction.preserved_items, 1);
+    assert_eq!(compaction.preserved_user_turns, 1);
+    assert_eq!(compaction.preserved_delegation_results, 0);
+    assert_eq!(compaction.resulting_transcript_len, 3);
 }
 
 fn text_stream(model: &str, text: &str) -> StreamScript {

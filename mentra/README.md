@@ -483,7 +483,7 @@ You can tune or disable this per-agent with `ContextCompactionConfig`:
 use mentra::agent::{AgentConfig, ContextCompactionConfig};
 
 let config = AgentConfig {
-    context_compaction: ContextCompactionConfig {
+    compaction: ContextCompactionConfig {
         auto_compact_threshold_tokens: Some(75_000),
         ..Default::default()
     },
@@ -506,7 +506,7 @@ If the platform data directory cannot be resolved, Mentra falls back to `.mentra
 Override these defaults when needed:
 
 - use `Runtime::builder().with_store(...)` for the SQLite store
-- customize `AgentConfig::task.tasks_dir`, `AgentConfig::team.team_dir`, and `AgentConfig::context_compaction.transcript_dir` for task, team, and transcript storage
+- customize `AgentConfig::task.tasks_dir`, `AgentConfig::team.team_dir`, and `AgentConfig::compaction.transcript_dir` for task, team, and transcript storage
 
 ## Persistence Extension Points
 

@@ -2294,15 +2294,15 @@ async fn task_tool_runs_child_with_isolated_history_and_filtered_tools() {
         .await
         .unwrap();
 
-    assert_eq!(agent.history().len(), 4);
-    assert_eq!(
-        agent.history()[2],
-        Message::user(ContentBlock::ToolResult {
-            tool_use_id: "tool-parent".to_string(),
-            content: "child summary".to_string(),
-            is_error: false,
-        })
-    );
+    assert_eq!(agent.history().len(), 6);
+    assert!(agent.history().iter().any(|message| {
+        *message
+            == Message::user(ContentBlock::ToolResult {
+                tool_use_id: "tool-parent".to_string(),
+                content: "child summary".to_string(),
+                is_error: false,
+            })
+    }));
     assert_eq!(
         agent.last_message(),
         Some(&Message::assistant(ContentBlock::text("parent done")))
@@ -2489,15 +2489,15 @@ async fn task_tool_wraps_child_failure_and_parent_continues() {
         .await
         .unwrap();
 
-    assert_eq!(
-        agent.history()[2],
-        Message::user(ContentBlock::ToolResult {
-            tool_use_id: "tool-parent".to_string(),
-            content: "Subagent failed: failed to stream provider response: malformed provider stream: boom"
-                .to_string(),
-            is_error: true,
-        })
-    );
+    assert!(agent.history().iter().any(|message| {
+        *message
+            == Message::user(ContentBlock::ToolResult {
+                tool_use_id: "tool-parent".to_string(),
+                content: "Subagent failed: failed to stream provider response: malformed provider stream: boom"
+                    .to_string(),
+                is_error: true,
+            })
+    }));
     assert_eq!(
         agent.last_message(),
         Some(&Message::assistant(ContentBlock::text("handled")))
@@ -2540,14 +2540,14 @@ async fn child_rejects_nested_task_requests_without_recursing() {
         .await
         .unwrap();
 
-    assert_eq!(
-        agent.history()[2],
-        Message::user(ContentBlock::ToolResult {
-            tool_use_id: "parent-task".to_string(),
-            content: "child recovered".to_string(),
-            is_error: false,
-        })
-    );
+    assert!(agent.history().iter().any(|message| {
+        *message
+            == Message::user(ContentBlock::ToolResult {
+                tool_use_id: "parent-task".to_string(),
+                content: "child recovered".to_string(),
+                is_error: false,
+            })
+    }));
 
     let requests = provider_handle.recorded_requests().await;
     assert_eq!(requests.len(), 4);
@@ -2599,14 +2599,14 @@ async fn task_tool_returns_error_when_child_hits_round_limit() {
         .await
         .unwrap();
 
-    assert_eq!(
-        agent.history()[2],
-        Message::user(ContentBlock::ToolResult {
-            tool_use_id: "parent-task".to_string(),
-            content: "Subagent failed: max rounds exceeded at 30".to_string(),
-            is_error: true,
-        })
-    );
+    assert!(agent.history().iter().any(|message| {
+        *message
+            == Message::user(ContentBlock::ToolResult {
+                tool_use_id: "parent-task".to_string(),
+                content: "Subagent failed: max rounds exceeded at 30".to_string(),
+                is_error: true,
+            })
+    }));
     assert_eq!(
         agent.last_message(),
         Some(&Message::assistant(ContentBlock::text("parent handled")))
@@ -4198,7 +4198,7 @@ async fn teammate_identity_is_reinjected_after_compaction() {
             model,
             AgentConfig {
                 team: team_config(temp_team_dir("identity-compact-team")),
-                context_compaction: crate::agent::ContextCompactionConfig {
+                compaction: crate::agent::ContextCompactionConfig {
                     auto_compact_threshold_tokens: Some(1),
                     ..Default::default()
                 },

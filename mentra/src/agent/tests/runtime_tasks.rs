@@ -232,7 +232,7 @@ async fn task_survives_auto_compaction() {
                     tasks_dir,
                     reminder_threshold: 3,
                 },
-                context_compaction: ContextCompactionConfig {
+                compaction: ContextCompactionConfig {
                     auto_compact_threshold_tokens: Some(500),
                     ..ContextCompactionConfig::default()
                 },
@@ -255,13 +255,15 @@ async fn task_survives_auto_compaction() {
         .expect("trigger compact");
 
     assert_eq!(agent.watch_snapshot().borrow().tasks.len(), 1);
-    assert!(matches!(
-        &agent.history()[0],
-        Message {
-            role: Role::User,
-            content,
-        } if matches!(content.first(), Some(ContentBlock::Text { text }) if text.starts_with("[Compressed context]"))
-    ));
+    assert!(agent.history().iter().any(|message| {
+        matches!(
+            message,
+            Message {
+                role: Role::User,
+                content,
+            } if matches!(content.first(), Some(ContentBlock::Text { text }) if text.contains("[Compaction summary]"))
+        )
+    }));
 }
 
 fn task_config(tasks_dir: PathBuf) -> AgentConfig {
