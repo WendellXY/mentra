@@ -137,15 +137,3 @@ pub struct CompactionRequest<'a> {
     pub metadata: Cow<'a, BTreeMap<String, String>>,
     pub provider_request_options: ProviderRequestOptions,
 }
-
-impl CompactionRequest<'_> {
-    pub fn into_owned(self) -> CompactionRequest<'static> {
-        CompactionRequest {
-            model: Cow::Owned(self.model.into_owned()),
-            instructions: Cow::Owned(self.instructions.into_owned()),
-            input: Cow::Owned(self.input.into_owned()),
-            metadata: Cow::Owned(self.metadata.into_owned()),
-            provider_request_options: self.provider_request_options,
-        }
-    }
-}

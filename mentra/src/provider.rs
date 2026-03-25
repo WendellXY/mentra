@@ -29,6 +29,11 @@ pub trait Provider: Send + Sync {
     /// Returns identifying metadata for the provider instance.
     fn descriptor(&self) -> ProviderDescriptor;
 
+    /// Returns feature flags supported by this provider instance.
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::default()
+    }
+
     /// Lists models available from the provider.
     async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError>;
 
@@ -146,6 +151,10 @@ where
         self.inner.descriptor()
     }
 
+    fn capabilities(&self) -> ProviderCapabilities {
+        self.inner.definition().capabilities
+    }
+
     async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
         self.inner.list_models().await
     }
@@ -170,8 +179,7 @@ pub mod openai {
     use super::{
         AuthScheme, BuiltinProvider, CompactionRequest, CompactionResponse, Provider,
         ProviderCapabilities, ProviderDefinition, ProviderDescriptor, ProviderError,
-        ProviderEventStream, Request, Response, RetryPolicy, WireApi,
-        collect_response_from_stream, shared_provider,
+        ProviderEventStream, Request, RetryPolicy, WireApi, shared_provider,
     };
 
     use crate::provider::model::ModelInfo;
@@ -244,6 +252,10 @@ pub mod openai {
             self.inner.descriptor()
         }
 
+        fn capabilities(&self) -> ProviderCapabilities {
+            self.inner.capabilities()
+        }
+
         async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
             self.inner.list_models().await
         }
@@ -251,11 +263,6 @@ pub mod openai {
         async fn stream(&self, request: Request<'_>) -> Result<ProviderEventStream, ProviderError> {
             self.inner.stream(request).await
         }
-
-        async fn send(&self, request: Request<'_>) -> Result<Response, ProviderError> {
-            collect_response_from_stream(self.stream(request).await?).await
-        }
-
         async fn compact(
             &self,
             request: CompactionRequest<'_>,
@@ -307,8 +314,8 @@ pub mod openrouter {
     use async_trait::async_trait;
 
     use super::{
-        CompactionRequest, CompactionResponse, Provider, ProviderDescriptor, ProviderError,
-        ProviderEventStream, Request, Response, collect_response_from_stream, shared_provider,
+        CompactionRequest, CompactionResponse, Provider, ProviderCapabilities, ProviderDescriptor,
+        ProviderError, ProviderEventStream, Request, shared_provider,
     };
     use crate::provider::model::ModelInfo;
 
@@ -331,6 +338,10 @@ pub mod openrouter {
             self.inner.descriptor()
         }
 
+        fn capabilities(&self) -> ProviderCapabilities {
+            self.inner.capabilities()
+        }
+
         async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
             self.inner.list_models().await
         }
@@ -338,11 +349,6 @@ pub mod openrouter {
         async fn stream(&self, request: Request<'_>) -> Result<ProviderEventStream, ProviderError> {
             self.inner.stream(request).await
         }
-
-        async fn send(&self, request: Request<'_>) -> Result<Response, ProviderError> {
-            collect_response_from_stream(self.stream(request).await?).await
-        }
-
         async fn compact(
             &self,
             request: CompactionRequest<'_>,
@@ -358,8 +364,7 @@ pub mod anthropic {
     use async_trait::async_trait;
 
     use super::{
-        Provider, ProviderDescriptor, ProviderError, ProviderEventStream, Request, Response,
-        collect_response_from_stream, shared_provider,
+        Provider, ProviderDescriptor, ProviderError, ProviderEventStream, Request, shared_provider,
     };
     use crate::provider::model::ModelInfo;
 
@@ -382,16 +387,16 @@ pub mod anthropic {
             self.inner.descriptor()
         }
 
+        fn capabilities(&self) -> super::ProviderCapabilities {
+            self.inner.capabilities()
+        }
+
         async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
             self.inner.list_models().await
         }
 
         async fn stream(&self, request: Request<'_>) -> Result<ProviderEventStream, ProviderError> {
             self.inner.stream(request).await
-        }
-
-        async fn send(&self, request: Request<'_>) -> Result<Response, ProviderError> {
-            collect_response_from_stream(self.stream(request).await?).await
         }
     }
 }
@@ -402,8 +407,7 @@ pub mod gemini {
     use async_trait::async_trait;
 
     use super::{
-        Provider, ProviderDescriptor, ProviderError, ProviderEventStream, Request, Response,
-        collect_response_from_stream, shared_provider,
+        Provider, ProviderDescriptor, ProviderError, ProviderEventStream, Request, shared_provider,
     };
     use crate::provider::model::ModelInfo;
 
@@ -426,16 +430,16 @@ pub mod gemini {
             self.inner.descriptor()
         }
 
+        fn capabilities(&self) -> super::ProviderCapabilities {
+            self.inner.capabilities()
+        }
+
         async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
             self.inner.list_models().await
         }
 
         async fn stream(&self, request: Request<'_>) -> Result<ProviderEventStream, ProviderError> {
             self.inner.stream(request).await
-        }
-
-        async fn send(&self, request: Request<'_>) -> Result<Response, ProviderError> {
-            collect_response_from_stream(self.stream(request).await?).await
         }
     }
 }
@@ -447,7 +451,6 @@ pub mod ollama {
 
     use super::{
         BuiltinProvider, Provider, ProviderDescriptor, ProviderError, ProviderEventStream, Request,
-        Response, collect_response_from_stream,
     };
     use crate::provider::model::ModelInfo;
 
@@ -487,16 +490,16 @@ pub mod ollama {
             self.inner.descriptor()
         }
 
+        fn capabilities(&self) -> super::ProviderCapabilities {
+            self.inner.capabilities()
+        }
+
         async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
             self.inner.list_models().await
         }
 
         async fn stream(&self, request: Request<'_>) -> Result<ProviderEventStream, ProviderError> {
             self.inner.stream(request).await
-        }
-
-        async fn send(&self, request: Request<'_>) -> Result<Response, ProviderError> {
-            collect_response_from_stream(self.stream(request).await?).await
         }
     }
 }
@@ -508,7 +511,6 @@ pub mod lmstudio {
 
     use super::{
         BuiltinProvider, Provider, ProviderDescriptor, ProviderError, ProviderEventStream, Request,
-        Response, collect_response_from_stream,
     };
     use crate::provider::model::ModelInfo;
 
@@ -548,16 +550,16 @@ pub mod lmstudio {
             self.inner.descriptor()
         }
 
+        fn capabilities(&self) -> super::ProviderCapabilities {
+            self.inner.capabilities()
+        }
+
         async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
             self.inner.list_models().await
         }
 
         async fn stream(&self, request: Request<'_>) -> Result<ProviderEventStream, ProviderError> {
             self.inner.stream(request).await
-        }
-
-        async fn send(&self, request: Request<'_>) -> Result<Response, ProviderError> {
-            collect_response_from_stream(self.stream(request).await?).await
         }
     }
 }

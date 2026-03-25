@@ -4198,7 +4198,7 @@ async fn teammate_identity_is_reinjected_after_compaction() {
             model,
             AgentConfig {
                 team: team_config(temp_team_dir("identity-compact-team")),
-                compaction: crate::agent::ContextCompactionConfig {
+                compaction: crate::agent::CompactionConfig {
                     auto_compact_threshold_tokens: Some(1),
                     ..Default::default()
                 },

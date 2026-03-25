@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::agent::{
-    ContextCompactionDetails, ContextCompactionTrigger, DisposableSubagentTemplate,
-    SpawnedAgentStatus, SpawnedAgentSummary,
+    CompactionDetails, CompactionTrigger, DisposableSubagentTemplate, SpawnedAgentStatus,
+    SpawnedAgentSummary,
 };
 
 use crate::runtime::{RuntimeError, TaskIntrinsicTool, TaskItem};
@@ -190,11 +190,11 @@ impl ToolContext<'_> {
     /// Runs the builtin context-compaction flow immediately.
     pub async fn compact_history(
         &mut self,
-    ) -> Result<Option<ContextCompactionDetails>, RuntimeError> {
+    ) -> Result<Option<CompactionDetails>, RuntimeError> {
         self.agent
             .compact_history(
                 self.agent.history().len().saturating_sub(1),
-                ContextCompactionTrigger::Manual,
+                CompactionTrigger::Manual,
             )
             .await
     }

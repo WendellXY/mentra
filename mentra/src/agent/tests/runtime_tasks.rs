@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     BuiltinProvider, ContentBlock, Message, Role,
-    agent::{AgentConfig, ContextCompactionConfig, TaskConfig},
+    agent::{AgentConfig, CompactionConfig, TaskConfig},
     provider::{ContentBlockDelta, ContentBlockStart, ProviderError, ProviderEvent},
     runtime::{
         Runtime, SqliteRuntimeStore, TaskItem, TaskStatus, TaskStore, task::TASK_REMINDER_TEXT,
@@ -232,9 +232,9 @@ async fn task_survives_auto_compaction() {
                     tasks_dir,
                     reminder_threshold: 3,
                 },
-                compaction: ContextCompactionConfig {
+                compaction: CompactionConfig {
                     auto_compact_threshold_tokens: Some(500),
-                    ..ContextCompactionConfig::default()
+                    ..CompactionConfig::default()
                 },
                 ..Default::default()
             },

@@ -5,7 +5,7 @@ use std::{
 
 use dotenvy::dotenv;
 use mentra::{
-    agent::{AgentEvent, ContextCompactionConfig, TeamAutonomyConfig},
+    agent::{AgentEvent, CompactionConfig, TeamAutonomyConfig},
     runtime::{SqliteRuntimeStore, TaskItem, TaskStatus},
     tool::ToolCall,
 };
@@ -241,13 +241,13 @@ fn print_persisted_runtime_identifiers() {
     }
 }
 
-fn example_compaction_config() -> ContextCompactionConfig {
+fn example_compaction_config() -> CompactionConfig {
     let threshold = std::env::var("MENTRA_CHAT_AUTO_COMPACT_TOKENS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(3_000);
 
-    ContextCompactionConfig {
+    CompactionConfig {
         auto_compact_threshold_tokens: (threshold > 0).then_some(threshold),
         ..Default::default()
     }

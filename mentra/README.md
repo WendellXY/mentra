@@ -477,13 +477,13 @@ Agents compact context by default:
 - when estimated request context exceeds roughly 50k tokens, Mentra writes the full transcript to the default transcript directory and replaces older history with a model-generated summary
 - the model can also call the builtin `compact` tool explicitly
 
-You can tune or disable this per-agent with `ContextCompactionConfig`:
+You can tune or disable this per-agent with `CompactionConfig`:
 
 ```rust
-use mentra::agent::{AgentConfig, ContextCompactionConfig};
+use mentra::agent::{AgentConfig, CompactionConfig};
 
 let config = AgentConfig {
-    compaction: ContextCompactionConfig {
+    compaction: CompactionConfig {
         auto_compact_threshold_tokens: Some(75_000),
         ..Default::default()
     },

@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     BuiltinProvider, ContentBlock, Message, Role,
-    agent::{AgentConfig, AgentEvent, ContextCompactionConfig, ContextCompactionTrigger},
+    agent::{AgentConfig, AgentEvent, CompactionConfig, CompactionTrigger},
     provider::{ContentBlockDelta, ContentBlockStart, ProviderEvent, Request},
     runtime::Runtime,
 };
@@ -41,7 +41,7 @@ async fn micro_compaction_only_rewrites_old_tool_results_in_requests() {
             "agent",
             model,
             AgentConfig {
-                compaction: ContextCompactionConfig {
+                compaction: CompactionConfig {
                     keep_recent_tool_results: 2,
                     auto_compact_threshold_tokens: None,
                     ..Default::default()
@@ -105,7 +105,7 @@ async fn auto_compaction_persists_transcript_and_rewrites_history() {
             "agent",
             model,
             AgentConfig {
-                compaction: ContextCompactionConfig {
+                compaction: CompactionConfig {
                     auto_compact_threshold_tokens: Some(1),
                     transcript_dir: transcript_dir.clone(),
                     ..Default::default()
@@ -163,7 +163,7 @@ async fn auto_compaction_persists_transcript_and_rewrites_history() {
             _ => None,
         })
         .expect("expected compaction event");
-    assert_eq!(compaction.trigger, ContextCompactionTrigger::Auto);
+    assert_eq!(compaction.trigger, CompactionTrigger::Auto);
     assert_eq!(compaction.replaced_items, 2);
     assert_eq!(compaction.preserved_items, 1);
     assert_eq!(compaction.preserved_user_turns, 1);
@@ -196,7 +196,7 @@ async fn compact_tool_compacts_history_and_continues() {
             "agent",
             model,
             AgentConfig {
-                compaction: ContextCompactionConfig {
+                compaction: CompactionConfig {
                     auto_compact_threshold_tokens: None,
                     transcript_dir,
                     ..Default::default()
@@ -244,7 +244,7 @@ async fn compact_tool_compacts_history_and_continues() {
             _ => None,
         })
         .expect("expected compaction event");
-    assert_eq!(compaction.trigger, ContextCompactionTrigger::Manual);
+    assert_eq!(compaction.trigger, CompactionTrigger::Manual);
     assert_eq!(compaction.replaced_items, 1);
     assert_eq!(compaction.preserved_items, 1);
     assert_eq!(compaction.preserved_user_turns, 1);

@@ -9,7 +9,7 @@ use crate::{
     },
 };
 
-use super::{Agent, ContextCompactionDetails, ContextCompactionTrigger};
+use super::{Agent, CompactionDetails, CompactionTrigger};
 
 impl Agent {
     pub(crate) fn micro_compacted_history(&self) -> Vec<Message> {
@@ -35,7 +35,7 @@ impl Agent {
 
         let preserve_from = required_tail_start_for_continuation(self.history());
         let _ = self
-            .compact_history(preserve_from, ContextCompactionTrigger::Auto)
+            .compact_history(preserve_from, CompactionTrigger::Auto)
             .await?;
         Ok(())
     }
@@ -43,8 +43,8 @@ impl Agent {
     pub(crate) async fn compact_history(
         &mut self,
         preserve_from: usize,
-        trigger: ContextCompactionTrigger,
-    ) -> Result<Option<ContextCompactionDetails>, RuntimeError> {
+        trigger: CompactionTrigger,
+    ) -> Result<Option<CompactionDetails>, RuntimeError> {
         if self.history().is_empty() {
             return Ok(None);
         }
@@ -62,11 +62,8 @@ impl Agent {
             .compact(
                 self.provider.clone(),
                 compaction_request_from_agent(
-                    self.id(),
-                    self.name(),
                     self.model(),
                     self.transcript().clone(),
-                    trigger.clone(),
                     &self.config.compaction,
                     self.config.provider_request_options.clone(),
                 ),
@@ -115,7 +112,7 @@ impl Agent {
                 resulting_history_len: self.transcript().len(),
             });
 
-        let details = ContextCompactionDetails {
+        let details = CompactionDetails {
             trigger,
             mode: proposal.mode,
             agent_id: self.id().to_string(),

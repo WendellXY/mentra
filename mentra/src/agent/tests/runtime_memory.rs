@@ -2,7 +2,7 @@ use std::{path::PathBuf, time::Duration};
 
 use crate::{
     BuiltinProvider, ContentBlock, Message, Role,
-    agent::{AgentConfig, ContextCompactionConfig, MemoryConfig},
+    agent::{AgentConfig, CompactionConfig, MemoryConfig},
     memory::{MemoryRecord, MemoryRecordKind, MemoryStore},
     provider::{ContentBlockDelta, ContentBlockStart, ProviderEvent},
     runtime::{HybridRuntimeStore, Runtime, SqliteRuntimeStore},
@@ -180,7 +180,7 @@ async fn compacted_summaries_are_searchable() {
             "agent",
             model,
             AgentConfig {
-                compaction: ContextCompactionConfig {
+                compaction: CompactionConfig {
                     auto_compact_threshold_tokens: None,
                     transcript_dir: temp_dir("searchable-compact"),
                     ..Default::default()

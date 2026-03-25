@@ -32,11 +32,8 @@ pub enum CompactionMode {
 
 #[derive(Debug, Clone)]
 pub struct CompactionRequest {
-    pub agent_id: String,
-    pub agent_name: String,
     pub model: String,
     pub transcript: AgentTranscript,
-    pub trigger: crate::agent::CompactionTrigger,
     pub transcript_dir: PathBuf,
     pub summary_max_input_chars: usize,
     pub summary_max_output_tokens: u32,
@@ -98,30 +95,46 @@ impl CompactionEngine for StandardCompactionEngine {
         }
 
         let transcript_path = persist_transcript(request.transcript.items(), &request.transcript_dir).await?;
+        let supports_remote = provider.capabilities().supports_history_compaction;
         let (mode, summary) = match request.mode {
             CompactionMode::LocalOnly => {
                 (CompactionExecutionMode::Local, summarize_locally(provider, &request, compacted_prefix).await?)
             }
             CompactionMode::PreferRemote => {
-                match compact_remotely(provider.clone(), &request, compacted_prefix).await {
-                    Ok(Some(summary)) => (CompactionExecutionMode::Remote, summary),
-                    Ok(None) | Err(RuntimeError::FailedToCompactHistory(ProviderError::UnsupportedCapability(_))) => {
-                        (
+                if supports_remote {
+                    match compact_remotely(provider.clone(), &request, compacted_prefix).await {
+                        Ok(Some(summary)) => (CompactionExecutionMode::Remote, summary),
+                        Ok(None)
+                        | Err(RuntimeError::FailedToCompactHistory(
+                            ProviderError::UnsupportedCapability(_),
+                        )) => (
                             CompactionExecutionMode::Local,
                             summarize_locally(provider, &request, compacted_prefix).await?,
-                        )
+                        ),
+                        Err(error) => return Err(error),
                     }
-                    Err(error) => return Err(error),
+                } else {
+                    (
+                        CompactionExecutionMode::Local,
+                        summarize_locally(provider, &request, compacted_prefix).await?,
+                    )
                 }
             }
-            CompactionMode::RemoteOnly => (
-                CompactionExecutionMode::Remote,
-                compact_remotely(provider, &request, compacted_prefix)
-                    .await?
-                    .ok_or_else(|| RuntimeError::FailedToCompactHistory(
+            CompactionMode::RemoteOnly => {
+                if !supports_remote {
+                    return Err(RuntimeError::FailedToCompactHistory(
                         ProviderError::UnsupportedCapability("history_compaction".to_string()),
-                    ))?,
-            ),
+                    ));
+                }
+                (
+                    CompactionExecutionMode::Remote,
+                    compact_remotely(provider, &request, compacted_prefix)
+                        .await?
+                        .ok_or_else(|| RuntimeError::FailedToCompactHistory(
+                            ProviderError::UnsupportedCapability("history_compaction".to_string()),
+                        ))?,
+                )
+            }
         };
 
         let preserved_user_turns = select_recent_user_turns(
@@ -157,20 +170,14 @@ impl CompactionEngine for StandardCompactionEngine {
 }
 
 pub(crate) fn compaction_request_from_agent(
-    agent_id: &str,
-    agent_name: &str,
     model: &str,
     transcript: AgentTranscript,
-    trigger: crate::agent::CompactionTrigger,
     config: &crate::agent::CompactionConfig,
     provider_request_options: ProviderRequestOptions,
 ) -> CompactionRequest {
     CompactionRequest {
-        agent_id: agent_id.to_string(),
-        agent_name: agent_name.to_string(),
         model: model.to_string(),
         transcript,
-        trigger,
         transcript_dir: config.transcript_dir.clone(),
         summary_max_input_chars: config.summary_max_input_chars,
         summary_max_output_tokens: config.summary_max_output_tokens,

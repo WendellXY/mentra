@@ -87,11 +87,11 @@ impl AgentMemory {
         self.persist()
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn compact(&mut self, outcome: CompactionOutcome) -> Result<(), RuntimeError> {
         self.state.transcript = outcome.transcript;
         self.sync_history_cache();
-        self.state.compaction.last_compacted_transcript_path = Some(outcome.transcript_path);
+        let _ = outcome.transcript_path;
         self.persist()
     }
 
@@ -178,7 +178,7 @@ impl AgentMemory {
         }
         self.state.transcript = outcome.transcript;
         self.sync_history_cache();
-        self.state.compaction.last_compacted_transcript_path = Some(outcome.transcript_path);
+        let _ = outcome.transcript_path;
         self.persist()?;
         Ok(true)
     }

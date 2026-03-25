@@ -74,28 +74,12 @@ fn clone_tooling_services(tooling: &ToolingServices) -> ToolingServices {
 
 impl RuntimeHandle {
     pub fn new(runtime_intrinsics_enabled: bool) -> Self {
-        Self::with_components(
-            Arc::new(SqliteRuntimeStore::default()),
-            Arc::new(LocalRuntimeExecutor),
-            Arc::new(RuntimePolicy::default()),
-            None,
-            RuntimeHooks::new().with_hook(AuditHook),
-            Arc::new(StandardCompactionEngine),
-            runtime_intrinsics_enabled,
-            Arc::<str>::from("default"),
-        )
-    }
-
-    fn with_components(
-        store: Arc<dyn RuntimeStore>,
-        executor: Arc<dyn RuntimeExecutor>,
-        policy: Arc<RuntimePolicy>,
-        tool_authorizer: Option<Arc<dyn ToolAuthorizer>>,
-        hooks: RuntimeHooks,
-        compaction: Arc<dyn crate::compaction::CompactionEngine>,
-        runtime_intrinsics_enabled: bool,
-        persisted_runtime_identifier: Arc<str>,
-    ) -> Self {
+        let store: Arc<dyn RuntimeStore> = Arc::new(SqliteRuntimeStore::default());
+        let executor: Arc<dyn RuntimeExecutor> = Arc::new(LocalRuntimeExecutor);
+        let policy = Arc::new(RuntimePolicy::default());
+        let hooks = RuntimeHooks::new().with_hook(AuditHook);
+        let compaction: Arc<dyn crate::compaction::CompactionEngine> =
+            Arc::new(StandardCompactionEngine);
         let _ = store.prepare_recovery();
         let runtime_instance_id = format!("runtime-{}", std::process::id());
         let memory = Arc::new(MemoryEngine::new(store.clone(), hooks.clone()));
@@ -108,7 +92,7 @@ impl RuntimeHandle {
             execution: ExecutionServices {
                 executor: executor.clone(),
                 policy,
-                tool_authorizer,
+                tool_authorizer: None,
                 hooks: hooks.clone(),
             },
             persistence: PersistenceServices {
@@ -132,7 +116,7 @@ impl RuntimeHandle {
             },
             runtime_intrinsics_enabled,
             runtime_instance_id,
-            persisted_runtime_identifier,
+            persisted_runtime_identifier: Arc::<str>::from("default"),
             lease_keys: Arc::new(Mutex::new(BTreeSet::new())),
             agent_contexts: Arc::new(RwLock::new(HashMap::new())),
         };

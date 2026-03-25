@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -24,9 +22,7 @@ pub struct PendingTurnState {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct CompactionState {
-    pub last_compacted_transcript_path: Option<PathBuf>,
-}
+pub struct CompactionState;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunMemoryState {

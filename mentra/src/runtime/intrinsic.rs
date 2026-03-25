@@ -3,11 +3,11 @@ use serde_json::json;
 use strum::{Display, VariantArray};
 
 use crate::{
-    ContentBlock, Message,
-    agent::{Agent, AgentEvent, ContextCompactionTrigger, SpawnedAgentStatus},
+    ContentBlock,
+    agent::{Agent, AgentEvent, CompactionTrigger, SpawnedAgentStatus},
     memory::{MemorySearchMode, MemorySearchRequest},
     transcript::{
-        DelegationArtifact, DelegationEdge, DelegationKind, DelegationStatus, TranscriptItem,
+        DelegationArtifact, DelegationEdge, DelegationKind, DelegationStatus,
     },
     tool::{
         ExecutableTool, ToolCall, ToolCapability, ToolContext, ToolDurability, ToolResult,
@@ -346,7 +346,7 @@ async fn execute_compact(agent: &mut Agent, call: ToolCall) -> ContentBlock {
     match agent
         .compact_history(
             agent.history().len().saturating_sub(1),
-            ContextCompactionTrigger::Manual,
+            CompactionTrigger::Manual,
         )
         .await
     {
@@ -394,10 +394,10 @@ async fn execute_task(agent: &mut Agent, call: ToolCall) -> ContentBlock {
                 local_agent_id: agent.id().to_string(),
                 remote_agent_id: child_id.clone(),
             });
-            let _ = agent.append_transcript_item(TranscriptItem::delegation_request(
-                Message::user(ContentBlock::text(format!(
+            let _ = agent.record_delegation_request(
+                format!(
                     "<delegation-request agent=\"{child_name}\" model=\"{child_model}\">\n{prompt}\n</delegation-request>"
-                ))),
+                ),
                 DelegationArtifact {
                     kind: DelegationKind::Subagent,
                     agent_id: child_id.clone(),
@@ -409,7 +409,7 @@ async fn execute_task(agent: &mut Agent, call: ToolCall) -> ContentBlock {
                     artifacts: Vec::new(),
                 },
                 edge.clone(),
-            ));
+            );
             agent.sync_memory_snapshot();
             let started = agent.register_subagent(&child);
             agent.emit_event(AgentEvent::SubagentSpawned { agent: started });
@@ -421,10 +421,10 @@ async fn execute_task(agent: &mut Agent, call: ToolCall) -> ContentBlock {
                     } else {
                         message.text()
                     };
-                    let _ = agent.append_transcript_item(TranscriptItem::delegation_result(
-                        Message::user(ContentBlock::text(format!(
+                    let _ = agent.record_delegation_result(
+                        format!(
                             "<delegation-result agent=\"{child_name}\" status=\"finished\">\n{result_summary}\n</delegation-result>"
-                        ))),
+                        ),
                         DelegationArtifact {
                             kind: DelegationKind::Subagent,
                             agent_id: child_id.clone(),
@@ -436,7 +436,7 @@ async fn execute_task(agent: &mut Agent, call: ToolCall) -> ContentBlock {
                             artifacts: Vec::new(),
                         },
                         edge.clone(),
-                    ));
+                    );
                     agent.sync_memory_snapshot();
                     if let Some(finished) =
                         agent.finish_subagent(child.id(), SpawnedAgentStatus::Finished)
@@ -459,10 +459,10 @@ async fn execute_task(agent: &mut Agent, call: ToolCall) -> ContentBlock {
                 }
                 Err(error) => {
                     let error_text = error.to_string();
-                    let _ = agent.append_transcript_item(TranscriptItem::delegation_result(
-                        Message::user(ContentBlock::text(format!(
+                    let _ = agent.record_delegation_result(
+                        format!(
                             "<delegation-result agent=\"{child_name}\" status=\"failed\">\n{error_text}\n</delegation-result>"
-                        ))),
+                        ),
                         DelegationArtifact {
                             kind: DelegationKind::Subagent,
                             agent_id: child_id,
@@ -474,7 +474,7 @@ async fn execute_task(agent: &mut Agent, call: ToolCall) -> ContentBlock {
                             artifacts: Vec::new(),
                         },
                         edge,
-                    ));
+                    );
                     agent.sync_memory_snapshot();
                     if let Some(finished) = agent
                         .finish_subagent(child.id(), SpawnedAgentStatus::Failed(error_text.clone()))

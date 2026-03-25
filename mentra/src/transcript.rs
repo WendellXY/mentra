@@ -33,16 +33,8 @@ impl AgentTranscript {
         self.items.is_empty()
     }
 
-    pub fn last(&self) -> Option<&TranscriptItem> {
-        self.items.last()
-    }
-
     pub fn push(&mut self, item: TranscriptItem) {
         self.items.push(item);
-    }
-
-    pub fn replace(&mut self, items: Vec<TranscriptItem>) {
-        self.items = items;
     }
 
     pub fn to_messages(&self) -> Vec<Message> {
@@ -95,13 +87,6 @@ impl TranscriptItem {
     pub fn canonical_context(message: Message) -> Self {
         Self {
             kind: TranscriptKind::CanonicalContext,
-            message: Some(message),
-        }
-    }
-
-    pub fn memory_recall(message: Message) -> Self {
-        Self {
-            kind: TranscriptKind::MemoryRecall,
             message: Some(message),
         }
     }

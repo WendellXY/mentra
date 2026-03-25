@@ -9,9 +9,7 @@ use crate::{
     provider::Request,
     runtime::{RunOptions, RuntimeHookEvent, control::is_transient_provider_error},
     team::format_inbox,
-    transcript::{
-        DelegationArtifact, DelegationKind, DelegationStatus, TranscriptItem,
-    },
+    transcript::{DelegationArtifact, DelegationKind, DelegationStatus},
     tool::ToolRuntime,
 };
 
@@ -410,8 +408,8 @@ impl Agent {
         self.inflight_team_messages.extend(messages.iter().cloned());
         for message in &messages {
             let content = format_inbox(std::slice::from_ref(message));
-            self.memory.append_transcript_item(TranscriptItem::delegation_request(
-                Message::user(ContentBlock::text(content)),
+            self.record_delegation_request(
+                content,
                 DelegationArtifact {
                     kind: DelegationKind::Teammate,
                     agent_id: message.sender.clone(),
@@ -423,7 +421,7 @@ impl Agent {
                     artifacts: Vec::new(),
                 },
                 None,
-            ))?;
+            )?;
         }
         self.sync_memory_snapshot();
         Ok(())
@@ -453,10 +451,7 @@ impl Agent {
 
         self.inflight_background_notifications
             .extend(notifications.iter().cloned());
-        self.memory
-            .append_transcript_item(TranscriptItem::canonical_context(Message::user(
-                ContentBlock::text(format_background_results(&notifications)),
-            )))?;
+        self.record_canonical_context(format_background_results(&notifications))?;
         self.sync_memory_snapshot();
         Ok(())
     }

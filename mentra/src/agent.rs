@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, watch};
 
 use crate::{
+    ContentBlock,
     Message,
     background::BackgroundNotification,
     error::RuntimeError,
@@ -34,7 +35,7 @@ use crate::{
         handle::{AgentExecutionConfig, AgentObserver, RuntimeHandle},
     },
     team::TeamMessage,
-    transcript::TranscriptItem,
+    transcript::{DelegationArtifact, DelegationEdge, TranscriptItem},
 };
 
 pub(crate) use team::parse_task_input;
@@ -277,11 +278,43 @@ impl Agent {
         self.memory.transcript()
     }
 
-    pub(crate) fn append_transcript_item(
-        &mut self,
-        item: TranscriptItem,
-    ) -> Result<(), RuntimeError> {
+    fn append_transcript_item(&mut self, item: TranscriptItem) -> Result<(), RuntimeError> {
         self.memory.append_transcript_item(item)
+    }
+
+    pub(crate) fn record_canonical_context(
+        &mut self,
+        content: impl Into<String>,
+    ) -> Result<(), RuntimeError> {
+        self.append_transcript_item(TranscriptItem::canonical_context(Message::user(
+            ContentBlock::text(content.into()),
+        )))
+    }
+
+    pub(crate) fn record_delegation_request(
+        &mut self,
+        content: impl Into<String>,
+        delegation: DelegationArtifact,
+        edge: Option<DelegationEdge>,
+    ) -> Result<(), RuntimeError> {
+        self.append_transcript_item(TranscriptItem::delegation_request(
+            Message::user(ContentBlock::text(content.into())),
+            delegation,
+            edge,
+        ))
+    }
+
+    pub(crate) fn record_delegation_result(
+        &mut self,
+        content: impl Into<String>,
+        delegation: DelegationArtifact,
+        edge: Option<DelegationEdge>,
+    ) -> Result<(), RuntimeError> {
+        self.append_transcript_item(TranscriptItem::delegation_result(
+            Message::user(ContentBlock::text(content.into())),
+            delegation,
+            edge,
+        ))
     }
 
     pub(crate) fn memory_revision(&self) -> u64 {

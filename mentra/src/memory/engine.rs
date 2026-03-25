@@ -1,7 +1,5 @@
 use std::{
-    borrow::Cow,
     collections::HashSet,
-    path::{Path, PathBuf},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -10,8 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Message,
-    agent::ContextCompactionTrigger,
-    provider::{ContentBlock, Provider, ProviderRequestOptions, Request},
+    provider::ContentBlock,
     runtime::{RuntimeError, RuntimeHookEvent, RuntimeHooks, RuntimeStore, TaskItem},
 };
 
@@ -107,32 +104,6 @@ pub struct IngestRequest {
 pub struct IngestOutcome {
     pub stored_records: usize,
     pub skipped: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct CompactRequest {
-    pub agent_id: String,
-    pub base_revision: u64,
-    pub history: Vec<Message>,
-    pub preserve_from: usize,
-    pub trigger: ContextCompactionTrigger,
-    pub transcript_dir: PathBuf,
-    pub summary_max_input_chars: usize,
-    pub summary_max_output_tokens: u32,
-    pub model: String,
-    pub provider_request_options: ProviderRequestOptions,
-}
-
-#[derive(Debug, Clone)]
-pub struct CompactProposal {
-    pub agent_id: String,
-    pub base_revision: u64,
-    pub trigger: ContextCompactionTrigger,
-    pub transcript_path: PathBuf,
-    pub transcript: Vec<Message>,
-    pub summary: String,
-    pub replaced_messages: usize,
-    pub preserved_messages: usize,
 }
 
 pub trait MemoryStore: Send + Sync {
@@ -241,52 +212,6 @@ impl MemoryEngine {
             },
         );
         Ok(hits)
-    }
-
-    pub async fn compact(
-        &self,
-        provider: Arc<dyn Provider>,
-        request: CompactRequest,
-    ) -> Result<Option<CompactProposal>, RuntimeError> {
-        if request.history.is_empty() {
-            return Ok(None);
-        }
-
-        let preserve_from = request.preserve_from.min(request.history.len());
-        let summary_target = &request.history[..preserve_from];
-        if summary_target.is_empty() {
-            return Ok(None);
-        }
-
-        let transcript_path = persist_transcript(&request.history, &request.transcript_dir).await?;
-        let summary = summarize_messages(provider, &request, summary_target).await?;
-        let mut next_history = Vec::with_capacity(request.history.len() - preserve_from + 1);
-        next_history.push(Message::user(ContentBlock::text(format!(
-            "[Compressed context]\n\n{summary}"
-        ))));
-        next_history.extend_from_slice(&request.history[preserve_from..]);
-
-        let proposal = CompactProposal {
-            agent_id: request.agent_id.clone(),
-            base_revision: request.base_revision,
-            trigger: request.trigger,
-            transcript_path: transcript_path.clone(),
-            transcript: next_history,
-            summary,
-            replaced_messages: summary_target.len(),
-            preserved_messages: request.history.len() - preserve_from,
-        };
-
-        let _ = self.hooks.emit(
-            self.store.as_ref(),
-            &RuntimeHookEvent::MemoryCompactionProposed {
-                agent_id: request.agent_id,
-                base_revision: request.base_revision,
-                transcript_path,
-            },
-        );
-
-        Ok(Some(proposal))
     }
 
     pub fn schedule_ingest(&self, request: IngestRequest) {
@@ -560,82 +485,6 @@ pub(crate) fn recalled_memory_message(hits: &[MemoryHit], char_limit: usize) -> 
         "<recalled-memory>\n{}\n</recalled-memory>",
         entries.join("\n")
     ))))
-}
-
-async fn persist_transcript(
-    history: &[Message],
-    transcript_dir: &Path,
-) -> Result<PathBuf, RuntimeError> {
-    tokio::fs::create_dir_all(transcript_dir)
-        .await
-        .map_err(RuntimeError::FailedToPersistTranscript)?;
-
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time should be after unix epoch")
-        .as_nanos();
-    let transcript_path = transcript_dir.join(format!("{timestamp}.jsonl"));
-    let mut serialized = String::new();
-
-    for message in history {
-        let line =
-            serde_json::to_string(message).map_err(RuntimeError::FailedToSerializeTranscript)?;
-        serialized.push_str(&line);
-        serialized.push('\n');
-    }
-
-    tokio::fs::write(&transcript_path, serialized)
-        .await
-        .map_err(RuntimeError::FailedToPersistTranscript)?;
-
-    Ok(transcript_path)
-}
-
-async fn summarize_messages(
-    provider: Arc<dyn Provider>,
-    request: &CompactRequest,
-    messages: &[Message],
-) -> Result<String, RuntimeError> {
-    let serialized =
-        serde_json::to_string(messages).map_err(RuntimeError::FailedToSerializeTranscript)?;
-    let transcript = truncate_to_char_boundary(&serialized, request.summary_max_input_chars);
-    let system = "You compress agent conversations for continuity. Preserve the user goal, key decisions, relevant code paths, important tool outputs, open questions, and remaining work. Keep it concise and factual.";
-    let prompt = format!(
-        "Summarize this conversation for continuity. The summary should help a future model continue the work without the full transcript.\n\nTranscript JSON:\n{transcript}"
-    );
-
-    let response = provider
-        .send(Request {
-            model: Cow::Borrowed(request.model.as_str()),
-            system: Some(Cow::Borrowed(system)),
-            messages: Cow::Owned(vec![Message::user(ContentBlock::text(prompt))]),
-            tools: Cow::Owned(Vec::new()),
-            tool_choice: None,
-            temperature: None,
-            max_output_tokens: Some(request.summary_max_output_tokens),
-            metadata: Cow::Owned(Default::default()),
-            provider_request_options: request.provider_request_options.clone(),
-        })
-        .await
-        .map_err(RuntimeError::FailedToCompactHistory)?;
-
-    let summary = response
-        .content
-        .into_iter()
-        .filter_map(|block| match block {
-            ContentBlock::Text { text } => Some(text),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim()
-        .to_string();
-
-    if summary.is_empty() {
-        Ok("No additional summary was produced.".to_string())
-    } else {
-        Ok(summary)
-    }
 }
 
 fn summarize_episode(messages: &[Message]) -> String {
