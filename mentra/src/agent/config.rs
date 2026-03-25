@@ -353,7 +353,7 @@ mod tests {
             "max_output_tokens": 8192,
             "metadata": {},
             "provider_request_options": {
-                "openai": {
+                "responses": {
                     "parallel_tool_calls": true
                 }
             },
@@ -370,7 +370,10 @@ mod tests {
             ToolSearchMode::Disabled
         );
         assert_eq!(
-            config.provider_request_options.openai.parallel_tool_calls,
+            config
+                .provider_request_options
+                .responses
+                .parallel_tool_calls,
             Some(true)
         );
     }

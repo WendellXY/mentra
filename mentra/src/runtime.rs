@@ -12,13 +12,11 @@ use std::{any::Any, path::Path, sync::Arc};
 
 use crate::{
     agent::{Agent, AgentConfig, AgentSpawnOptions, AgentStatus},
-    provider::{
-        BuiltinProvider, ModelInfo, ModelSelector, Provider, ProviderDescriptor, ProviderId,
-        ProviderRegistry,
-    },
+    provider::{Provider, ProviderRegistry},
     runtime::{builder::RuntimeBuilder, skill::SkillLoadError},
     tool::ExecutableTool,
 };
+use mentra_provider::{BuiltinProvider, ModelInfo, ModelSelector, ProviderDescriptor, ProviderId};
 
 pub use control::{
     AuditHook, AuditLogHook, CancellationFlag, CancellationToken, CommandOutput, CommandRequest,

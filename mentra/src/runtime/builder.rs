@@ -1,13 +1,14 @@
 use std::{any::Any, path::Path, sync::Arc};
 
 use crate::{
-    provider::{BuiltinProvider, Provider, ProviderRegistry},
+    provider::{Provider, ProviderRegistry},
     runtime::{
         RuntimeExecutor, RuntimeHandle, RuntimeHook, RuntimeHooks, RuntimePolicy, RuntimeStore,
         error::RuntimeError, skill::SkillLoadError,
     },
     tool::{ExecutableTool, ToolAuthorizer},
 };
+use mentra_provider::BuiltinProvider;
 
 use super::Runtime;
 use super::skill::SkillLoader;

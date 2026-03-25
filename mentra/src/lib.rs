@@ -2,6 +2,8 @@
 
 mod default_paths;
 
+pub use mentra_provider as provider_core;
+
 /// Agent configuration, lifecycle, and event handling.
 pub mod agent;
 /// Optional OAuth helpers for provider authentication.
@@ -23,10 +25,17 @@ pub mod test;
 /// Tool traits, metadata, and builtin tools.
 pub mod tool;
 
-pub use provider::{
-    BuiltinProvider, ContentBlock, ImageSource, Message, ModelInfo, ModelSelector,
-    ProviderDescriptor, ProviderId, Role,
+pub use mentra_provider::{
+    AnthropicRequestOptions, BuiltinProvider, ContentBlock, ContentBlockDelta, ContentBlockStart,
+    GeminiRequestOptions, ImageSource, Message, ModelInfo, ModelSelector, OpenAIRequestOptions,
+    ProviderCapabilities, ProviderCredentials, ProviderDefinition, ProviderDescriptor,
+    ProviderError, ProviderEvent, ProviderEventStream, ProviderId, ProviderRequestOptions,
+    ReasoningEffort, ReasoningOptions, Request, ResponsesRequestOptions, RetryPolicy, Role,
+    TokenUsage, ToolChoice, ToolSearchMode, WireApi, collect_response_from_stream,
+    provider_event_stream_from_response,
 };
+
+pub use provider::{Provider, ProviderRegistry};
 
 pub use agent::{Agent, AgentConfig};
 pub use background::{BackgroundNotification, BackgroundTaskStatus, BackgroundTaskSummary};
