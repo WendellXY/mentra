@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
-    BuiltinProvider, ContentBlock, ImageSource, Message, ModelInfo, ProviderError,
-    ReasoningEffort, Request, Role, ToolChoice, ToolLoadingPolicy, ToolSearchMode, ToolSpec,
+    BuiltinProvider, ContentBlock, ImageSource, Message, ModelInfo, ProviderError, ReasoningEffort,
+    Request, Role, ToolChoice, ToolLoadingPolicy, ToolSearchMode, ToolSpec,
 };
 
 #[derive(Deserialize)]

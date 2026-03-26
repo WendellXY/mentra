@@ -456,22 +456,24 @@ impl ResponsesOutputItem {
                 ..
             } => Some(ContentBlockStart::HostedToolSearch {
                 call: HostedToolSearchCall {
-                    id: call_id.or(id).unwrap_or_else(|| "tool_search_call".to_string()),
+                    id: call_id
+                        .or(id)
+                        .unwrap_or_else(|| "tool_search_call".to_string()),
                     status,
                     query: arguments
                         .as_ref()
                         .and_then(extract_tool_search_query_from_value),
                 },
             }),
-            ResponsesOutputItem::WebSearchCall { id, status, action } => Some(
-                ContentBlockStart::HostedWebSearch {
+            ResponsesOutputItem::WebSearchCall { id, status, action } => {
+                Some(ContentBlockStart::HostedWebSearch {
                     call: HostedWebSearchCall {
                         id: id.unwrap_or_else(|| "web_search_call".to_string()),
                         status,
                         action,
                     },
-                },
-            ),
+                })
+            }
             ResponsesOutputItem::ImageGenerationCall {
                 id,
                 status,
@@ -569,7 +571,9 @@ impl ResponsesOutputItem {
                     events.push(ProviderEvent::ContentBlockDelta {
                         index: output_index,
                         delta: ContentBlockDelta::ImageGenerationResult(
-                            ImageGenerationResult::ArtifactRef { artifact_id: result },
+                            ImageGenerationResult::ArtifactRef {
+                                artifact_id: result,
+                            },
                         ),
                     });
                 }
@@ -839,10 +843,12 @@ mod tests {
             vec![
                 ProviderEvent::ContentBlockDelta {
                     index: 4,
-                    delta: ContentBlockDelta::HostedWebSearchAction(crate::WebSearchAction::Search {
-                        query: Some("weather seattle".to_string()),
-                        queries: None,
-                    }),
+                    delta: ContentBlockDelta::HostedWebSearchAction(
+                        crate::WebSearchAction::Search {
+                            query: Some("weather seattle".to_string()),
+                            queries: None,
+                        }
+                    ),
                 },
                 ProviderEvent::ContentBlockDelta {
                     index: 4,

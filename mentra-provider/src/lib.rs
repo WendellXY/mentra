@@ -48,11 +48,11 @@ pub mod provider {
     pub mod model {
         pub use crate::{
             AnthropicRequestOptions, ContentBlock, ContentBlockDelta, ContentBlockStart,
-            HostedToolSearchCall, HostedWebSearchCall, ImageGenerationCall,
-            ImageGenerationResult, ImageSource, Message, ModelInfo, OpenAIRequestOptions,
-            ProviderError, ProviderEvent, ProviderEventStream, ProviderId, ProviderRequestOptions,
-            ReasoningEffort, ReasoningOptions, Request, Response, Role, SessionRequestOptions,
-            TokenUsage, ToolChoice, ToolResultContent, ToolSearchMode, WebSearchAction,
+            HostedToolSearchCall, HostedWebSearchCall, ImageGenerationCall, ImageGenerationResult,
+            ImageSource, Message, ModelInfo, OpenAIRequestOptions, ProviderError, ProviderEvent,
+            ProviderEventStream, ProviderId, ProviderRequestOptions, ReasoningEffort,
+            ReasoningOptions, Request, Response, Role, SessionRequestOptions, TokenUsage,
+            ToolChoice, ToolResultContent, ToolSearchMode, WebSearchAction,
             collect_response_from_stream, provider_event_stream_from_response,
         };
     }

@@ -6,9 +6,9 @@ use serde_json::Value;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{
-    BuiltinProvider, ContentBlock, ImageSource, Message, ModelInfo, ProviderError,
-    ReasoningEffort, Request, Response, Role, TokenUsage, ToolChoice, ToolLoadingPolicy,
-    ToolResultContent, ToolSearchMode, ToolSpec,
+    BuiltinProvider, ContentBlock, ImageSource, Message, ModelInfo, ProviderError, ReasoningEffort,
+    Request, Response, Role, TokenUsage, ToolChoice, ToolLoadingPolicy, ToolResultContent,
+    ToolSearchMode, ToolSpec,
 };
 
 #[derive(Deserialize)]

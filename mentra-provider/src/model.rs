@@ -260,12 +260,8 @@ pub struct HostedWebSearchCall {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ImageGenerationResult {
-    Image {
-        source: ImageSource,
-    },
-    ArtifactRef {
-        artifact_id: String,
-    },
+    Image { source: ImageSource },
+    ArtifactRef { artifact_id: String },
 }
 
 /// Provider-neutral image generation call.

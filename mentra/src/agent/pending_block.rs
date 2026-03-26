@@ -1,8 +1,6 @@
-use crate::{
-    ContentBlock, ImageSource, error::RuntimeError, provider::ContentBlockStart,
-};
+use crate::{ContentBlock, ImageSource, error::RuntimeError, provider::ContentBlockStart};
 use mentra_provider::{
-    ImageGenerationCall, ImageGenerationResult, HostedToolSearchCall, HostedWebSearchCall,
+    HostedToolSearchCall, HostedWebSearchCall, ImageGenerationCall, ImageGenerationResult,
     ToolResultContent, WebSearchAction,
 };
 
@@ -216,9 +214,9 @@ impl PendingContentBlock {
                         query: query.clone(),
                         queries: queries.clone(),
                     },
-                    WebSearchAction::OpenPage { url } => WebSearchAction::OpenPage {
-                        url: url.clone(),
-                    },
+                    WebSearchAction::OpenPage { url } => {
+                        WebSearchAction::OpenPage { url: url.clone() }
+                    }
                     WebSearchAction::FindInPage { url, pattern } => WebSearchAction::FindInPage {
                         url: url.clone(),
                         pattern: pattern.clone(),

@@ -3295,8 +3295,7 @@ async fn team_list_requests_tool_filters_visible_requests() {
             _ => None,
         })
         .expect("team_list_requests tool result");
-    let listed: serde_json::Value =
-        serde_json::from_str(&tool_result).expect("parse tool output");
+    let listed: serde_json::Value = serde_json::from_str(&tool_result).expect("parse tool output");
     let listed = listed.as_array().expect("array");
     assert_eq!(listed.len(), 1);
     assert_eq!(

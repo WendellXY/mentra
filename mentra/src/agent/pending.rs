@@ -81,7 +81,10 @@ impl PendingAssistantTurn {
                         PendingContentBlock::ToolResult { content, .. },
                         ContentBlockDelta::ToolResultContent(delta),
                     ) => match (content, delta) {
-                        (mentra_provider::ToolResultContent::Text(content), mentra_provider::ToolResultContent::Text(delta)) => {
+                        (
+                            mentra_provider::ToolResultContent::Text(content),
+                            mentra_provider::ToolResultContent::Text(delta),
+                        ) => {
                             content.push_str(&delta);
                         }
                         (content, delta) => {

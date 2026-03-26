@@ -99,7 +99,9 @@ fn parse_frame(frame: &[u8], state: &mut StreamState) -> Result<Vec<ProviderEven
     {
         match content_block {
             AnthropicStreamContentBlock::ToolUse { .. } => {
-                state.block_kinds.insert(*index, StreamingBlockKind::ToolUse);
+                state
+                    .block_kinds
+                    .insert(*index, StreamingBlockKind::ToolUse);
             }
             AnthropicStreamContentBlock::ServerToolUse { name, .. }
                 if name.starts_with("tool_search") =>
@@ -334,6 +336,9 @@ mod tests {
             &mut state,
         )
         .expect("hosted search stop should parse");
-        assert_eq!(stopped, vec![ProviderEvent::ContentBlockStopped { index: 1 }]);
+        assert_eq!(
+            stopped,
+            vec![ProviderEvent::ContentBlockStopped { index: 1 }]
+        );
     }
 }

@@ -217,10 +217,13 @@ impl StreamingContentBlock {
                 ContentBlockDelta::ToolResultContent(delta),
             ) => {
                 *content = Some(match (content.take(), delta) {
-                    (_, ToolResultContent::Structured(value)) => ToolResultContent::Structured(value),
-                    (Some(ToolResultContent::Structured(value)), ToolResultContent::Text(delta)) => {
-                        ToolResultContent::Structured(merge_structured_text(value, delta))
+                    (_, ToolResultContent::Structured(value)) => {
+                        ToolResultContent::Structured(value)
                     }
+                    (
+                        Some(ToolResultContent::Structured(value)),
+                        ToolResultContent::Text(delta),
+                    ) => ToolResultContent::Structured(merge_structured_text(value, delta)),
                     (Some(ToolResultContent::Text(existing)), ToolResultContent::Text(delta)) => {
                         ToolResultContent::Text(format!("{existing}{delta}"))
                     }
@@ -386,10 +389,12 @@ impl From<ContentBlockStart> for StreamingContentBlock {
                 is_error,
                 complete: false,
             },
-            ContentBlockStart::HostedToolSearch { call } => StreamingContentBlock::HostedToolSearch {
-                call,
-                complete: false,
-            },
+            ContentBlockStart::HostedToolSearch { call } => {
+                StreamingContentBlock::HostedToolSearch {
+                    call,
+                    complete: false,
+                }
+            }
             ContentBlockStart::HostedWebSearch { call } => StreamingContentBlock::HostedWebSearch {
                 call,
                 complete: false,
@@ -490,7 +495,9 @@ impl ContentBlock {
 
 fn merge_structured_text(value: serde_json::Value, delta: String) -> serde_json::Value {
     match value {
-        serde_json::Value::String(existing) => serde_json::Value::String(format!("{existing}{delta}")),
+        serde_json::Value::String(existing) => {
+            serde_json::Value::String(format!("{existing}{delta}"))
+        }
         other => other,
     }
 }

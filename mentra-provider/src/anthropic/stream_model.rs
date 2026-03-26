@@ -54,15 +54,15 @@ impl AnthropicStreamContentBlock {
             AnthropicStreamContentBlock::ToolUse { id, name } => {
                 Some(ContentBlockStart::ToolUse { id, name })
             }
-            AnthropicStreamContentBlock::ServerToolUse { id, name } => {
-                name.starts_with("tool_search").then_some(ContentBlockStart::HostedToolSearch {
+            AnthropicStreamContentBlock::ServerToolUse { id, name } => name
+                .starts_with("tool_search")
+                .then_some(ContentBlockStart::HostedToolSearch {
                     call: HostedToolSearchCall {
                         id,
                         status: Some("in_progress".to_string()),
                         query: None,
                     },
-                })
-            }
+                }),
             AnthropicStreamContentBlock::Unsupported => None,
         }
     }
