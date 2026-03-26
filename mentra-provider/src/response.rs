@@ -186,6 +186,7 @@ struct StreamingResponseBuilder {
 impl StreamingResponseBuilder {
     fn apply(&mut self, event: ProviderEvent) -> Result<(), ProviderError> {
         match event {
+            ProviderEvent::ResponseHeaders(_) | ProviderEvent::ResponseCreated => {}
             ProviderEvent::MessageStarted { id, model, role } => {
                 self.id = Some(id);
                 self.model = Some(model);
@@ -214,6 +215,9 @@ impl StreamingResponseBuilder {
                 self.stop_reason = stop_reason;
                 self.usage = usage;
             }
+            ProviderEvent::ReasoningSummaryDelta { .. }
+            | ProviderEvent::ReasoningContentDelta { .. }
+            | ProviderEvent::ReasoningSummaryPartAdded { .. } => {}
             ProviderEvent::MessageStopped => {
                 self.stopped = true;
             }

@@ -236,6 +236,14 @@ where
             });
         }
 
+        if let Some(turn_state) = response
+            .headers()
+            .get("x-codex-turn-state")
+            .and_then(|value| value.to_str().ok())
+        {
+            let _ = self.state.turn_state.set(turn_state.to_string());
+        }
+
         Ok(spawn_event_stream(response))
     }
 
@@ -305,6 +313,13 @@ mod tests {
     fn spawn_single_response_server(
         response_body: &'static str,
     ) -> (String, thread::JoinHandle<String>) {
+        spawn_single_response_server_with_headers(response_body, "")
+    }
+
+    fn spawn_single_response_server_with_headers(
+        response_body: &'static str,
+        extra_headers: &'static str,
+    ) -> (String, thread::JoinHandle<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
         let addr = listener.local_addr().expect("read listener addr");
         let handle = thread::spawn(move || {
@@ -344,9 +359,16 @@ mod tests {
             }
 
             let response = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\n\r\n{}",
+                concat!(
+                    "HTTP/1.1 200 OK\r\n",
+                    "content-type: text/event-stream\r\n",
+                    "{}",
+                    "content-length: {}\r\n\r\n",
+                    "{}"
+                ),
+                extra_headers,
                 response_body.len(),
-                response_body
+                response_body,
             );
             stream
                 .write_all(response.as_bytes())
@@ -470,6 +492,44 @@ mod tests {
         assert!(captured.contains("x-mentra-turn-metadata: {\"turn_id\":\"turn-123\"}\r\n"));
         assert!(captured.contains("x-mentra-session-affinity: session-affinity-123\r\n"));
         assert!(captured.contains("x-mentra-connection-reuse: prefer-reuse\r\n"));
+    }
+
+    #[tokio::test]
+    async fn stream_response_captures_turn_state_from_http_response_headers() {
+        let sse_body = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5\",\"status\":\"completed\"}}\n\n";
+        let (base_url, _handle) = spawn_single_response_server_with_headers(
+            sse_body,
+            "x-codex-turn-state: next-turn-state\r\n",
+        );
+
+        let mut definition = super::super::openai_definition();
+        definition.base_url = Some(base_url);
+        let session = ResponsesProvider::with_shared_credential_source(
+            definition,
+            Arc::new(StaticCredentialSource::new("test-key")),
+        )
+        .session();
+
+        let request = Request {
+            model: Cow::Borrowed("gpt-5"),
+            system: Some(Cow::Borrowed("system")),
+            messages: Cow::Owned(vec![crate::Message::user(crate::ContentBlock::text(
+                "hello",
+            ))]),
+            tools: Cow::Owned(Vec::new()),
+            tool_choice: None,
+            temperature: None,
+            max_output_tokens: None,
+            metadata: Cow::Owned(BTreeMap::new()),
+            provider_request_options: ProviderRequestOptions::default(),
+        };
+
+        let _stream = session
+            .stream_response(request)
+            .await
+            .expect("stream response should succeed");
+
+        assert_eq!(session.turn_state().as_deref(), Some("next-turn-state"));
     }
 
     #[tokio::test]

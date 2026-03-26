@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 use crate::{
     ContentBlockDelta, ContentBlockStart, HostedToolSearchCall, HostedWebSearchCall,
     ImageGenerationCall, ImageGenerationResult, ProviderError, ProviderEvent, ProviderEventStream,
-    Role, TokenUsage, WebSearchAction,
+    ResponseHeaders, Role, TokenUsage, WebSearchAction,
 };
 
 /// Spawns an event stream that decodes Responses SSE frames.
@@ -27,6 +27,12 @@ async fn forward_events(
     response: reqwest::Response,
     tx: mpsc::UnboundedSender<Result<ProviderEvent, ProviderError>>,
 ) -> Result<(), ProviderError> {
+    if let Some(headers) = response_headers_event(response.headers()) {
+        if tx.send(Ok(headers)).is_err() {
+            return Ok(());
+        }
+    }
+
     let mut bytes_stream = response.bytes_stream();
     let mut buffer = Vec::new();
     let mut state = StreamState::default();
@@ -54,6 +60,20 @@ async fn forward_events(
     }
 
     Ok(())
+}
+
+fn response_headers_event(headers: &http::HeaderMap) -> Option<ProviderEvent> {
+    let values = headers
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|value| (name.as_str().to_string(), value.to_string()))
+        })
+        .collect::<Vec<_>>();
+
+    (!values.is_empty()).then_some(ProviderEvent::ResponseHeaders(ResponseHeaders { values }))
 }
 
 #[derive(Default)]
@@ -93,13 +113,14 @@ fn parse_frame(frame: &[u8], state: &mut StreamState) -> Result<Vec<ProviderEven
         serde_json::from_str(&data).map_err(ProviderError::Deserialize)?;
 
     match event {
-        ResponsesStreamEvent::ResponseCreated { response } => {
-            Ok(vec![ProviderEvent::MessageStarted {
+        ResponsesStreamEvent::ResponseCreated { response } => Ok(vec![
+            ProviderEvent::ResponseCreated,
+            ProviderEvent::MessageStarted {
                 id: response.id,
                 model: response.model,
                 role: Role::Assistant,
-            }])
-        }
+            },
+        ]),
         ResponsesStreamEvent::ResponseOutputItemAdded { output_index, item } => {
             if let Some(kind) = item.into_provider_start() {
                 Ok(vec![ProviderEvent::ContentBlockStarted {
@@ -124,6 +145,25 @@ fn parse_frame(frame: &[u8], state: &mut StreamState) -> Result<Vec<ProviderEven
             Ok(vec![ProviderEvent::ContentBlockDelta {
                 index: output_index,
                 delta: ContentBlockDelta::Text(delta),
+            }])
+        }
+        ResponsesStreamEvent::ResponseReasoningSummaryTextDelta {
+            delta,
+            summary_index,
+        } => Ok(vec![ProviderEvent::ReasoningSummaryDelta {
+            delta,
+            summary_index,
+        }]),
+        ResponsesStreamEvent::ResponseReasoningTextDelta {
+            delta,
+            content_index,
+        } => Ok(vec![ProviderEvent::ReasoningContentDelta {
+            delta,
+            content_index,
+        }]),
+        ResponsesStreamEvent::ResponseReasoningSummaryPartAdded { summary_index } => {
+            Ok(vec![ProviderEvent::ReasoningSummaryPartAdded {
+                summary_index,
             }])
         }
         ResponsesStreamEvent::ResponseFunctionCallArgumentsDelta {
@@ -262,6 +302,12 @@ enum ResponsesStreamEvent {
         #[allow(dead_code)]
         content_index: Option<usize>,
     },
+    #[serde(rename = "response.reasoning_summary_text.delta")]
+    ResponseReasoningSummaryTextDelta { delta: String, summary_index: i64 },
+    #[serde(rename = "response.reasoning_text.delta")]
+    ResponseReasoningTextDelta { delta: String, content_index: i64 },
+    #[serde(rename = "response.reasoning_summary_part.added")]
+    ResponseReasoningSummaryPartAdded { summary_index: i64 },
     #[serde(rename = "response.function_call_arguments.delta")]
     ResponseFunctionCallArgumentsDelta {
         output_index: usize,
@@ -624,9 +670,76 @@ impl ResponsesMessageContent {
 
 #[cfg(test)]
 mod tests {
+    use http::HeaderMap;
+    use http::HeaderValue;
+
     use crate::{ContentBlockDelta, ContentBlockStart, ProviderEvent, Role, TokenUsage};
 
-    use super::{StreamState, parse_frame};
+    use super::{StreamState, parse_frame, response_headers_event};
+
+    #[test]
+    fn emits_response_headers_event_for_metadata_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("openai-model", HeaderValue::from_static("gpt-5"));
+        headers.insert("x-models-etag", HeaderValue::from_static("etag-123"));
+        headers.insert(
+            "x-ratelimit-limit-requests",
+            HeaderValue::from_static("1000"),
+        );
+
+        let event = response_headers_event(&headers).expect("headers event should be emitted");
+        assert_eq!(
+            event,
+            ProviderEvent::ResponseHeaders(crate::ResponseHeaders {
+                values: vec![
+                    ("openai-model".to_string(), "gpt-5".to_string()),
+                    ("x-models-etag".to_string(), "etag-123".to_string()),
+                    ("x-ratelimit-limit-requests".to_string(), "1000".to_string()),
+                ],
+            })
+        );
+    }
+
+    #[test]
+    fn parses_reasoning_delta_stream_events() {
+        let mut state = StreamState::default();
+
+        let summary_delta = parse_frame(
+            br#"data: {"type":"response.reasoning_summary_text.delta","summary_index":2,"delta":"short summary"}"#,
+            &mut state,
+        )
+        .expect("reasoning summary delta should parse");
+        assert_eq!(
+            summary_delta,
+            vec![ProviderEvent::ReasoningSummaryDelta {
+                delta: "short summary".to_string(),
+                summary_index: 2,
+            }]
+        );
+
+        let part_added = parse_frame(
+            br#"data: {"type":"response.reasoning_summary_part.added","summary_index":2}"#,
+            &mut state,
+        )
+        .expect("reasoning summary part should parse");
+        assert_eq!(
+            part_added,
+            vec![ProviderEvent::ReasoningSummaryPartAdded { summary_index: 2 }]
+        );
+
+        let reasoning_delta = parse_frame(
+            br#"data: {"type":"response.reasoning_text.delta","content_index":7,"delta":"internal chain"}"#,
+            &mut state,
+        )
+        .expect("reasoning content delta should parse");
+        assert_eq!(
+            reasoning_delta,
+            vec![ProviderEvent::ReasoningContentDelta {
+                delta: "internal chain".to_string(),
+                content_index: 7,
+            }]
+        );
+    }
 
     #[test]
     fn parses_tool_call_stream_events() {
@@ -639,11 +752,14 @@ mod tests {
         .expect("created event should parse");
         assert_eq!(
             created,
-            vec![ProviderEvent::MessageStarted {
-                id: "resp_1".to_string(),
-                model: "gpt-5".to_string(),
-                role: Role::Assistant,
-            }]
+            vec![
+                ProviderEvent::ResponseCreated,
+                ProviderEvent::MessageStarted {
+                    id: "resp_1".to_string(),
+                    model: "gpt-5".to_string(),
+                    role: Role::Assistant,
+                },
+            ]
         );
 
         let added = parse_frame(

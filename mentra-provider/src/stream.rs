@@ -8,8 +8,15 @@ use crate::{
 
 pub type ProviderEventStream = mpsc::UnboundedReceiver<Result<ProviderEvent, crate::ProviderError>>;
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ResponseHeaders {
+    pub values: Vec<(String, String)>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProviderEvent {
+    ResponseHeaders(ResponseHeaders),
+    ResponseCreated,
     MessageStarted {
         id: String,
         model: String,
@@ -29,6 +36,17 @@ pub enum ProviderEvent {
     MessageDelta {
         stop_reason: Option<String>,
         usage: Option<TokenUsage>,
+    },
+    ReasoningSummaryDelta {
+        delta: String,
+        summary_index: i64,
+    },
+    ReasoningContentDelta {
+        delta: String,
+        content_index: i64,
+    },
+    ReasoningSummaryPartAdded {
+        summary_index: i64,
     },
     MessageStopped,
 }

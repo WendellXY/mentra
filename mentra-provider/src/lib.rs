@@ -72,6 +72,7 @@ pub use stream::ContentBlockDelta;
 pub use stream::ContentBlockStart;
 pub use stream::ProviderEvent;
 pub use stream::ProviderEventStream;
+pub use stream::ResponseHeaders;
 pub use tool::ToolCapability;
 pub use tool::ToolDurability;
 pub use tool::ToolExecutionMode;
