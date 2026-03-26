@@ -9,10 +9,10 @@ pub mod agent;
 /// Optional OAuth helpers for provider authentication.
 #[cfg(feature = "openai-oauth")]
 pub mod auth;
-/// Transcript compaction engine and related types.
-pub mod compaction;
 /// Background task coordination types and services.
 pub mod background;
+/// Transcript compaction engine and related types.
+pub mod compaction;
 /// Working-memory journal and long-term memory services.
 pub mod memory;
 /// Provider integrations and transport-neutral request/response types.

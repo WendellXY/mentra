@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    Message, agent::PendingToolUseSummary, transcript::AgentTranscript,
-};
+use crate::{Message, agent::PendingToolUseSummary, transcript::AgentTranscript};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AgentMemoryState {

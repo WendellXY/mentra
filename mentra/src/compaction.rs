@@ -9,16 +9,14 @@ use std::{
 use async_trait::async_trait;
 
 use crate::{
+    ContentBlock, Message,
     error::RuntimeError,
     provider::{
         CompactionInputItem, CompactionRequest as ProviderCompactionRequest,
         CompactionResponse as ProviderCompactionResponse, Provider, ProviderError,
         ProviderRequestOptions, Request,
     },
-    transcript::{
-        AgentTranscript, CompactionSummary, TranscriptItem, TranscriptKind,
-    },
-    ContentBlock, Message,
+    transcript::{AgentTranscript, CompactionSummary, TranscriptItem, TranscriptKind},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
@@ -94,12 +92,14 @@ impl CompactionEngine for StandardCompactionEngine {
             return Ok(None);
         }
 
-        let transcript_path = persist_transcript(request.transcript.items(), &request.transcript_dir).await?;
+        let transcript_path =
+            persist_transcript(request.transcript.items(), &request.transcript_dir).await?;
         let supports_remote = provider.capabilities().supports_history_compaction;
         let (mode, summary) = match request.mode {
-            CompactionMode::LocalOnly => {
-                (CompactionExecutionMode::Local, summarize_locally(provider, &request, compacted_prefix).await?)
-            }
+            CompactionMode::LocalOnly => (
+                CompactionExecutionMode::Local,
+                summarize_locally(provider, &request, compacted_prefix).await?,
+            ),
             CompactionMode::PreferRemote => {
                 if supports_remote {
                     match compact_remotely(provider.clone(), &request, compacted_prefix).await {
@@ -130,17 +130,19 @@ impl CompactionEngine for StandardCompactionEngine {
                     CompactionExecutionMode::Remote,
                     compact_remotely(provider, &request, compacted_prefix)
                         .await?
-                        .ok_or_else(|| RuntimeError::FailedToCompactHistory(
-                            ProviderError::UnsupportedCapability("history_compaction".to_string()),
-                        ))?,
+                        .ok_or_else(|| {
+                            RuntimeError::FailedToCompactHistory(
+                                ProviderError::UnsupportedCapability(
+                                    "history_compaction".to_string(),
+                                ),
+                            )
+                        })?,
                 )
             }
         };
 
-        let preserved_user_turns = select_recent_user_turns(
-            compacted_prefix,
-            request.preserve_recent_user_tokens,
-        );
+        let preserved_user_turns =
+            select_recent_user_turns(compacted_prefix, request.preserve_recent_user_tokens);
         let preserved_delegation_results = select_recent_delegation_results(
             compacted_prefix,
             request.preserve_recent_delegation_results,
@@ -193,7 +195,8 @@ async fn summarize_locally(
     request: &CompactionRequest,
     items: &[TranscriptItem],
 ) -> Result<CompactionSummary, RuntimeError> {
-    let serialized = serde_json::to_string(items).map_err(RuntimeError::FailedToSerializeTranscript)?;
+    let serialized =
+        serde_json::to_string(items).map_err(RuntimeError::FailedToSerializeTranscript)?;
     let transcript = truncate_to_char_boundary(&serialized, request.summary_max_input_chars);
     let system = "You compress agent transcripts for continuity. Return strict JSON with keys: goal, progress, decisions, constraints, delegated_work, artifacts, open_questions, next_steps.";
     let prompt = format!(
@@ -228,7 +231,8 @@ async fn summarize_locally(
         return Ok(CompactionSummary::default());
     }
 
-    serde_json::from_str(&text).unwrap_or_else(|_| CompactionSummary::from_fallback_text(text))
+    serde_json::from_str(&text)
+        .unwrap_or_else(|_| CompactionSummary::from_fallback_text(text))
         .pipe(Ok)
 }
 
@@ -237,7 +241,10 @@ async fn compact_remotely(
     request: &CompactionRequest,
     items: &[TranscriptItem],
 ) -> Result<Option<CompactionSummary>, RuntimeError> {
-    let input = items.iter().map(project_compaction_item).collect::<Vec<_>>();
+    let input = items
+        .iter()
+        .map(project_compaction_item)
+        .collect::<Vec<_>>();
     let response = provider
         .compact(ProviderCompactionRequest {
             model: Cow::Borrowed(request.model.as_str()),
@@ -254,14 +261,16 @@ async fn compact_remotely(
 }
 
 fn parse_remote_summary(response: ProviderCompactionResponse) -> Option<CompactionSummary> {
-    response.output.into_iter().rev().find_map(|item| match item {
-        CompactionInputItem::CompactionSummary { content } => {
-            serde_json::from_str(&content)
+    response
+        .output
+        .into_iter()
+        .rev()
+        .find_map(|item| match item {
+            CompactionInputItem::CompactionSummary { content } => serde_json::from_str(&content)
                 .ok()
-                .or_else(|| Some(CompactionSummary::from_fallback_text(content)))
-        }
-        _ => None,
-    })
+                .or_else(|| Some(CompactionSummary::from_fallback_text(content))),
+            _ => None,
+        })
 }
 
 fn project_compaction_item(item: &TranscriptItem) -> CompactionInputItem {
@@ -284,13 +293,15 @@ fn project_compaction_item(item: &TranscriptItem) -> CompactionInputItem {
             content: item.text(),
         },
         TranscriptKind::DelegationRequest { delegation, .. }
-        | TranscriptKind::DelegationResult { delegation, .. } => CompactionInputItem::DelegationResult {
-            agent_id: delegation.agent_id.clone(),
-            agent_name: delegation.agent_name.clone(),
-            role: delegation.role.clone(),
-            status: format!("{:?}", delegation.status).to_lowercase(),
-            content: item.text(),
-        },
+        | TranscriptKind::DelegationResult { delegation, .. } => {
+            CompactionInputItem::DelegationResult {
+                agent_id: delegation.agent_id.clone(),
+                agent_name: delegation.agent_name.clone(),
+                role: delegation.role.clone(),
+                status: format!("{:?}", delegation.status).to_lowercase(),
+                content: item.text(),
+            }
+        }
         TranscriptKind::CompactionSummary { summary } => CompactionInputItem::CompactionSummary {
             content: summary.render_for_handoff(),
         },
@@ -318,7 +329,10 @@ fn select_recent_user_turns(items: &[TranscriptItem], token_budget: usize) -> Ve
     selected
 }
 
-fn select_recent_delegation_results(items: &[TranscriptItem], max_items: usize) -> Vec<TranscriptItem> {
+fn select_recent_delegation_results(
+    items: &[TranscriptItem],
+    max_items: usize,
+) -> Vec<TranscriptItem> {
     let mut selected = items
         .iter()
         .filter(|item| item.is_delegation_result())

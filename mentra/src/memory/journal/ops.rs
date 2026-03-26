@@ -1,7 +1,9 @@
 use std::{path::PathBuf, sync::Arc};
 
 use crate::{
-    Message, error::RuntimeError, runtime::RuntimeStore,
+    Message,
+    error::RuntimeError,
+    runtime::RuntimeStore,
     transcript::{AgentTranscript, TranscriptItem, transcript_item_from_message},
 };
 

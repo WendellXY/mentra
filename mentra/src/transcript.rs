@@ -135,10 +135,7 @@ impl TranscriptItem {
     }
 
     pub fn text(&self) -> String {
-        self.message
-            .as_ref()
-            .map(Message::text)
-            .unwrap_or_default()
+        self.message.as_ref().map(Message::text).unwrap_or_default()
     }
 }
 
@@ -245,8 +242,9 @@ impl CompactionSummary {
     pub fn from_fallback_text(text: String) -> Self {
         Self {
             progress: text,
-            next_steps: vec!["Review the preserved transcript tail and continue from there."
-                .to_string()],
+            next_steps: vec![
+                "Review the preserved transcript tail and continue from there.".to_string(),
+            ],
             ..Self::default()
         }
     }

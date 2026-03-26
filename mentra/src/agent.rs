@@ -24,8 +24,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, watch};
 
 use crate::{
-    ContentBlock,
-    Message,
+    ContentBlock, Message,
     background::BackgroundNotification,
     error::RuntimeError,
     memory::journal::{AgentMemory, AgentMemoryState as MemoryState},
@@ -46,8 +45,8 @@ pub use config::{
 };
 pub use events::{
     AgentEvent, AgentSnapshot, AgentStatus, CompactionDetails, CompactionTrigger,
-    ContextCompactionDetails, ContextCompactionTrigger, PendingToolUseSummary,
-    SpawnedAgentStatus, SpawnedAgentSummary,
+    ContextCompactionDetails, ContextCompactionTrigger, PendingToolUseSummary, SpawnedAgentStatus,
+    SpawnedAgentSummary,
 };
 pub use pending::PendingAssistantTurn;
 use runner::TurnRunner;

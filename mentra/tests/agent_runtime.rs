@@ -1,6 +1,12 @@
-use std::collections::VecDeque;
+use std::{
+    collections::VecDeque,
+    fs,
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use async_trait::async_trait;
+use mentra::runtime::SqliteRuntimeStore;
 use mentra::{
     AgentConfig, BuiltinProvider, ContentBlock, Message, Role, Runtime,
     agent::{AgentEvent, AgentStatus},
@@ -12,6 +18,8 @@ use mentra::{
 };
 use reqwest::StatusCode;
 use tokio::sync::{Mutex, broadcast, mpsc};
+
+static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(1);
 
 enum StreamScript {
     Buffered(Vec<Result<ProviderEvent, ProviderError>>),
@@ -81,10 +89,7 @@ async fn send_streamed_text_turn_emits_events_and_commits_history() {
         vec![text_stream(&model.id, "Hello")],
     );
 
-    let runtime = Runtime::empty_builder()
-        .with_provider_instance(provider)
-        .build()
-        .expect("build runtime");
+    let runtime = test_runtime(provider);
     let mut agent = runtime
         .spawn_with_config(
             "agent",
@@ -143,10 +148,7 @@ async fn send_failure_rolls_history_back_and_emits_run_failed() {
         ],
     );
 
-    let runtime = Runtime::empty_builder()
-        .with_provider_instance(provider)
-        .build()
-        .expect("build runtime");
+    let runtime = test_runtime(provider);
     let mut agent = runtime.spawn("agent", model).unwrap();
     agent.send(vec![ContentBlock::text("first")]).await.unwrap();
     let baseline = agent.history().to_vec();
@@ -176,10 +178,7 @@ async fn send_retries_transient_provider_error_before_streaming() {
     );
     let provider_handle = provider.clone();
 
-    let runtime = Runtime::empty_builder()
-        .with_provider_instance(provider)
-        .build()
-        .expect("build runtime");
+    let runtime = test_runtime(provider);
     let mut agent = runtime.spawn("agent", model).expect("spawn agent");
 
     let message = agent
@@ -214,10 +213,7 @@ async fn resume_replays_last_failed_turn() {
         ],
     );
 
-    let runtime = Runtime::empty_builder()
-        .with_provider_instance(provider)
-        .build()
-        .expect("build runtime");
+    let runtime = test_runtime(provider);
     let mut agent = runtime.spawn("agent", model).expect("spawn agent");
 
     let error = agent
@@ -256,6 +252,29 @@ fn collect_events(receiver: &mut broadcast::Receiver<AgentEvent>) -> Vec<AgentEv
         events.push(event);
     }
     events
+}
+
+fn test_runtime(provider: ScriptedProvider) -> Runtime {
+    Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .with_store(temp_store("agent-runtime"))
+        .build()
+        .expect("build runtime")
+}
+
+fn temp_store(label: &str) -> SqliteRuntimeStore {
+    let unique = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "mentra-agent-runtime-{label}-{timestamp}-{unique}.sqlite"
+    ));
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create temp dir");
+    }
+    SqliteRuntimeStore::new(path)
 }
 
 fn model_info(id: &str, provider: impl Into<ProviderId>) -> ModelInfo {

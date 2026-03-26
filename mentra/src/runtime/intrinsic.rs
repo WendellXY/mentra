@@ -6,13 +6,11 @@ use crate::{
     ContentBlock,
     agent::{Agent, AgentEvent, CompactionTrigger, SpawnedAgentStatus},
     memory::{MemorySearchMode, MemorySearchRequest},
-    transcript::{
-        DelegationArtifact, DelegationEdge, DelegationKind, DelegationStatus,
-    },
     tool::{
         ExecutableTool, ToolCall, ToolCapability, ToolContext, ToolDurability, ToolResult,
         ToolSideEffectLevel, ToolSpec,
     },
+    transcript::{DelegationArtifact, DelegationEdge, DelegationKind, DelegationStatus},
 };
 
 pub(crate) fn register_tools(registry: &mut crate::tool::ToolRegistry) {

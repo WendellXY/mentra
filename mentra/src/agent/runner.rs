@@ -9,8 +9,8 @@ use crate::{
     provider::Request,
     runtime::{RunOptions, RuntimeHookEvent, control::is_transient_provider_error},
     team::format_inbox,
-    transcript::{DelegationArtifact, DelegationKind, DelegationStatus},
     tool::ToolRuntime,
+    transcript::{DelegationArtifact, DelegationKind, DelegationStatus},
 };
 
 use super::{Agent, AgentEvent, AgentStatus, PendingAssistantTurn, pending::InvalidToolUse};

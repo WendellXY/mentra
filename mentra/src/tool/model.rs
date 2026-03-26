@@ -188,9 +188,7 @@ impl ToolContext<'_> {
     }
 
     /// Runs the builtin context-compaction flow immediately.
-    pub async fn compact_history(
-        &mut self,
-    ) -> Result<Option<CompactionDetails>, RuntimeError> {
+    pub async fn compact_history(&mut self) -> Result<Option<CompactionDetails>, RuntimeError> {
         self.agent
             .compact_history(
                 self.agent.history().len().saturating_sub(1),

@@ -3,14 +3,13 @@ use std::{collections::HashMap, sync::Arc};
 use async_trait::async_trait;
 
 pub use mentra_provider::{
-    AnthropicRequestOptions, AuthScheme, BuiltinProvider, ContentBlock, ContentBlockDelta,
-    ContentBlockStart, CompactionInputItem, CompactionRequest, CompactionResponse,
-    GeminiRequestOptions, ImageSource, Message, ModelInfo, ModelSelector, OpenAIRequestOptions,
-    ProviderCapabilities, ProviderCredentials, ProviderDefinition, ProviderDescriptor,
-    ProviderError, ProviderEvent, ProviderEventStream, ProviderId, ProviderRequestOptions,
-    ReasoningEffort, ReasoningOptions, Request, Response, ResponsesRequestOptions, RetryPolicy,
-    Role, TokenUsage, ToolChoice, ToolSearchMode, WireApi, collect_response_from_stream,
-    provider_event_stream_from_response,
+    AnthropicRequestOptions, AuthScheme, BuiltinProvider, CompactionInputItem, CompactionRequest,
+    CompactionResponse, ContentBlock, ContentBlockDelta, ContentBlockStart, GeminiRequestOptions,
+    ImageSource, Message, ModelInfo, ModelSelector, OpenAIRequestOptions, ProviderCapabilities,
+    ProviderCredentials, ProviderDefinition, ProviderDescriptor, ProviderError, ProviderEvent,
+    ProviderEventStream, ProviderId, ProviderRequestOptions, ReasoningEffort, ReasoningOptions,
+    Request, Response, ResponsesRequestOptions, RetryPolicy, Role, TokenUsage, ToolChoice,
+    ToolSearchMode, WireApi, collect_response_from_stream, provider_event_stream_from_response,
 };
 
 pub mod model {

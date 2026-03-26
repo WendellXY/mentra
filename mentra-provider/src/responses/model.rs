@@ -750,9 +750,7 @@ mod tests {
             provider_request_options: ProviderRequestOptions::default(),
         };
 
-        let error = ResponsesRequest::try_from(request)
-            .err()
-            .expect("request should fail");
+        let error = ResponsesRequest::try_from(request).expect_err("request should fail");
         match error {
             ProviderError::InvalidRequest(message) => {
                 assert!(message.contains("deferred tools require hosted tool search"));

@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    AgentTranscript,
-    ContentBlock, Message,
+    AgentTranscript, ContentBlock, Message,
     memory::journal::{AgentMemory, AgentMemoryState, CompactionOutcome, PendingTurnState},
     runtime::SqliteRuntimeStore,
 };
