@@ -1462,7 +1462,7 @@ fn runtime_owner_is_stale(owner: &str) -> bool {
                 };
             }
 
-            let mut exit_code = 0;
+            let mut exit_code = 0u32;
             let result = GetExitCodeProcess(handle, &mut exit_code);
             let close_result = CloseHandle(handle);
             debug_assert_ne!(close_result, 0, "process handle should close");
@@ -1471,7 +1471,7 @@ fn runtime_owner_is_stale(owner: &str) -> bool {
                 return false;
             }
 
-            exit_code != STILL_ACTIVE
+            exit_code != STILL_ACTIVE as u32
         }
     }
 
