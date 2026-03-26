@@ -130,10 +130,10 @@ pub(super) fn background_success_command(output: &str, delay_ms: u64) -> String 
 
     #[cfg(windows)]
     {
-        format!(
-            "powershell.exe -NoProfile -Command \"Start-Sleep -Milliseconds {delay_ms}; [Console]::Out.Write('{}')\"",
+        powershell_encoded_command(&format!(
+            "Start-Sleep -Milliseconds {delay_ms}; [Console]::Out.Write('{}')",
             powershell_single_quoted(output)
-        )
+        ))
     }
 }
 
@@ -149,10 +149,10 @@ pub(super) fn background_failure_command(stderr: &str, exit_code: i32, delay_ms:
 
     #[cfg(windows)]
     {
-        format!(
-            "powershell.exe -NoProfile -Command \"Start-Sleep -Milliseconds {delay_ms}; [Console]::Error.Write('{}'); exit {exit_code}\"",
+        powershell_encoded_command(&format!(
+            "Start-Sleep -Milliseconds {delay_ms}; [Console]::Error.Write('{}'); exit {exit_code}",
             powershell_single_quoted(stderr)
-        )
+        ))
     }
 }
 
@@ -169,6 +169,18 @@ fn shell_single_quoted(value: &str) -> String {
 #[cfg(windows)]
 fn powershell_single_quoted(value: &str) -> String {
     value.replace('\'', "''")
+}
+
+#[cfg(windows)]
+fn powershell_encoded_command(script: &str) -> String {
+    use base64::Engine as _;
+
+    let utf16 = script
+        .encode_utf16()
+        .flat_map(|unit| unit.to_le_bytes())
+        .collect::<Vec<_>>();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
+    format!("powershell.exe -NoProfile -EncodedCommand {encoded}")
 }
 
 pub(super) fn erroring_stream(events: Vec<ProviderEvent>, error: ProviderError) -> StreamScript {

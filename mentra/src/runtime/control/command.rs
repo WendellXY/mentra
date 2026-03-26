@@ -301,7 +301,9 @@ mod tests {
 
     #[cfg(windows)]
     fn stdout_and_stderr_command() -> String {
-        "powershell.exe -NoProfile -Command \"$stdout='a' * 32; $stderr='b' * 32; [Console]::Out.Write($stdout); [Console]::Error.Write($stderr)\"".to_string()
+        powershell_encoded_command(
+            "$stdout='a' * 32; $stderr='b' * 32; [Console]::Out.Write($stdout); [Console]::Error.Write($stderr)",
+        )
     }
 
     #[cfg(unix)]
@@ -311,8 +313,9 @@ mod tests {
 
     #[cfg(windows)]
     fn missing_secret_command() -> String {
-        "cmd.exe /V:OFF /C \"if defined SECRET (set /p =%SECRET%<nul) else (set /p =missing<nul)\""
-            .to_string()
+        powershell_encoded_command(
+            "if ($null -ne $env:SECRET -and $env:SECRET.Length -gt 0) { [Console]::Out.Write($env:SECRET) } else { [Console]::Out.Write('missing') }",
+        )
     }
 
     #[cfg(unix)]
@@ -322,7 +325,7 @@ mod tests {
 
     #[cfg(windows)]
     fn timeout_command() -> String {
-        "powershell.exe -NoProfile -Command \"Start-Sleep -Seconds 1\"".to_string()
+        powershell_encoded_command("Start-Sleep -Seconds 1")
     }
 
     #[cfg(unix)]
@@ -343,6 +346,18 @@ mod tests {
                     .map(|value| (name.to_string(), value))
             })
             .collect()
+    }
+
+    #[cfg(windows)]
+    fn powershell_encoded_command(script: &str) -> String {
+        use base64::Engine as _;
+
+        let utf16 = script
+            .encode_utf16()
+            .flat_map(|unit| unit.to_le_bytes())
+            .collect::<Vec<_>>();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
+        format!("powershell.exe -NoProfile -EncodedCommand {encoded}")
     }
 
     #[tokio::test]
