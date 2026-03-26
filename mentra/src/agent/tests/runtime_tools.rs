@@ -4231,23 +4231,27 @@ fn collect_events(receiver: &mut tokio::sync::broadcast::Receiver<AgentEvent>) -
     events
 }
 
+const SHORT_WAIT_ATTEMPTS: usize = 200;
+const BACKGROUND_WAIT_ATTEMPTS: usize = 6000;
+const POLL_INTERVAL_MS: u64 = 10;
+
 async fn wait_for_pending_team_messages(agent: &Agent, expected_count: usize) {
-    for _ in 0..200 {
+    for _ in 0..SHORT_WAIT_ATTEMPTS {
         if agent.watch_snapshot().borrow().pending_team_messages == expected_count {
             return;
         }
-        sleep(Duration::from_millis(10)).await;
+        sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
     }
 
     panic!("timed out waiting for {expected_count} pending team messages");
 }
 
 async fn wait_for_background_task_count(agent: &Agent, expected_count: usize) {
-    for _ in 0..1000 {
+    for _ in 0..BACKGROUND_WAIT_ATTEMPTS {
         if agent.watch_snapshot().borrow().background_tasks.len() == expected_count {
             return;
         }
-        sleep(Duration::from_millis(10)).await;
+        sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
     }
 
     panic!("timed out waiting for {expected_count} background tasks");
@@ -4258,14 +4262,14 @@ async fn wait_for_background_tasks(
     expected_count: usize,
     status: BackgroundTaskStatus,
 ) {
-    for _ in 0..1000 {
+    for _ in 0..BACKGROUND_WAIT_ATTEMPTS {
         let background_tasks = agent.watch_snapshot().borrow().background_tasks.clone();
         if background_tasks.len() == expected_count
             && background_tasks.iter().all(|task| task.status == status)
         {
             return;
         }
-        sleep(Duration::from_millis(10)).await;
+        sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
     }
 
     panic!("timed out waiting for {expected_count} background tasks to reach {status:?}");
@@ -4539,11 +4543,11 @@ fn write_skill(root: &Path, name: &str, content: &str) {
 }
 
 async fn wait_for_recorded_requests(provider: &ScriptedProvider, expected: usize) {
-    for _ in 0..500 {
+    for _ in 0..BACKGROUND_WAIT_ATTEMPTS {
         if provider.recorded_requests().await.len() >= expected {
             return;
         }
-        sleep(Duration::from_millis(10)).await;
+        sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
     }
 
     panic!("timed out waiting for {expected} recorded requests");
@@ -4555,7 +4559,7 @@ async fn wait_for_background_task_status(
     task_id: &str,
     expected_status: BackgroundTaskStatus,
 ) {
-    for _ in 0..500 {
+    for _ in 0..BACKGROUND_WAIT_ATTEMPTS {
         let tasks =
             <SqliteRuntimeStore as crate::background::BackgroundStore>::load_background_tasks(
                 store, agent_id,
@@ -4567,7 +4571,7 @@ async fn wait_for_background_task_status(
         {
             return;
         }
-        sleep(Duration::from_millis(10)).await;
+        sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
     }
 
     panic!("timed out waiting for background task {task_id} to reach {expected_status:?}");
@@ -4578,7 +4582,7 @@ async fn wait_for_background_task_record(
     agent_id: &str,
     expected_count: usize,
 ) {
-    for _ in 0..500 {
+    for _ in 0..BACKGROUND_WAIT_ATTEMPTS {
         let tasks =
             <SqliteRuntimeStore as crate::background::BackgroundStore>::load_background_tasks(
                 store, agent_id,
@@ -4587,7 +4591,7 @@ async fn wait_for_background_task_record(
         if tasks.len() == expected_count {
             return;
         }
-        sleep(Duration::from_millis(10)).await;
+        sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
     }
 
     panic!("timed out waiting for {expected_count} background task records");

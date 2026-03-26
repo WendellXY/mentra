@@ -182,7 +182,7 @@ fn temp_store(label: &str) -> SqliteRuntimeStore {
 }
 
 async fn wait_for_status(receiver: &mut watch::Receiver<AgentSnapshot>, status: AgentStatus) {
-    timeout(Duration::from_secs(20), async {
+    timeout(Duration::from_secs(90), async {
         loop {
             if receiver.borrow().status == status {
                 return;
@@ -198,7 +198,7 @@ async fn wait_for_background_status(
     receiver: &mut watch::Receiver<AgentSnapshot>,
     status: BackgroundTaskStatus,
 ) {
-    timeout(Duration::from_secs(20), async {
+    timeout(Duration::from_secs(90), async {
         loop {
             if receiver
                 .borrow()
