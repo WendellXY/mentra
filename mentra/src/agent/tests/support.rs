@@ -131,7 +131,7 @@ pub(super) fn background_success_command(output: &str, delay_ms: u64) -> String 
     #[cfg(windows)]
     {
         powershell_encoded_command(&format!(
-            "Start-Sleep -Milliseconds {delay_ms}; [Console]::Out.Write('{}')",
+            "$ProgressPreference='SilentlyContinue'; Start-Sleep -Milliseconds {delay_ms}; [Console]::Out.Write('{}')",
             powershell_single_quoted(output)
         ))
     }
@@ -150,7 +150,7 @@ pub(super) fn background_failure_command(stderr: &str, exit_code: i32, delay_ms:
     #[cfg(windows)]
     {
         powershell_encoded_command(&format!(
-            "Start-Sleep -Milliseconds {delay_ms}; [Console]::Error.Write('{}'); exit {exit_code}",
+            "$ProgressPreference='SilentlyContinue'; Start-Sleep -Milliseconds {delay_ms}; [Console]::Error.Write('{}'); exit {exit_code}",
             powershell_single_quoted(stderr)
         ))
     }

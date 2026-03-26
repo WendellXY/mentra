@@ -227,12 +227,13 @@ impl RuntimePolicy {
 }
 
 fn path_is_allowed(path: &Path, default_root: &Path, extra_roots: &[PathBuf]) -> bool {
+    let candidate_path = canonicalize_policy_root(path);
     let default_root = canonicalize_policy_root(default_root);
-    path.starts_with(&default_root)
+    candidate_path.starts_with(&default_root)
         || extra_roots
             .iter()
             .map(|root| canonicalize_policy_root(root))
-            .any(|root| path.starts_with(root))
+            .any(|root| candidate_path.starts_with(root))
 }
 
 fn canonicalize_policy_root(path: &Path) -> PathBuf {
