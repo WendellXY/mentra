@@ -12,7 +12,10 @@ use crate::tool::ToolSpec;
 /// Provider-neutral reasoning controls supported across multiple providers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReasoningOptions {
-    pub effort: ReasoningEffort,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<ReasoningEffort>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<ReasoningSummary>,
 }
 
 /// Shared reasoning effort levels supported by Mentra's public API.
@@ -24,6 +27,15 @@ pub enum ReasoningEffort {
     High,
 }
 
+/// Shared reasoning summary levels used by Responses-family providers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningSummary {
+    Auto,
+    Concise,
+    Detailed,
+}
+
 /// Provider-neutral tool search behavior requested for a model call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -33,11 +45,75 @@ pub enum ToolSearchMode {
     Hosted,
 }
 
-/// Shared Responses-family request options.
+/// Responses-compatible verbosity controls for text output.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ResponsesVerbosity {
+    Low,
+    #[default]
+    Medium,
+    High,
+}
+
+/// Responses-compatible format discriminator for structured text output.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponsesTextFormatType {
+    #[default]
+    JsonSchema,
+}
+
+/// Structured text output format controls for Responses-family providers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ResponsesTextFormat {
+    #[serde(default)]
+    pub r#type: ResponsesTextFormatType,
+    #[serde(default)]
+    pub strict: bool,
+    pub schema: serde_json::Value,
+    pub name: String,
+}
+
+/// Responses-compatible text controls combining verbosity and output schemas.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ResponsesTextControls {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verbosity: Option<ResponsesVerbosity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<ResponsesTextFormat>,
+}
+
+/// Shared Responses-family request options.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResponsesRequestOptions {
     #[serde(default)]
     pub parallel_tool_calls: Option<bool>,
+    #[serde(default)]
+    pub store: Option<bool>,
+    #[serde(default)]
+    pub stream: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub include: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<ResponsesTextControls>,
+}
+
+impl Default for ResponsesRequestOptions {
+    fn default() -> Self {
+        Self {
+            parallel_tool_calls: None,
+            store: None,
+            stream: Some(true),
+            include: Vec::new(),
+            service_tier: None,
+            prompt_cache_key: None,
+            text: None,
+        }
+    }
 }
 
 /// Anthropic-specific request options.
@@ -314,7 +390,8 @@ mod tests {
                 items: vec![serde_json::json!({"type":"message","role":"user"})],
             }]),
             reasoning: Some(ReasoningOptions {
-                effort: ReasoningEffort::Medium,
+                effort: Some(ReasoningEffort::Medium),
+                summary: None,
             }),
             metadata: Cow::Owned(BTreeMap::from([("scope".to_string(), "test".to_string())])),
             provider_request_options: ProviderRequestOptions {
@@ -353,7 +430,7 @@ mod tests {
                 .as_ref()
                 .expect("reasoning options")
                 .effort,
-            ReasoningEffort::Medium
+            Some(ReasoningEffort::Medium)
         );
         assert_eq!(model_request.messages.len(), 1);
 

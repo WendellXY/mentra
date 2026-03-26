@@ -9,7 +9,8 @@ use crate::ProviderId;
 use crate::{
     ContentBlock, HostedToolSearchCall, HostedWebSearchCall, ImageGenerationCall,
     ImageGenerationResult, ImageSource, Message, ModelInfo, ProviderError, ReasoningEffort,
-    ReasoningOptions, Request, Role, ToolChoice, ToolSearchMode, WebSearchAction,
+    ReasoningOptions, ReasoningSummary, Request, ResponsesTextControls, Role, ToolChoice,
+    ToolSearchMode, WebSearchAction,
 };
 
 use crate::tool::{ToolLoadingPolicy, ToolSpec};
@@ -75,6 +76,18 @@ pub struct ResponsesRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     parallel_tool_calls: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    store: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream: Option<bool>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    include: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    service_tier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prompt_cache_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<ResponsesTextControls>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     reasoning: Option<ResponsesReasoning>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     metadata: BTreeMap<String, String>,
@@ -113,6 +126,20 @@ impl ResponsesRequest {
             temperature: value.temperature,
             max_output_tokens: value.max_output_tokens,
             parallel_tool_calls: value.provider_request_options.responses.parallel_tool_calls,
+            store: value.provider_request_options.responses.store,
+            stream: value.provider_request_options.responses.stream,
+            include: value.provider_request_options.responses.include.clone(),
+            service_tier: value
+                .provider_request_options
+                .responses
+                .service_tier
+                .clone(),
+            prompt_cache_key: value
+                .provider_request_options
+                .responses
+                .prompt_cache_key
+                .clone(),
+            text: value.provider_request_options.responses.text.clone(),
             reasoning: value
                 .provider_request_options
                 .reasoning
@@ -124,13 +151,17 @@ impl ResponsesRequest {
 
 #[derive(Debug, Serialize)]
 struct ResponsesReasoning {
-    effort: ResponsesReasoningEffort,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effort: Option<ResponsesReasoningEffort>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    summary: Option<ResponsesReasoningSummary>,
 }
 
 impl From<ReasoningOptions> for ResponsesReasoning {
     fn from(value: ReasoningOptions) -> Self {
         Self {
-            effort: value.effort.into(),
+            effort: value.effort.map(Into::into),
+            summary: value.summary.map(Into::into),
         }
     }
 }
@@ -149,6 +180,24 @@ impl From<ReasoningEffort> for ResponsesReasoningEffort {
             ReasoningEffort::Low => Self::Low,
             ReasoningEffort::Medium => Self::Medium,
             ReasoningEffort::High => Self::High,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum ResponsesReasoningSummary {
+    Auto,
+    Concise,
+    Detailed,
+}
+
+impl From<ReasoningSummary> for ResponsesReasoningSummary {
+    fn from(value: ReasoningSummary) -> Self {
+        match value {
+            ReasoningSummary::Auto => Self::Auto,
+            ReasoningSummary::Concise => Self::Concise,
+            ReasoningSummary::Detailed => Self::Detailed,
         }
     }
 }
@@ -524,8 +573,9 @@ mod tests {
     use crate::{
         ContentBlock, HostedToolSearchCall, HostedWebSearchCall, ImageGenerationCall,
         ImageGenerationResult, Message, ProviderError, ProviderRequestOptions, ReasoningEffort,
-        ReasoningOptions, Request, ResponsesRequestOptions, Role, ToolChoice, ToolLoadingPolicy,
-        ToolResultContent, ToolSearchMode, ToolSpec, WebSearchAction,
+        ReasoningOptions, ReasoningSummary, Request, ResponsesRequestOptions,
+        ResponsesTextControls, ResponsesTextFormat, ResponsesVerbosity, Role, ToolChoice,
+        ToolLoadingPolicy, ToolResultContent, ToolSearchMode, ToolSpec, WebSearchAction,
     };
 
     use super::{ResponsesModel, ResponsesModelsPage, ResponsesRequest};
@@ -816,6 +866,7 @@ mod tests {
                 reasoning: None,
                 responses: ResponsesRequestOptions {
                     parallel_tool_calls: Some(true),
+                    ..Default::default()
                 },
                 anthropic: Default::default(),
                 gemini: Default::default(),
@@ -842,7 +893,8 @@ mod tests {
             metadata: Cow::Owned(BTreeMap::new()),
             provider_request_options: ProviderRequestOptions {
                 reasoning: Some(ReasoningOptions {
-                    effort: ReasoningEffort::High,
+                    effort: Some(ReasoningEffort::High),
+                    summary: None,
                 }),
                 ..Default::default()
             },
@@ -852,6 +904,56 @@ mod tests {
             .expect("request should serialize");
 
         assert_eq!(payload["reasoning"]["effort"], "high");
+    }
+
+    #[test]
+    fn serializes_advanced_responses_request_controls() {
+        let request = Request {
+            model: Cow::Borrowed("gpt-5"),
+            system: Some(Cow::Borrowed("Be structured.")),
+            messages: Cow::Owned(vec![]),
+            tools: Cow::Owned(vec![]),
+            tool_choice: Some(ToolChoice::Auto),
+            temperature: None,
+            max_output_tokens: None,
+            metadata: Cow::Owned(BTreeMap::new()),
+            provider_request_options: ProviderRequestOptions {
+                reasoning: Some(ReasoningOptions {
+                    effort: None,
+                    summary: Some(ReasoningSummary::Detailed),
+                }),
+                responses: ResponsesRequestOptions {
+                    parallel_tool_calls: Some(true),
+                    store: Some(false),
+                    stream: Some(true),
+                    include: vec!["reasoning.encrypted_content".to_string()],
+                    service_tier: Some("priority".to_string()),
+                    prompt_cache_key: Some("thread-123".to_string()),
+                    text: Some(ResponsesTextControls {
+                        verbosity: Some(ResponsesVerbosity::High),
+                        format: Some(ResponsesTextFormat {
+                            r#type: crate::ResponsesTextFormatType::JsonSchema,
+                            strict: true,
+                            schema: json!({"type":"object"}),
+                            name: "codex_output_schema".to_string(),
+                        }),
+                    }),
+                },
+                ..Default::default()
+            },
+        };
+
+        let payload = serde_json::to_value(ResponsesRequest::try_from(request).unwrap())
+            .expect("request should serialize");
+
+        assert_eq!(payload["store"], false);
+        assert_eq!(payload["stream"], true);
+        assert_eq!(payload["include"][0], "reasoning.encrypted_content");
+        assert_eq!(payload["service_tier"], "priority");
+        assert_eq!(payload["prompt_cache_key"], "thread-123");
+        assert_eq!(payload["reasoning"]["summary"], "detailed");
+        assert_eq!(payload["text"]["verbosity"], "high");
+        assert_eq!(payload["text"]["format"]["name"], "codex_output_schema");
     }
 
     #[test]

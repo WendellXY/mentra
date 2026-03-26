@@ -133,7 +133,12 @@ impl<'a> TryFrom<Request<'a>> for AnthropicRequest {
     type Error = ProviderError;
 
     fn try_from(value: Request<'a>) -> Result<Self, Self::Error> {
-        if value.provider_request_options.reasoning.is_some()
+        if value
+            .provider_request_options
+            .reasoning
+            .as_ref()
+            .and_then(|reasoning| reasoning.effort)
+            .is_some()
             && !supports_anthropic_adaptive_thinking(&value.model)
         {
             return Err(ProviderError::InvalidRequest(format!(
@@ -166,11 +171,12 @@ impl<'a> TryFrom<Request<'a>> for AnthropicRequest {
                 .provider_request_options
                 .reasoning
                 .as_ref()
+                .filter(|reasoning| reasoning.effort.is_some())
                 .map(|_| AnthropicThinkingConfig::adaptive()),
             effort: value
                 .provider_request_options
                 .reasoning
-                .map(|reasoning| reasoning.effort.into()),
+                .and_then(|reasoning| reasoning.effort.map(Into::into)),
         })
     }
 }
@@ -626,7 +632,8 @@ mod tests {
             metadata: Cow::Owned(BTreeMap::new()),
             provider_request_options: ProviderRequestOptions {
                 reasoning: Some(ReasoningOptions {
-                    effort: ReasoningEffort::Medium,
+                    effort: Some(ReasoningEffort::Medium),
+                    summary: None,
                 }),
                 ..Default::default()
             },
@@ -652,7 +659,8 @@ mod tests {
             metadata: Cow::Owned(BTreeMap::new()),
             provider_request_options: ProviderRequestOptions {
                 reasoning: Some(ReasoningOptions {
-                    effort: ReasoningEffort::Low,
+                    effort: Some(ReasoningEffort::Low),
+                    summary: None,
                 }),
                 ..Default::default()
             },

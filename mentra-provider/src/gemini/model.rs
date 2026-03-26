@@ -407,6 +407,9 @@ impl GeminiGenerationConfig {
     fn from_request(request: &Request<'_>) -> Result<Option<Self>, ProviderError> {
         let thinking_config =
             if let Some(reasoning) = request.provider_request_options.reasoning.as_ref() {
+                let Some(effort) = reasoning.effort else {
+                    return Ok(None);
+                };
                 if !supports_gemini_thinking_level(&request.model) {
                     return Err(ProviderError::InvalidRequest(format!(
                         "Gemini reasoning effort requires a Gemini 3 model, got '{}'",
@@ -415,7 +418,7 @@ impl GeminiGenerationConfig {
                 }
 
                 Some(GeminiThinkingConfig {
-                    thinking_level: reasoning.effort.into(),
+                    thinking_level: effort.into(),
                 })
             } else {
                 None
@@ -751,7 +754,8 @@ mod tests {
             metadata: Cow::Owned(BTreeMap::new()),
             provider_request_options: ProviderRequestOptions {
                 reasoning: Some(ReasoningOptions {
-                    effort: ReasoningEffort::High,
+                    effort: Some(ReasoningEffort::High),
+                    summary: None,
                 }),
                 ..Default::default()
             },
@@ -780,7 +784,8 @@ mod tests {
             metadata: Cow::Owned(BTreeMap::new()),
             provider_request_options: ProviderRequestOptions {
                 reasoning: Some(ReasoningOptions {
-                    effort: ReasoningEffort::Low,
+                    effort: Some(ReasoningEffort::Low),
+                    summary: None,
                 }),
                 ..Default::default()
             },

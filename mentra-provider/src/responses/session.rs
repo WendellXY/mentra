@@ -553,7 +553,8 @@ mod tests {
                 items: vec![serde_json::json!({"type":"message","role":"user"})],
             }]),
             reasoning: Some(crate::ReasoningOptions {
-                effort: crate::ReasoningEffort::Medium,
+                effort: Some(crate::ReasoningEffort::Medium),
+                summary: None,
             }),
             metadata: Cow::Owned(BTreeMap::from([("scope".to_string(), "test".to_string())])),
             provider_request_options: crate::ProviderRequestOptions {
