@@ -4,6 +4,9 @@ use std::{
     time::Duration,
 };
 
+#[cfg(windows)]
+use std::process::Command as StdCommand;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -93,10 +96,9 @@ impl RuntimeExecutor for LocalRuntimeExecutor {
             CommandSpec::Shell { command } => command,
         };
 
-        let mut process = Command::new("bash");
+        let mut process = Command::new(platform_shell_program());
         process
-            .arg("-c")
-            .arg(&command)
+            .args(platform_shell_args(&command))
             .current_dir(&cwd)
             .env_clear()
             .envs(env)
@@ -224,7 +226,43 @@ fn kill_entire_process_tree(child: &mut Child) -> io::Result<()> {
         }
     }
 
+    #[cfg(windows)]
+    {
+        if let Some(pid) = child.id() {
+            let status = StdCommand::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .status()?;
+            if status.success() {
+                return Ok(());
+            }
+
+            if child.try_wait()?.is_some() {
+                return Ok(());
+            }
+        }
+    }
+
     child.start_kill()
+}
+
+#[cfg(unix)]
+fn platform_shell_program() -> &'static str {
+    "/bin/sh"
+}
+
+#[cfg(windows)]
+fn platform_shell_program() -> &'static str {
+    "cmd.exe"
+}
+
+#[cfg(unix)]
+fn platform_shell_args(command: &str) -> [&str; 2] {
+    ["-c", command]
+}
+
+#[cfg(windows)]
+fn platform_shell_args(command: &str) -> [&str; 2] {
+    ["/C", command]
 }
 
 pub async fn read_limited_file(path: &Path, max_lines: Option<usize>) -> Result<String, String> {
@@ -255,13 +293,44 @@ pub async fn read_limited_file(path: &Path, max_lines: Option<usize>) -> Result<
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    fn stdout_and_stderr_command() -> String {
+        "printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; printf 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' >&2"
+            .to_string()
+    }
+
+    #[cfg(windows)]
+    fn stdout_and_stderr_command() -> String {
+        "powershell -NoProfile -Command \"$stdout='a' * 32; $stderr='b' * 32; [Console]::Out.Write($stdout); [Console]::Error.Write($stderr)\"".to_string()
+    }
+
+    #[cfg(unix)]
+    fn missing_secret_command() -> String {
+        "printf '%s' \"${SECRET:-missing}\"".to_string()
+    }
+
+    #[cfg(windows)]
+    fn missing_secret_command() -> String {
+        "cmd.exe /V:OFF /C \"if defined SECRET (set /p =%SECRET%<nul) else (set /p =missing<nul)\""
+            .to_string()
+    }
+
+    #[cfg(unix)]
+    fn timeout_command() -> String {
+        "sleep 1".to_string()
+    }
+
+    #[cfg(windows)]
+    fn timeout_command() -> String {
+        "powershell -NoProfile -Command \"Start-Sleep -Seconds 1\"".to_string()
+    }
+
     #[tokio::test]
     async fn caps_stdout_and_stderr_independently() {
         let output = LocalRuntimeExecutor
             .run(CommandRequest {
                 spec: CommandSpec::Shell {
-                    command: "printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; printf 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' >&2"
-                        .to_string(),
+                    command: stdout_and_stderr_command(),
                 },
                 cwd: std::env::temp_dir(),
                 timeout: Duration::from_secs(5),
@@ -285,7 +354,7 @@ mod tests {
         let output = LocalRuntimeExecutor
             .run(CommandRequest {
                 spec: CommandSpec::Shell {
-                    command: "printf '%s' \"${SECRET:-missing}\"".to_string(),
+                    command: missing_secret_command(),
                 },
                 cwd: std::env::temp_dir(),
                 timeout: Duration::from_secs(5),
@@ -306,7 +375,7 @@ mod tests {
         let output = LocalRuntimeExecutor
             .run(CommandRequest {
                 spec: CommandSpec::Shell {
-                    command: "sleep 1".to_string(),
+                    command: timeout_command(),
                 },
                 cwd: std::env::temp_dir(),
                 timeout: Duration::from_millis(50),

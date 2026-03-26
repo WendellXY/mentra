@@ -1420,13 +1420,14 @@ fn prune_stale_runtime_leases(tx: &rusqlite::Transaction<'_>) -> Result<(), Runt
 fn runtime_owner_is_stale(owner: &str) -> bool {
     let Some(pid) = owner
         .strip_prefix("runtime-")
-        .and_then(|value| value.parse::<i32>().ok())
+        .and_then(|value| value.parse::<u32>().ok())
     else {
         return false;
     };
 
     #[cfg(unix)]
     {
+        let pid = pid as i32;
         let result = unsafe { libc::kill(pid, 0) };
         if result == 0 {
             return false;
@@ -1439,9 +1440,43 @@ fn runtime_owner_is_stale(owner: &str) -> bool {
         }
     }
 
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        let _ = pid;
+        use windows_sys::Win32::{
+            Foundation::{CloseHandle, STILL_ACTIVE},
+            System::Threading::{
+                GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+            },
+        };
+
+        const ERROR_ACCESS_DENIED: i32 = 5;
+        const ERROR_INVALID_PARAMETER: i32 = 87;
+
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if handle.is_null() {
+                return match std::io::Error::last_os_error().raw_os_error() {
+                    Some(ERROR_INVALID_PARAMETER) => true,
+                    Some(ERROR_ACCESS_DENIED) => false,
+                    _ => false,
+                };
+            }
+
+            let mut exit_code = 0;
+            let result = GetExitCodeProcess(handle, &mut exit_code);
+            let close_result = CloseHandle(handle);
+            debug_assert_ne!(close_result, 0, "process handle should close");
+
+            if result == 0 {
+                return false;
+            }
+
+            exit_code != STILL_ACTIVE
+        }
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
         false
     }
 }
