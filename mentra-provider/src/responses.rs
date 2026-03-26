@@ -152,6 +152,7 @@ fn build_definition(
         supports_tool_calls: true,
         supports_images: true,
         supports_history_compaction: true,
+        supports_memory_summarization: true,
         supports_deferred_tools: true,
         supports_hosted_tool_search: true,
         supports_hosted_web_search: true,

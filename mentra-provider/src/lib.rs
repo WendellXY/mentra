@@ -11,34 +11,69 @@ pub mod responses;
 mod stream;
 mod tool;
 
-pub use auth::{AuthScheme, CredentialSource, ProviderCredentials, StaticCredentialSource};
-pub use definition::{
-    BuiltinProvider, ProviderCapabilities, ProviderDefinition, ProviderDescriptor, ProviderId,
-    RetryPolicy, WireApi,
-};
+pub use auth::AuthScheme;
+pub use auth::CredentialSource;
+pub use auth::ProviderCredentials;
+pub use auth::StaticCredentialSource;
+pub use definition::BuiltinProvider;
+pub use definition::ProviderCapabilities;
+pub use definition::ProviderDefinition;
+pub use definition::ProviderDescriptor;
+pub use definition::ProviderId;
+pub use definition::RetryPolicy;
+pub use definition::WireApi;
 pub use error::ProviderError;
-pub use model::{
-    ContentBlock, HostedToolSearchCall, HostedWebSearchCall, ImageGenerationCall,
-    ImageGenerationResult, ImageSource, Message, ModelInfo, ModelSelector, Role, TokenUsage,
-    ToolChoice, ToolResultContent, WebSearchAction,
-};
-pub use registry::{
-    ModelCatalog, Provider, ProviderRegistry, ProviderSession, ProviderSessionFactory,
-    RegisteredProvider,
-};
-pub use request::{
-    AnthropicRequestOptions, CompactionInputItem, CompactionRequest, GeminiRequestOptions,
-    ProviderRequestOptions, ReasoningEffort, ReasoningOptions, Request, ResponsesRequestOptions,
-    SessionRequestOptions, ToolSearchMode,
-};
-pub use response::{
-    CompactionResponse, Response, collect_response_from_stream, provider_event_stream_from_response,
-};
-pub use stream::{ContentBlockDelta, ContentBlockStart, ProviderEvent, ProviderEventStream};
-pub use tool::{
-    ToolCapability, ToolDurability, ToolExecutionMode, ToolLoadingPolicy, ToolSideEffectLevel,
-    ToolSpec, ToolSpecBuilder,
-};
+pub use model::ContentBlock;
+pub use model::HostedToolSearchCall;
+pub use model::HostedWebSearchCall;
+pub use model::ImageGenerationCall;
+pub use model::ImageGenerationResult;
+pub use model::ImageSource;
+pub use model::Message;
+pub use model::ModelInfo;
+pub use model::ModelSelector;
+pub use model::Role;
+pub use model::TokenUsage;
+pub use model::ToolChoice;
+pub use model::ToolResultContent;
+pub use model::WebSearchAction;
+pub use registry::ModelCatalog;
+pub use registry::Provider;
+pub use registry::ProviderRegistry;
+pub use registry::ProviderSession;
+pub use registry::ProviderSessionFactory;
+pub use registry::RegisteredProvider;
+pub use request::AnthropicRequestOptions;
+pub use request::CompactionInputItem;
+pub use request::CompactionRequest;
+pub use request::GeminiRequestOptions;
+pub use request::MemorySummarizeRequest;
+pub use request::ProviderRequestOptions;
+pub use request::RawMemory;
+pub use request::RawMemoryMetadata;
+pub use request::ReasoningEffort;
+pub use request::ReasoningOptions;
+pub use request::Request;
+pub use request::ResponsesRequestOptions;
+pub use request::SessionRequestOptions;
+pub use request::ToolSearchMode;
+pub use response::CompactionResponse;
+pub use response::MemorySummarizeOutput;
+pub use response::MemorySummarizeResponse;
+pub use response::Response;
+pub use response::collect_response_from_stream;
+pub use response::provider_event_stream_from_response;
+pub use stream::ContentBlockDelta;
+pub use stream::ContentBlockStart;
+pub use stream::ProviderEvent;
+pub use stream::ProviderEventStream;
+pub use tool::ToolCapability;
+pub use tool::ToolDurability;
+pub use tool::ToolExecutionMode;
+pub use tool::ToolLoadingPolicy;
+pub use tool::ToolSideEffectLevel;
+pub use tool::ToolSpec;
+pub use tool::ToolSpecBuilder;
 
 pub type OpenAIRequestOptions = ResponsesRequestOptions;
 
@@ -46,15 +81,36 @@ pub mod provider {
     pub use crate::Provider;
 
     pub mod model {
-        pub use crate::{
-            AnthropicRequestOptions, ContentBlock, ContentBlockDelta, ContentBlockStart,
-            HostedToolSearchCall, HostedWebSearchCall, ImageGenerationCall, ImageGenerationResult,
-            ImageSource, Message, ModelInfo, OpenAIRequestOptions, ProviderError, ProviderEvent,
-            ProviderEventStream, ProviderId, ProviderRequestOptions, ReasoningEffort,
-            ReasoningOptions, Request, Response, Role, SessionRequestOptions, TokenUsage,
-            ToolChoice, ToolResultContent, ToolSearchMode, WebSearchAction,
-            collect_response_from_stream, provider_event_stream_from_response,
-        };
+        pub use crate::AnthropicRequestOptions;
+        pub use crate::ContentBlock;
+        pub use crate::ContentBlockDelta;
+        pub use crate::ContentBlockStart;
+        pub use crate::HostedToolSearchCall;
+        pub use crate::HostedWebSearchCall;
+        pub use crate::ImageGenerationCall;
+        pub use crate::ImageGenerationResult;
+        pub use crate::ImageSource;
+        pub use crate::Message;
+        pub use crate::ModelInfo;
+        pub use crate::OpenAIRequestOptions;
+        pub use crate::ProviderError;
+        pub use crate::ProviderEvent;
+        pub use crate::ProviderEventStream;
+        pub use crate::ProviderId;
+        pub use crate::ProviderRequestOptions;
+        pub use crate::ReasoningEffort;
+        pub use crate::ReasoningOptions;
+        pub use crate::Request;
+        pub use crate::Response;
+        pub use crate::Role;
+        pub use crate::SessionRequestOptions;
+        pub use crate::TokenUsage;
+        pub use crate::ToolChoice;
+        pub use crate::ToolResultContent;
+        pub use crate::ToolSearchMode;
+        pub use crate::WebSearchAction;
+        pub use crate::collect_response_from_stream;
+        pub use crate::provider_event_stream_from_response;
     }
 }
 

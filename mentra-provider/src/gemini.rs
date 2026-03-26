@@ -96,6 +96,7 @@ where
             supports_tool_calls: true,
             supports_images: true,
             supports_history_compaction: true,
+            supports_memory_summarization: true,
             supports_deferred_tools: false,
             supports_hosted_tool_search: false,
             supports_hosted_web_search: false,
@@ -239,6 +240,15 @@ where
         let request = request.into_model_request()?;
         let response = ProviderSession::send(self, request).await?;
         Ok(response.into_compaction_response())
+    }
+
+    async fn summarize_memories(
+        &self,
+        request: crate::MemorySummarizeRequest<'_>,
+    ) -> Result<crate::MemorySummarizeResponse, ProviderError> {
+        let request = request.into_model_request()?;
+        let response = ProviderSession::send(self, request).await?;
+        response.into_memory_summarize_response()
     }
 }
 

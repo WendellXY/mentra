@@ -1,25 +1,80 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 
-pub use mentra_provider::{
-    AnthropicRequestOptions, AuthScheme, BuiltinProvider, CompactionInputItem, CompactionRequest,
-    CompactionResponse, ContentBlock, ContentBlockDelta, ContentBlockStart, GeminiRequestOptions,
-    ImageSource, Message, ModelInfo, ModelSelector, OpenAIRequestOptions, ProviderCapabilities,
-    ProviderCredentials, ProviderDefinition, ProviderDescriptor, ProviderError, ProviderEvent,
-    ProviderEventStream, ProviderId, ProviderRequestOptions, ReasoningEffort, ReasoningOptions,
-    Request, Response, ResponsesRequestOptions, RetryPolicy, Role, TokenUsage, ToolChoice,
-    ToolSearchMode, WireApi, collect_response_from_stream, provider_event_stream_from_response,
-};
+pub use mentra_provider::AnthropicRequestOptions;
+pub use mentra_provider::AuthScheme;
+pub use mentra_provider::BuiltinProvider;
+pub use mentra_provider::CompactionInputItem;
+pub use mentra_provider::CompactionRequest;
+pub use mentra_provider::CompactionResponse;
+pub use mentra_provider::ContentBlock;
+pub use mentra_provider::ContentBlockDelta;
+pub use mentra_provider::ContentBlockStart;
+pub use mentra_provider::GeminiRequestOptions;
+pub use mentra_provider::ImageSource;
+pub use mentra_provider::MemorySummarizeOutput;
+pub use mentra_provider::MemorySummarizeRequest;
+pub use mentra_provider::MemorySummarizeResponse;
+pub use mentra_provider::Message;
+pub use mentra_provider::ModelInfo;
+pub use mentra_provider::ModelSelector;
+pub use mentra_provider::OpenAIRequestOptions;
+pub use mentra_provider::ProviderCapabilities;
+pub use mentra_provider::ProviderCredentials;
+pub use mentra_provider::ProviderDefinition;
+pub use mentra_provider::ProviderDescriptor;
+pub use mentra_provider::ProviderError;
+pub use mentra_provider::ProviderEvent;
+pub use mentra_provider::ProviderEventStream;
+pub use mentra_provider::ProviderId;
+pub use mentra_provider::ProviderRequestOptions;
+pub use mentra_provider::RawMemory;
+pub use mentra_provider::RawMemoryMetadata;
+pub use mentra_provider::ReasoningEffort;
+pub use mentra_provider::ReasoningOptions;
+pub use mentra_provider::Request;
+pub use mentra_provider::Response;
+pub use mentra_provider::ResponsesRequestOptions;
+pub use mentra_provider::RetryPolicy;
+pub use mentra_provider::Role;
+pub use mentra_provider::TokenUsage;
+pub use mentra_provider::ToolChoice;
+pub use mentra_provider::ToolSearchMode;
+pub use mentra_provider::WireApi;
+pub use mentra_provider::collect_response_from_stream;
+pub use mentra_provider::provider_event_stream_from_response;
 
 pub mod model {
-    pub use mentra_provider::{
-        AnthropicRequestOptions, ContentBlock, ContentBlockDelta, ContentBlockStart, ImageSource,
-        Message, ModelInfo, OpenAIRequestOptions, ProviderError, ProviderEvent,
-        ProviderEventStream, ProviderId, ProviderRequestOptions, ReasoningEffort, ReasoningOptions,
-        Request, Response, Role, TokenUsage, ToolChoice, ToolSearchMode,
-        collect_response_from_stream, provider_event_stream_from_response,
-    };
+    pub use mentra_provider::AnthropicRequestOptions;
+    pub use mentra_provider::ContentBlock;
+    pub use mentra_provider::ContentBlockDelta;
+    pub use mentra_provider::ContentBlockStart;
+    pub use mentra_provider::ImageSource;
+    pub use mentra_provider::MemorySummarizeOutput;
+    pub use mentra_provider::MemorySummarizeRequest;
+    pub use mentra_provider::MemorySummarizeResponse;
+    pub use mentra_provider::Message;
+    pub use mentra_provider::ModelInfo;
+    pub use mentra_provider::OpenAIRequestOptions;
+    pub use mentra_provider::ProviderError;
+    pub use mentra_provider::ProviderEvent;
+    pub use mentra_provider::ProviderEventStream;
+    pub use mentra_provider::ProviderId;
+    pub use mentra_provider::ProviderRequestOptions;
+    pub use mentra_provider::RawMemory;
+    pub use mentra_provider::RawMemoryMetadata;
+    pub use mentra_provider::ReasoningEffort;
+    pub use mentra_provider::ReasoningOptions;
+    pub use mentra_provider::Request;
+    pub use mentra_provider::Response;
+    pub use mentra_provider::Role;
+    pub use mentra_provider::TokenUsage;
+    pub use mentra_provider::ToolChoice;
+    pub use mentra_provider::ToolSearchMode;
+    pub use mentra_provider::collect_response_from_stream;
+    pub use mentra_provider::provider_event_stream_from_response;
 }
 
 /// Transport-neutral interface implemented by model providers.
@@ -51,6 +106,16 @@ pub trait Provider: Send + Sync {
     ) -> Result<CompactionResponse, ProviderError> {
         Err(ProviderError::UnsupportedCapability(
             "history_compaction".to_string(),
+        ))
+    }
+
+    /// Summarizes raw trace memories using a provider-native implementation when supported.
+    async fn summarize_memories(
+        &self,
+        _request: MemorySummarizeRequest<'_>,
+    ) -> Result<MemorySummarizeResponse, ProviderError> {
+        Err(ProviderError::UnsupportedCapability(
+            "memory_summarization".to_string(),
         ))
     }
 }
@@ -168,18 +233,35 @@ where
     ) -> Result<CompactionResponse, ProviderError> {
         self.inner.compact(request).await
     }
+
+    async fn summarize_memories(
+        &self,
+        request: MemorySummarizeRequest<'_>,
+    ) -> Result<MemorySummarizeResponse, ProviderError> {
+        self.inner.summarize_memories(request).await
+    }
 }
 
 pub mod openai {
-    use std::{collections::HashMap, sync::Arc};
+    use std::collections::HashMap;
+    use std::sync::Arc;
 
     use async_trait::async_trait;
 
-    use super::{
-        AuthScheme, BuiltinProvider, CompactionRequest, CompactionResponse, Provider,
-        ProviderCapabilities, ProviderDefinition, ProviderDescriptor, ProviderError,
-        ProviderEventStream, Request, RetryPolicy, WireApi, shared_provider,
-    };
+    use super::AuthScheme;
+    use super::BuiltinProvider;
+    use super::CompactionRequest;
+    use super::CompactionResponse;
+    use super::Provider;
+    use super::ProviderCapabilities;
+    use super::ProviderDefinition;
+    use super::ProviderDescriptor;
+    use super::ProviderError;
+    use super::ProviderEventStream;
+    use super::Request;
+    use super::RetryPolicy;
+    use super::WireApi;
+    use super::shared_provider;
 
     use crate::provider::model::ModelInfo;
 
@@ -219,6 +301,7 @@ pub mod openai {
                 supports_tool_calls: true,
                 supports_images: true,
                 supports_history_compaction: false,
+                supports_memory_summarization: false,
                 supports_deferred_tools: false,
                 supports_hosted_tool_search: false,
                 supports_hosted_web_search: false,
@@ -276,6 +359,13 @@ pub mod openai {
         ) -> Result<CompactionResponse, ProviderError> {
             self.inner.compact(request).await
         }
+
+        async fn summarize_memories(
+            &self,
+            request: super::MemorySummarizeRequest<'_>,
+        ) -> Result<super::MemorySummarizeResponse, ProviderError> {
+            self.inner.summarize_memories(request).await
+        }
     }
 
     #[derive(Clone)]
@@ -320,10 +410,15 @@ pub mod openrouter {
 
     use async_trait::async_trait;
 
-    use super::{
-        CompactionRequest, CompactionResponse, Provider, ProviderCapabilities, ProviderDescriptor,
-        ProviderError, ProviderEventStream, Request, shared_provider,
-    };
+    use super::CompactionRequest;
+    use super::CompactionResponse;
+    use super::Provider;
+    use super::ProviderCapabilities;
+    use super::ProviderDescriptor;
+    use super::ProviderError;
+    use super::ProviderEventStream;
+    use super::Request;
+    use super::shared_provider;
     use crate::provider::model::ModelInfo;
 
     #[derive(Clone)]
@@ -362,6 +457,13 @@ pub mod openrouter {
         ) -> Result<CompactionResponse, ProviderError> {
             self.inner.compact(request).await
         }
+
+        async fn summarize_memories(
+            &self,
+            request: super::MemorySummarizeRequest<'_>,
+        ) -> Result<super::MemorySummarizeResponse, ProviderError> {
+            self.inner.summarize_memories(request).await
+        }
     }
 }
 
@@ -370,9 +472,12 @@ pub mod anthropic {
 
     use async_trait::async_trait;
 
-    use super::{
-        Provider, ProviderDescriptor, ProviderError, ProviderEventStream, Request, shared_provider,
-    };
+    use super::Provider;
+    use super::ProviderDescriptor;
+    use super::ProviderError;
+    use super::ProviderEventStream;
+    use super::Request;
+    use super::shared_provider;
     use crate::provider::model::ModelInfo;
 
     #[derive(Clone)]
@@ -405,6 +510,13 @@ pub mod anthropic {
         async fn stream(&self, request: Request<'_>) -> Result<ProviderEventStream, ProviderError> {
             self.inner.stream(request).await
         }
+
+        async fn summarize_memories(
+            &self,
+            request: super::MemorySummarizeRequest<'_>,
+        ) -> Result<super::MemorySummarizeResponse, ProviderError> {
+            self.inner.summarize_memories(request).await
+        }
     }
 }
 
@@ -413,9 +525,12 @@ pub mod gemini {
 
     use async_trait::async_trait;
 
-    use super::{
-        Provider, ProviderDescriptor, ProviderError, ProviderEventStream, Request, shared_provider,
-    };
+    use super::Provider;
+    use super::ProviderDescriptor;
+    use super::ProviderError;
+    use super::ProviderEventStream;
+    use super::Request;
+    use super::shared_provider;
     use crate::provider::model::ModelInfo;
 
     #[derive(Clone)]
@@ -448,6 +563,13 @@ pub mod gemini {
         async fn stream(&self, request: Request<'_>) -> Result<ProviderEventStream, ProviderError> {
             self.inner.stream(request).await
         }
+
+        async fn summarize_memories(
+            &self,
+            request: super::MemorySummarizeRequest<'_>,
+        ) -> Result<super::MemorySummarizeResponse, ProviderError> {
+            self.inner.summarize_memories(request).await
+        }
     }
 }
 
@@ -456,9 +578,12 @@ pub mod ollama {
 
     use async_trait::async_trait;
 
-    use super::{
-        BuiltinProvider, Provider, ProviderDescriptor, ProviderError, ProviderEventStream, Request,
-    };
+    use super::BuiltinProvider;
+    use super::Provider;
+    use super::ProviderDescriptor;
+    use super::ProviderError;
+    use super::ProviderEventStream;
+    use super::Request;
     use crate::provider::model::ModelInfo;
 
     const DEFAULT_BASE_URL: &str = "http://127.0.0.1:11434/";
@@ -508,6 +633,13 @@ pub mod ollama {
         async fn stream(&self, request: Request<'_>) -> Result<ProviderEventStream, ProviderError> {
             self.inner.stream(request).await
         }
+
+        async fn summarize_memories(
+            &self,
+            request: super::MemorySummarizeRequest<'_>,
+        ) -> Result<super::MemorySummarizeResponse, ProviderError> {
+            self.inner.summarize_memories(request).await
+        }
     }
 }
 
@@ -516,9 +648,12 @@ pub mod lmstudio {
 
     use async_trait::async_trait;
 
-    use super::{
-        BuiltinProvider, Provider, ProviderDescriptor, ProviderError, ProviderEventStream, Request,
-    };
+    use super::BuiltinProvider;
+    use super::Provider;
+    use super::ProviderDescriptor;
+    use super::ProviderError;
+    use super::ProviderEventStream;
+    use super::Request;
     use crate::provider::model::ModelInfo;
 
     const DEFAULT_BASE_URL: &str = "http://127.0.0.1:1234/";
@@ -567,6 +702,13 @@ pub mod lmstudio {
 
         async fn stream(&self, request: Request<'_>) -> Result<ProviderEventStream, ProviderError> {
             self.inner.stream(request).await
+        }
+
+        async fn summarize_memories(
+            &self,
+            request: super::MemorySummarizeRequest<'_>,
+        ) -> Result<super::MemorySummarizeResponse, ProviderError> {
+            self.inner.summarize_memories(request).await
         }
     }
 }

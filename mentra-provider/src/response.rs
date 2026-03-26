@@ -32,6 +32,20 @@ pub struct CompactionResponse {
     pub output: Vec<CompactionInputItem>,
 }
 
+/// A complete memory summarize response collected from a provider.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemorySummarizeResponse {
+    pub output: Vec<MemorySummarizeOutput>,
+}
+
+/// One summary object for a single raw memory input.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemorySummarizeOutput {
+    #[serde(rename = "trace_summary", alias = "raw_memory")]
+    pub raw_memory: String,
+    pub memory_summary: String,
+}
+
 /// Rebuilds a full response from a provider event stream.
 pub async fn collect_response_from_stream(
     mut stream: ProviderEventStream,
@@ -95,6 +109,23 @@ impl Response {
 
         CompactionResponse::from_text(text)
     }
+
+    /// Converts a normal response into a memory summarize response by parsing its text output.
+    pub fn into_memory_summarize_response(self) -> Result<MemorySummarizeResponse, ProviderError> {
+        let text = self
+            .content
+            .into_iter()
+            .filter_map(|block| match block {
+                ContentBlock::Text { text } => Some(text),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string();
+
+        MemorySummarizeResponse::from_text(&text)
+    }
 }
 
 impl CompactionResponse {
@@ -106,6 +137,39 @@ impl CompactionResponse {
             }],
         }
     }
+}
+
+impl MemorySummarizeResponse {
+    pub fn from_text(text: &str) -> Result<Self, ProviderError> {
+        let text = strip_markdown_code_fence(text);
+
+        if let Ok(output) = serde_json::from_str::<Vec<MemorySummarizeOutput>>(text) {
+            return Ok(Self { output });
+        }
+
+        if let Ok(response) = serde_json::from_str::<MemorySummarizeResponse>(text) {
+            return Ok(response);
+        }
+
+        Err(ProviderError::InvalidResponse(
+            "failed to parse memory summarize response json".to_string(),
+        ))
+    }
+}
+
+fn strip_markdown_code_fence(text: &str) -> &str {
+    let trimmed = text.trim();
+    let Some(rest) = trimmed.strip_prefix("```") else {
+        return trimmed;
+    };
+    let rest = rest
+        .strip_prefix("json")
+        .or_else(|| rest.strip_prefix("JSON"))
+        .unwrap_or(rest);
+    rest.trim()
+        .strip_suffix("```")
+        .map(str::trim)
+        .unwrap_or(trimmed)
 }
 
 #[derive(Default)]
@@ -646,5 +710,61 @@ mod tests {
                 content: "first\nsecond".to_string(),
             }]
         );
+    }
+
+    #[test]
+    fn memory_summarize_response_from_text_accepts_json_array() {
+        let response = MemorySummarizeResponse::from_text(
+            r#"[{"raw_memory":"Detailed summary","memory_summary":"Short summary"}]"#,
+        )
+        .expect("memory summarize response should parse");
+
+        assert_eq!(
+            response,
+            MemorySummarizeResponse {
+                output: vec![MemorySummarizeOutput {
+                    raw_memory: "Detailed summary".to_string(),
+                    memory_summary: "Short summary".to_string(),
+                }],
+            }
+        );
+    }
+
+    #[test]
+    fn memory_summarize_response_from_text_accepts_markdown_fence_and_trace_alias() {
+        let response = MemorySummarizeResponse::from_text(
+            "```json\n[{\"trace_summary\":\"Detailed summary\",\"memory_summary\":\"Short summary\"}]\n```",
+        )
+        .expect("memory summarize response should parse");
+
+        assert_eq!(
+            response.output[0],
+            MemorySummarizeOutput {
+                raw_memory: "Detailed summary".to_string(),
+                memory_summary: "Short summary".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn response_into_memory_summarize_response_collects_text_content() {
+        let response = Response {
+            id: "resp-4".to_string(),
+            model: "model".to_string(),
+            role: Role::Assistant,
+            content: vec![ContentBlock::text(
+                "[{\"raw_memory\":\"Detailed summary\",\"memory_summary\":\"Short summary\"}]",
+            )],
+            stop_reason: None,
+            usage: None,
+        };
+
+        let summarize = response
+            .into_memory_summarize_response()
+            .expect("memory summarize response should parse");
+
+        assert_eq!(summarize.output.len(), 1);
+        assert_eq!(summarize.output[0].raw_memory, "Detailed summary");
+        assert_eq!(summarize.output[0].memory_summary, "Short summary");
     }
 }

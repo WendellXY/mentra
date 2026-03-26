@@ -1,14 +1,20 @@
 use async_trait::async_trait;
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
+use std::sync::Arc;
 
-use crate::{
-    definition::{ProviderDefinition, ProviderDescriptor, ProviderId},
-    error::ProviderError,
-    model::ModelInfo,
-    request::{CompactionRequest, Request},
-    response::{CompactionResponse, Response, collect_response_from_stream},
-    stream::ProviderEventStream,
-};
+use crate::definition::ProviderDefinition;
+use crate::definition::ProviderDescriptor;
+use crate::definition::ProviderId;
+use crate::error::ProviderError;
+use crate::model::ModelInfo;
+use crate::request::CompactionRequest;
+use crate::request::MemorySummarizeRequest;
+use crate::request::Request;
+use crate::response::CompactionResponse;
+use crate::response::MemorySummarizeResponse;
+use crate::response::Response;
+use crate::response::collect_response_from_stream;
+use crate::stream::ProviderEventStream;
 
 /// Lists models available from a provider.
 #[async_trait]
@@ -39,6 +45,15 @@ pub trait ProviderSession: Send + Sync {
             "history_compaction".to_string(),
         ))
     }
+
+    async fn summarize_memories(
+        &self,
+        _request: MemorySummarizeRequest<'_>,
+    ) -> Result<MemorySummarizeResponse, ProviderError> {
+        Err(ProviderError::UnsupportedCapability(
+            "memory_summarization".to_string(),
+        ))
+    }
 }
 
 /// Transport-neutral provider registration interface.
@@ -63,6 +78,16 @@ pub trait Provider: ModelCatalog + ProviderSessionFactory {
         request: CompactionRequest<'_>,
     ) -> Result<CompactionResponse, ProviderError> {
         self.create_session().await?.compact(request).await
+    }
+
+    async fn summarize_memories(
+        &self,
+        request: MemorySummarizeRequest<'_>,
+    ) -> Result<MemorySummarizeResponse, ProviderError> {
+        self.create_session()
+            .await?
+            .summarize_memories(request)
+            .await
     }
 }
 

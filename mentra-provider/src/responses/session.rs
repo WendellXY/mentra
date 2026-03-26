@@ -13,6 +13,8 @@ use url::Url;
 use crate::CompactionRequest;
 use crate::CompactionResponse;
 use crate::CredentialSource;
+use crate::MemorySummarizeRequest;
+use crate::MemorySummarizeResponse;
 use crate::ModelInfo;
 use crate::ProviderCredentials;
 use crate::ProviderDefinition;
@@ -275,6 +277,15 @@ where
         let response = self.send_response(request).await?;
         Ok(response.into_compaction_response())
     }
+
+    async fn summarize_memories(
+        &self,
+        request: MemorySummarizeRequest<'_>,
+    ) -> Result<MemorySummarizeResponse, ProviderError> {
+        let request = request.into_model_request()?;
+        let response = self.send_response(request).await?;
+        response.into_memory_summarize_response()
+    }
 }
 
 #[cfg(test)]
@@ -511,6 +522,82 @@ mod tests {
             crate::CompactionInputItem::CompactionSummary {
                 content: "{\"goal\":\"keep going\"}".to_string()
             }
+        );
+    }
+
+    #[tokio::test]
+    async fn summarize_memories_sends_normal_model_request_and_parses_json_output() {
+        let sse_body = concat!(
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_2\",\"model\":\"gpt-5\",\"status\":\"in_progress\"}}\n\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"content\":[]}}\n\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"[{\\\"raw_memory\\\":\\\"Detailed summary\\\",\\\"memory_summary\\\":\\\"Short summary\\\"}]\"}]}}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_2\",\"model\":\"gpt-5\",\"status\":\"completed\"}}\n\n"
+        );
+        let (base_url, handle) = spawn_compaction_response_server(sse_body);
+
+        let mut definition = super::super::openai_definition();
+        definition.base_url = Some(base_url);
+        let session = ResponsesProvider::with_shared_credential_source(
+            definition,
+            Arc::new(StaticCredentialSource::new("test-key")),
+        )
+        .session();
+
+        let request = crate::MemorySummarizeRequest {
+            model: Cow::Borrowed("gpt-5"),
+            raw_memories: Cow::Owned(vec![crate::RawMemory {
+                id: "memory-1".to_string(),
+                metadata: crate::RawMemoryMetadata {
+                    source_path: "/tmp/trace.jsonl".to_string(),
+                },
+                items: vec![serde_json::json!({"type":"message","role":"user"})],
+            }]),
+            reasoning: Some(crate::ReasoningOptions {
+                effort: crate::ReasoningEffort::Medium,
+            }),
+            metadata: Cow::Owned(BTreeMap::from([("scope".to_string(), "test".to_string())])),
+            provider_request_options: crate::ProviderRequestOptions {
+                session: crate::SessionRequestOptions {
+                    sticky_turn_state: None,
+                    turn_metadata: Some("{\"turn_id\":\"turn-321\"}".to_string()),
+                    prefer_connection_reuse: Some(true),
+                    session_affinity: Some("session-affinity-321".to_string()),
+                },
+                ..crate::ProviderRequestOptions::default()
+            },
+        };
+
+        let response = session
+            .summarize_memories(request)
+            .await
+            .expect("memory summarization succeeds");
+        let captured = handle.join().expect("server should capture request");
+
+        let payload: serde_json::Value =
+            serde_json::from_str(&captured.1).expect("request body should be json");
+        assert_eq!(payload["model"], "gpt-5");
+        assert_eq!(payload["reasoning"]["effort"], "medium");
+        assert_eq!(payload["metadata"]["scope"], "test");
+        assert_eq!(payload["input"][0]["content"][0]["type"], "input_text");
+        assert!(
+            payload["input"][0]["content"][0]["text"]
+                .as_str()
+                .expect("prompt text should be a string")
+                .starts_with("Memory summarize input JSON:\n")
+        );
+
+        assert_eq!(response.output.len(), 1);
+        assert_eq!(response.output[0].raw_memory, "Detailed summary");
+        assert_eq!(response.output[0].memory_summary, "Short summary");
+        assert!(
+            captured
+                .0
+                .contains("x-codex-turn-metadata: {\"turn_id\":\"turn-321\"}\r\n")
+        );
+        assert!(
+            captured
+                .0
+                .contains("x-mentra-session-affinity: session-affinity-321\r\n")
         );
     }
 }

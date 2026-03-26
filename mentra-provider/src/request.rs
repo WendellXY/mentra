@@ -181,6 +181,65 @@ impl CompactionRequest<'_> {
     }
 }
 
+/// Canonical raw memory payload used by memory summarization requests.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RawMemory {
+    pub id: String,
+    pub metadata: RawMemoryMetadata,
+    pub items: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RawMemoryMetadata {
+    pub source_path: String,
+}
+
+/// Provider-neutral request assembled for trace memory summarization.
+#[derive(Debug, Clone)]
+pub struct MemorySummarizeRequest<'a> {
+    pub model: Cow<'a, str>,
+    pub raw_memories: Cow<'a, [RawMemory]>,
+    pub reasoning: Option<ReasoningOptions>,
+    pub metadata: Cow<'a, BTreeMap<String, String>>,
+    pub provider_request_options: ProviderRequestOptions,
+}
+
+impl MemorySummarizeRequest<'_> {
+    /// Converts a memory summarize request into an ordinary model request.
+    pub fn into_model_request(self) -> Result<Request<'static>, ProviderError> {
+        let raw_memories_json =
+            serde_json::to_string(self.raw_memories.as_ref()).map_err(ProviderError::Serialize)?;
+
+        Ok(Request {
+            model: Cow::Owned(self.model.into_owned()),
+            system: Some(Cow::Borrowed(MEMORY_SUMMARIZE_SYSTEM_PROMPT)),
+            messages: Cow::Owned(vec![Message::user(ContentBlock::text(format!(
+                "Memory summarize input JSON:\n{raw_memories_json}"
+            )))]),
+            tools: Cow::Owned(Vec::new()),
+            tool_choice: None,
+            temperature: None,
+            max_output_tokens: None,
+            metadata: Cow::Owned(self.metadata.into_owned()),
+            provider_request_options: ProviderRequestOptions {
+                reasoning: self.reasoning,
+                ..self.provider_request_options
+            },
+        })
+    }
+}
+
+const MEMORY_SUMMARIZE_SYSTEM_PROMPT: &str = concat!(
+    "You summarize trace memories for Codex.\n",
+    "Return valid JSON only.\n",
+    "The output must be a JSON array with one object per input trace, in the same order.\n",
+    "Each object must have exactly these string fields: `raw_memory` and `memory_summary`.\n",
+    "`raw_memory` should be a concrete, detailed summary of the trace contents.\n",
+    "`memory_summary` should be a shorter durable takeaway focused on reusable context.\n",
+    "Use empty strings when information is unavailable.\n",
+    "Do not include markdown fences or extra commentary.\n",
+);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,5 +300,71 @@ mod tests {
         assert_eq!(input[0]["content"], "hello");
         assert_eq!(input[1]["type"], "assistant_turn");
         assert_eq!(input[1]["content"], "world");
+    }
+
+    #[test]
+    fn memory_summarize_request_into_model_request_serializes_input_as_prompt_text() {
+        let request = MemorySummarizeRequest {
+            model: Cow::Borrowed("gpt-5"),
+            raw_memories: Cow::Owned(vec![RawMemory {
+                id: "memory-1".to_string(),
+                metadata: RawMemoryMetadata {
+                    source_path: "/tmp/trace.jsonl".to_string(),
+                },
+                items: vec![serde_json::json!({"type":"message","role":"user"})],
+            }]),
+            reasoning: Some(ReasoningOptions {
+                effort: ReasoningEffort::Medium,
+            }),
+            metadata: Cow::Owned(BTreeMap::from([("scope".to_string(), "test".to_string())])),
+            provider_request_options: ProviderRequestOptions {
+                session: SessionRequestOptions {
+                    sticky_turn_state: None,
+                    turn_metadata: Some("{\"turn_id\":\"t1\"}".to_string()),
+                    prefer_connection_reuse: Some(true),
+                    session_affinity: Some("thread-1".to_string()),
+                },
+                ..ProviderRequestOptions::default()
+            },
+        };
+
+        let model_request = request
+            .into_model_request()
+            .expect("memory summarize request should convert");
+
+        assert_eq!(model_request.model.as_ref(), "gpt-5");
+        assert_eq!(
+            model_request.system.as_deref(),
+            Some(MEMORY_SUMMARIZE_SYSTEM_PROMPT)
+        );
+        assert_eq!(model_request.metadata["scope"], "test");
+        assert_eq!(
+            model_request
+                .provider_request_options
+                .session
+                .turn_metadata
+                .as_deref(),
+            Some("{\"turn_id\":\"t1\"}")
+        );
+        assert_eq!(
+            model_request
+                .provider_request_options
+                .reasoning
+                .as_ref()
+                .expect("reasoning options")
+                .effort,
+            ReasoningEffort::Medium
+        );
+        assert_eq!(model_request.messages.len(), 1);
+
+        let prompt = model_request.messages[0].text();
+        assert!(prompt.starts_with("Memory summarize input JSON:\n"));
+        let payload = prompt
+            .strip_prefix("Memory summarize input JSON:\n")
+            .expect("prompt should contain the memory summarize prefix");
+        let input: Vec<RawMemory> = serde_json::from_str(payload).expect("prompt should be json");
+        assert_eq!(input[0].id, "memory-1");
+        assert_eq!(input[0].metadata.source_path, "/tmp/trace.jsonl");
+        assert_eq!(input[0].items[0]["role"], "user");
     }
 }
