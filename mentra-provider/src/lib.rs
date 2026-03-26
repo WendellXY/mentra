@@ -18,7 +18,9 @@ pub use definition::{
 };
 pub use error::ProviderError;
 pub use model::{
-    ContentBlock, ImageSource, Message, ModelInfo, ModelSelector, Role, TokenUsage, ToolChoice,
+    ContentBlock, HostedToolSearchCall, HostedWebSearchCall, ImageGenerationCall,
+    ImageGenerationResult, ImageSource, Message, ModelInfo, ModelSelector, Role, TokenUsage,
+    ToolChoice, ToolResultContent, WebSearchAction,
 };
 pub use registry::{
     ModelCatalog, Provider, ProviderRegistry, ProviderSession, ProviderSessionFactory,
@@ -27,7 +29,7 @@ pub use registry::{
 pub use request::{
     AnthropicRequestOptions, CompactionInputItem, CompactionRequest, GeminiRequestOptions,
     ProviderRequestOptions, ReasoningEffort, ReasoningOptions, Request, ResponsesRequestOptions,
-    ToolSearchMode,
+    SessionRequestOptions, ToolSearchMode,
 };
 pub use response::{
     CompactionResponse, Response, collect_response_from_stream, provider_event_stream_from_response,
@@ -46,9 +48,11 @@ pub mod provider {
     pub mod model {
         pub use crate::{
             AnthropicRequestOptions, ContentBlock, ContentBlockDelta, ContentBlockStart,
-            ImageSource, Message, ModelInfo, OpenAIRequestOptions, ProviderError, ProviderEvent,
-            ProviderEventStream, ProviderId, ProviderRequestOptions, ReasoningEffort,
-            ReasoningOptions, Request, Response, Role, TokenUsage, ToolChoice, ToolSearchMode,
+            HostedToolSearchCall, HostedWebSearchCall, ImageGenerationCall,
+            ImageGenerationResult, ImageSource, Message, ModelInfo, OpenAIRequestOptions,
+            ProviderError, ProviderEvent, ProviderEventStream, ProviderId, ProviderRequestOptions,
+            ReasoningEffort, ReasoningOptions, Request, Response, Role, SessionRequestOptions,
+            TokenUsage, ToolChoice, ToolResultContent, ToolSearchMode, WebSearchAction,
             collect_response_from_stream, provider_event_stream_from_response,
         };
     }

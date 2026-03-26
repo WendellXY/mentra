@@ -87,6 +87,14 @@ where
             supports_tool_calls: true,
             supports_images: true,
             supports_history_compaction: false,
+            supports_deferred_tools: true,
+            supports_hosted_tool_search: true,
+            supports_hosted_web_search: false,
+            supports_image_generation: false,
+            supports_reasoning_effort: true,
+            reports_reasoning_tokens: false,
+            reports_thoughts_tokens: false,
+            supports_structured_tool_results: false,
         };
         definition.base_url = Some(DEFAULT_BASE_URL.to_string());
         definition.headers = Some(HashMap::from([(

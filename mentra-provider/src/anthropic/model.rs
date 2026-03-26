@@ -6,8 +6,9 @@ use serde_json::Value;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{
-    BuiltinProvider, ContentBlock, ImageSource, Message, ModelInfo, ProviderError, ReasoningEffort,
-    Request, Response, Role, TokenUsage, ToolChoice, ToolLoadingPolicy, ToolSearchMode, ToolSpec,
+    BuiltinProvider, ContentBlock, ImageSource, Message, ModelInfo, ProviderError,
+    ReasoningEffort, Request, Response, Role, TokenUsage, ToolChoice, ToolLoadingPolicy,
+    ToolResultContent, ToolSearchMode, ToolSpec,
 };
 
 #[derive(Deserialize)]
@@ -292,8 +293,26 @@ impl From<&ContentBlock> for AnthropicContentBlock {
                 is_error,
             } => AnthropicContentBlock::ToolResult {
                 tool_use_id: tool_use_id.clone(),
-                content: content.clone(),
+                content: content.to_display_string(),
                 is_error: *is_error,
+            },
+            ContentBlock::HostedToolSearch { call } => AnthropicContentBlock::ToolUse {
+                id: call.id.clone(),
+                name: "tool_search".to_string(),
+                input: serde_json::json!({ "query": call.query }),
+            },
+            ContentBlock::HostedWebSearch { call } => AnthropicContentBlock::ToolUse {
+                id: call.id.clone(),
+                name: "web_search".to_string(),
+                input: serde_json::to_value(call.action.clone()).unwrap_or(serde_json::Value::Null),
+            },
+            ContentBlock::ImageGeneration { call } => AnthropicContentBlock::ToolUse {
+                id: call.id.clone(),
+                name: "image_generation".to_string(),
+                input: serde_json::json!({
+                    "status": call.status,
+                    "revised_prompt": call.revised_prompt,
+                }),
             },
         }
     }
@@ -317,7 +336,7 @@ impl TryFrom<AnthropicContentBlock> for ContentBlock {
                 is_error,
             } => ContentBlock::ToolResult {
                 tool_use_id,
-                content,
+                content: ToolResultContent::Text(content),
                 is_error,
             },
         })
@@ -469,7 +488,7 @@ mod tests {
     use crate::{
         AnthropicRequestOptions, ContentBlock, Message, ModelInfo, ProviderError,
         ProviderRequestOptions, ReasoningEffort, ReasoningOptions, Request, Role, ToolChoice,
-        ToolLoadingPolicy, ToolSearchMode, ToolSpec,
+        ToolLoadingPolicy, ToolResultContent, ToolSearchMode, ToolSpec,
     };
 
     use super::{AnthropicContentBlock, AnthropicImageSource, AnthropicModel, AnthropicRequest};
@@ -503,7 +522,7 @@ mod tests {
                     ContentBlock::image_bytes("image/png", [1_u8, 2, 3]),
                     ContentBlock::ToolResult {
                         tool_use_id: "call_1".to_string(),
-                        content: "ok".to_string(),
+                        content: ToolResultContent::text("ok"),
                         is_error: false,
                     },
                 ],
@@ -584,6 +603,7 @@ mod tests {
                     disable_parallel_tool_use: Some(true),
                 },
                 gemini: Default::default(),
+                session: Default::default(),
             },
         };
 

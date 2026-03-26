@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
-    BuiltinProvider, ContentBlock, ImageSource, Message, ModelInfo, ProviderError, ReasoningEffort,
-    Request, Role, ToolChoice, ToolLoadingPolicy, ToolSearchMode, ToolSpec,
+    BuiltinProvider, ContentBlock, ImageSource, Message, ModelInfo, ProviderError,
+    ReasoningEffort, Request, Role, ToolChoice, ToolLoadingPolicy, ToolSearchMode, ToolSpec,
 };
 
 #[derive(Deserialize)]
@@ -275,12 +275,33 @@ impl GeminiPart {
                     function_response: GeminiFunctionResponse {
                         name,
                         response: json!({
-                            "content": content,
+                            "content": content.to_display_string(),
                             "is_error": is_error,
                         }),
                     },
                 })
             }
+            ContentBlock::HostedToolSearch { call } => Ok(GeminiPart::FunctionCall {
+                function_call: GeminiFunctionCall {
+                    name: "tool_search".to_string(),
+                    args: json!({ "query": call.query }),
+                },
+            }),
+            ContentBlock::HostedWebSearch { call } => Ok(GeminiPart::FunctionCall {
+                function_call: GeminiFunctionCall {
+                    name: "web_search".to_string(),
+                    args: serde_json::to_value(call.action.clone()).unwrap_or(Value::Null),
+                },
+            }),
+            ContentBlock::ImageGeneration { call } => Ok(GeminiPart::FunctionCall {
+                function_call: GeminiFunctionCall {
+                    name: "image_generation".to_string(),
+                    args: json!({
+                        "status": call.status,
+                        "revised_prompt": call.revised_prompt,
+                    }),
+                },
+            }),
         }
     }
 }
@@ -454,7 +475,7 @@ mod tests {
     use crate::{
         BuiltinProvider, ContentBlock, Message, ModelInfo, ProviderError, ProviderRequestOptions,
         ReasoningEffort, ReasoningOptions, Request, Role, ToolChoice, ToolDurability,
-        ToolLoadingPolicy, ToolSearchMode, ToolSideEffectLevel, ToolSpec,
+        ToolLoadingPolicy, ToolResultContent, ToolSearchMode, ToolSideEffectLevel, ToolSpec,
     };
 
     use super::{GeminiGenerateContentRequest, GeminiModel};
@@ -490,7 +511,7 @@ mod tests {
                 }),
                 Message::user(ContentBlock::ToolResult {
                     tool_use_id: "call_1".to_string(),
-                    content: "README contents".to_string(),
+                    content: ToolResultContent::text("README contents"),
                     is_error: false,
                 }),
             ]),

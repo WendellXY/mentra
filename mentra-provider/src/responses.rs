@@ -142,6 +142,14 @@ fn build_definition(
         supports_tool_calls: true,
         supports_images: true,
         supports_history_compaction: false,
+        supports_deferred_tools: true,
+        supports_hosted_tool_search: true,
+        supports_hosted_web_search: true,
+        supports_image_generation: true,
+        supports_reasoning_effort: true,
+        reports_reasoning_tokens: true,
+        reports_thoughts_tokens: false,
+        supports_structured_tool_results: true,
     };
     definition.base_url = Some(base_url.to_string());
     definition.headers = Some(HashMap::new());

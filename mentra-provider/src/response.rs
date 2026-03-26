@@ -2,7 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::ProviderError,
-    model::{ContentBlock, Role, TokenUsage},
+    model::{
+        ContentBlock, HostedToolSearchCall, HostedWebSearchCall, ImageGenerationCall, Role,
+        TokenUsage, ToolResultContent,
+    },
     request::CompactionInputItem,
     stream::{ContentBlockDelta, ContentBlockStart, ProviderEvent, ProviderEventStream},
 };
@@ -177,8 +180,20 @@ enum StreamingContentBlock {
     },
     ToolResult {
         tool_use_id: String,
-        content: String,
+        content: Option<ToolResultContent>,
         is_error: bool,
+        complete: bool,
+    },
+    HostedToolSearch {
+        call: HostedToolSearchCall,
+        complete: bool,
+    },
+    HostedWebSearch {
+        call: HostedWebSearchCall,
+        complete: bool,
+    },
+    ImageGeneration {
+        call: ImageGenerationCall,
         complete: bool,
     },
 }
@@ -201,7 +216,67 @@ impl StreamingContentBlock {
                 StreamingContentBlock::ToolResult { content, .. },
                 ContentBlockDelta::ToolResultContent(delta),
             ) => {
-                content.push_str(&delta);
+                *content = Some(match (content.take(), delta) {
+                    (_, ToolResultContent::Structured(value)) => ToolResultContent::Structured(value),
+                    (Some(ToolResultContent::Structured(value)), ToolResultContent::Text(delta)) => {
+                        ToolResultContent::Structured(merge_structured_text(value, delta))
+                    }
+                    (Some(ToolResultContent::Text(existing)), ToolResultContent::Text(delta)) => {
+                        ToolResultContent::Text(format!("{existing}{delta}"))
+                    }
+                    (None, delta) => delta,
+                });
+                Ok(())
+            }
+            (
+                StreamingContentBlock::HostedToolSearch { call, .. },
+                ContentBlockDelta::HostedToolSearchQuery(delta),
+            ) => {
+                let query = call.query.get_or_insert_with(String::new);
+                query.push_str(&delta);
+                Ok(())
+            }
+            (
+                StreamingContentBlock::HostedToolSearch { call, .. },
+                ContentBlockDelta::HostedToolSearchStatus(status),
+            ) => {
+                call.status = Some(status);
+                Ok(())
+            }
+            (
+                StreamingContentBlock::HostedWebSearch { call, .. },
+                ContentBlockDelta::HostedWebSearchAction(action),
+            ) => {
+                call.action = Some(action);
+                Ok(())
+            }
+            (
+                StreamingContentBlock::HostedWebSearch { call, .. },
+                ContentBlockDelta::HostedWebSearchStatus(status),
+            ) => {
+                call.status = Some(status);
+                Ok(())
+            }
+            (
+                StreamingContentBlock::ImageGeneration { call, .. },
+                ContentBlockDelta::ImageGenerationStatus(status),
+            ) => {
+                call.status = status;
+                Ok(())
+            }
+            (
+                StreamingContentBlock::ImageGeneration { call, .. },
+                ContentBlockDelta::ImageGenerationRevisedPrompt(delta),
+            ) => {
+                let revised_prompt = call.revised_prompt.get_or_insert_with(String::new);
+                revised_prompt.push_str(&delta);
+                Ok(())
+            }
+            (
+                StreamingContentBlock::ImageGeneration { call, .. },
+                ContentBlockDelta::ImageGenerationResult(result),
+            ) => {
+                call.result = Some(result);
                 Ok(())
             }
             (block, delta) => Err(ProviderError::MalformedStream(format!(
@@ -216,7 +291,10 @@ impl StreamingContentBlock {
             StreamingContentBlock::Text { complete, .. }
             | StreamingContentBlock::Image { complete, .. }
             | StreamingContentBlock::ToolUse { complete, .. }
-            | StreamingContentBlock::ToolResult { complete, .. } => *complete = true,
+            | StreamingContentBlock::ToolResult { complete, .. }
+            | StreamingContentBlock::HostedToolSearch { complete, .. }
+            | StreamingContentBlock::HostedWebSearch { complete, .. }
+            | StreamingContentBlock::ImageGeneration { complete, .. } => *complete = true,
         }
     }
 
@@ -225,7 +303,10 @@ impl StreamingContentBlock {
             StreamingContentBlock::Text { complete, .. }
             | StreamingContentBlock::Image { complete, .. }
             | StreamingContentBlock::ToolUse { complete, .. }
-            | StreamingContentBlock::ToolResult { complete, .. } => *complete,
+            | StreamingContentBlock::ToolResult { complete, .. }
+            | StreamingContentBlock::HostedToolSearch { complete, .. }
+            | StreamingContentBlock::HostedWebSearch { complete, .. }
+            | StreamingContentBlock::ImageGeneration { complete, .. } => *complete,
         }
     }
 
@@ -250,9 +331,18 @@ impl StreamingContentBlock {
                 ..
             } => Ok(ContentBlock::ToolResult {
                 tool_use_id,
-                content,
+                content: content.unwrap_or_else(|| ToolResultContent::text(String::new())),
                 is_error,
             }),
+            StreamingContentBlock::HostedToolSearch { call, .. } => {
+                Ok(ContentBlock::HostedToolSearch { call })
+            }
+            StreamingContentBlock::HostedWebSearch { call, .. } => {
+                Ok(ContentBlock::HostedWebSearch { call })
+            }
+            StreamingContentBlock::ImageGeneration { call, .. } => {
+                Ok(ContentBlock::ImageGeneration { call })
+            }
         }
     }
 
@@ -262,6 +352,9 @@ impl StreamingContentBlock {
             StreamingContentBlock::Image { .. } => "image",
             StreamingContentBlock::ToolUse { .. } => "tool_use",
             StreamingContentBlock::ToolResult { .. } => "tool_result",
+            StreamingContentBlock::HostedToolSearch { .. } => "hosted_tool_search",
+            StreamingContentBlock::HostedWebSearch { .. } => "hosted_web_search",
+            StreamingContentBlock::ImageGeneration { .. } => "image_generation",
         }
     }
 }
@@ -286,10 +379,23 @@ impl From<ContentBlockStart> for StreamingContentBlock {
             ContentBlockStart::ToolResult {
                 tool_use_id,
                 is_error,
+                content,
             } => StreamingContentBlock::ToolResult {
                 tool_use_id,
-                content: String::new(),
+                content,
                 is_error,
+                complete: false,
+            },
+            ContentBlockStart::HostedToolSearch { call } => StreamingContentBlock::HostedToolSearch {
+                call,
+                complete: false,
+            },
+            ContentBlockStart::HostedWebSearch { call } => StreamingContentBlock::HostedWebSearch {
+                call,
+                complete: false,
+            },
+            ContentBlockStart::ImageGeneration { call } => StreamingContentBlock::ImageGeneration {
+                call,
                 complete: false,
             },
         }
@@ -345,18 +451,47 @@ impl ContentBlock {
                     kind: ContentBlockStart::ToolResult {
                         tool_use_id,
                         is_error,
+                        content: Some(content.clone()),
                     },
                 }];
-                if !content.is_empty() {
-                    events.push(ProviderEvent::ContentBlockDelta {
-                        index,
-                        delta: ContentBlockDelta::ToolResultContent(content),
-                    });
-                }
                 events.push(ProviderEvent::ContentBlockStopped { index });
                 events
             }
+            ContentBlock::HostedToolSearch { call } => {
+                vec![
+                    ProviderEvent::ContentBlockStarted {
+                        index,
+                        kind: ContentBlockStart::HostedToolSearch { call },
+                    },
+                    ProviderEvent::ContentBlockStopped { index },
+                ]
+            }
+            ContentBlock::HostedWebSearch { call } => {
+                vec![
+                    ProviderEvent::ContentBlockStarted {
+                        index,
+                        kind: ContentBlockStart::HostedWebSearch { call },
+                    },
+                    ProviderEvent::ContentBlockStopped { index },
+                ]
+            }
+            ContentBlock::ImageGeneration { call } => {
+                vec![
+                    ProviderEvent::ContentBlockStarted {
+                        index,
+                        kind: ContentBlockStart::ImageGeneration { call },
+                    },
+                    ProviderEvent::ContentBlockStopped { index },
+                ]
+            }
         }
+    }
+}
+
+fn merge_structured_text(value: serde_json::Value, delta: String) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(existing) => serde_json::Value::String(format!("{existing}{delta}")),
+        other => other,
     }
 }
 
@@ -382,6 +517,58 @@ mod tests {
                 thoughts_tokens: None,
                 tool_input_tokens: None,
             }),
+        };
+
+        let rebuilt =
+            collect_response_from_stream(provider_event_stream_from_response(response.clone()))
+                .await
+                .expect("response should rebuild");
+
+        assert_eq!(rebuilt, response);
+    }
+
+    #[tokio::test]
+    async fn response_round_trip_preserves_hosted_actions_and_structured_tool_results() {
+        let response = Response {
+            id: "resp-2".to_string(),
+            model: "model".to_string(),
+            role: Role::Assistant,
+            content: vec![
+                ContentBlock::ToolResult {
+                    tool_use_id: "call-1".to_string(),
+                    content: ToolResultContent::Structured(serde_json::json!({"ok":true})),
+                    is_error: false,
+                },
+                ContentBlock::HostedToolSearch {
+                    call: HostedToolSearchCall {
+                        id: "search-1".to_string(),
+                        status: Some("completed".to_string()),
+                        query: Some("weather".to_string()),
+                    },
+                },
+                ContentBlock::HostedWebSearch {
+                    call: HostedWebSearchCall {
+                        id: "web-1".to_string(),
+                        status: Some("completed".to_string()),
+                        action: Some(crate::model::WebSearchAction::Search {
+                            query: Some("weather".to_string()),
+                            queries: None,
+                        }),
+                    },
+                },
+                ContentBlock::ImageGeneration {
+                    call: ImageGenerationCall {
+                        id: "image-1".to_string(),
+                        status: "completed".to_string(),
+                        revised_prompt: Some("A blue square".to_string()),
+                        result: Some(crate::model::ImageGenerationResult::ArtifactRef {
+                            artifact_id: "artifact-1".to_string(),
+                        }),
+                    },
+                },
+            ],
+            stop_reason: Some("stop".to_string()),
+            usage: None,
         };
 
         let rebuilt =

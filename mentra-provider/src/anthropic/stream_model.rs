@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use crate::{ContentBlockDelta, ContentBlockStart, ProviderEvent, Role};
+use crate::{ContentBlockDelta, ContentBlockStart, HostedToolSearchCall, ProviderEvent, Role};
 
 use super::model::{AnthropicResponse, AnthropicUsage};
 
@@ -39,6 +39,10 @@ pub(crate) enum AnthropicStreamContentBlock {
         id: String,
         name: String,
     },
+    ServerToolUse {
+        id: String,
+        name: String,
+    },
     #[serde(other)]
     Unsupported,
 }
@@ -49,6 +53,15 @@ impl AnthropicStreamContentBlock {
             AnthropicStreamContentBlock::Text {} => Some(ContentBlockStart::Text),
             AnthropicStreamContentBlock::ToolUse { id, name } => {
                 Some(ContentBlockStart::ToolUse { id, name })
+            }
+            AnthropicStreamContentBlock::ServerToolUse { id, name } => {
+                name.starts_with("tool_search").then_some(ContentBlockStart::HostedToolSearch {
+                    call: HostedToolSearchCall {
+                        id,
+                        status: Some("in_progress".to_string()),
+                        query: None,
+                    },
+                })
             }
             AnthropicStreamContentBlock::Unsupported => None,
         }

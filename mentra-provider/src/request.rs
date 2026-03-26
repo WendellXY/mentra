@@ -48,6 +48,19 @@ pub struct GeminiRequestOptions {
     pub thoughts: Option<bool>,
 }
 
+/// Provider-neutral session metadata and affinity hints.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct SessionRequestOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sticky_turn_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_metadata: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefer_connection_reuse: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_affinity: Option<String>,
+}
+
 /// Provider-specific request options that should be forwarded on the wire.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ProviderRequestOptions {
@@ -61,6 +74,8 @@ pub struct ProviderRequestOptions {
     pub anthropic: AnthropicRequestOptions,
     #[serde(default)]
     pub gemini: GeminiRequestOptions,
+    #[serde(default)]
+    pub session: SessionRequestOptions,
 }
 
 /// Provider request assembled by the runtime before dispatch.

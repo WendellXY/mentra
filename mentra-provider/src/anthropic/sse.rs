@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 use futures_util::StreamExt;
@@ -5,6 +6,8 @@ use tokio::sync::mpsc;
 
 use crate::{ProviderError, ProviderEvent, ProviderEventStream, TokenUsage};
 
+use super::stream_model::AnthropicContentBlockDelta;
+use super::stream_model::AnthropicStreamContentBlock;
 use super::stream_model::AnthropicStreamEvent;
 
 pub(crate) fn spawn_event_stream(response: reqwest::Response) -> ProviderEventStream {
@@ -56,6 +59,13 @@ async fn forward_events(
 struct StreamState {
     ignored_blocks: HashSet<usize>,
     latest_usage: Option<TokenUsage>,
+    block_kinds: HashMap<usize, StreamingBlockKind>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamingBlockKind {
+    ToolUse,
+    HostedToolSearch,
 }
 
 fn parse_frame(frame: &[u8], state: &mut StreamState) -> Result<Vec<ProviderEvent>, ProviderError> {
@@ -82,6 +92,26 @@ fn parse_frame(frame: &[u8], state: &mut StreamState) -> Result<Vec<ProviderEven
     let event: AnthropicStreamEvent =
         serde_json::from_str(&data).map_err(ProviderError::Deserialize)?;
 
+    if let AnthropicStreamEvent::ContentBlockStart {
+        index,
+        content_block,
+    } = &event
+    {
+        match content_block {
+            AnthropicStreamContentBlock::ToolUse { .. } => {
+                state.block_kinds.insert(*index, StreamingBlockKind::ToolUse);
+            }
+            AnthropicStreamContentBlock::ServerToolUse { name, .. }
+                if name.starts_with("tool_search") =>
+            {
+                state
+                    .block_kinds
+                    .insert(*index, StreamingBlockKind::HostedToolSearch);
+            }
+            _ => {}
+        }
+    }
+
     match &event {
         AnthropicStreamEvent::ContentBlockStart {
             index,
@@ -99,6 +129,20 @@ fn parse_frame(frame: &[u8], state: &mut StreamState) -> Result<Vec<ProviderEven
             }
             return Ok(Vec::new());
         }
+        AnthropicStreamEvent::ContentBlockDelta {
+            index,
+            delta: AnthropicContentBlockDelta::InputJsonDelta { partial_json },
+        } => {
+            if matches!(
+                state.block_kinds.get(index),
+                Some(StreamingBlockKind::HostedToolSearch)
+            ) {
+                return Ok(vec![ProviderEvent::ContentBlockDelta {
+                    index: *index,
+                    delta: ProviderEventDeltaExt::hosted_tool_search_delta(partial_json),
+                }]);
+            }
+        }
         _ => {}
     }
 
@@ -112,6 +156,10 @@ fn parse_frame(frame: &[u8], state: &mut StreamState) -> Result<Vec<ProviderEven
     Ok(events
         .into_iter()
         .map(|event| match event {
+            ProviderEvent::ContentBlockStopped { index } => {
+                state.block_kinds.remove(&index);
+                ProviderEvent::ContentBlockStopped { index }
+            }
             ProviderEvent::MessageDelta { stop_reason, usage } => {
                 let usage = merge_usage(state.latest_usage.clone(), usage);
                 state.latest_usage = usage.clone();
@@ -120,6 +168,27 @@ fn parse_frame(frame: &[u8], state: &mut StreamState) -> Result<Vec<ProviderEven
             other => other,
         })
         .collect())
+}
+
+struct ProviderEventDeltaExt;
+
+impl ProviderEventDeltaExt {
+    fn hosted_tool_search_delta(partial_json: &str) -> crate::ContentBlockDelta {
+        crate::ContentBlockDelta::HostedToolSearchQuery(
+            extract_tool_search_query(partial_json).unwrap_or_else(|| partial_json.to_string()),
+        )
+    }
+}
+
+fn extract_tool_search_query(partial_json: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(partial_json)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("query")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
 }
 
 fn merge_usage(base: Option<TokenUsage>, update: Option<TokenUsage>) -> Option<TokenUsage> {
@@ -225,7 +294,7 @@ mod tests {
     }
 
     #[test]
-    fn ignores_hosted_tool_search_bookkeeping_blocks() {
+    fn parses_hosted_tool_search_bookkeeping_blocks() {
         let mut state = StreamState::default();
 
         let started = parse_frame(
@@ -233,20 +302,38 @@ mod tests {
             &mut state,
         )
         .expect("server tool use should parse");
-        assert!(started.is_empty());
+        assert_eq!(
+            started,
+            vec![ProviderEvent::ContentBlockStarted {
+                index: 1,
+                kind: crate::ContentBlockStart::HostedToolSearch {
+                    call: crate::HostedToolSearchCall {
+                        id: "srvtoolu_1".to_string(),
+                        status: Some("in_progress".to_string()),
+                        query: None,
+                    },
+                },
+            }]
+        );
 
         let delta = parse_frame(
             br#"data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"weather\"}"}}"#,
             &mut state,
         )
-        .expect("ignored delta should parse");
-        assert!(delta.is_empty());
+        .expect("hosted search delta should parse");
+        assert_eq!(
+            delta,
+            vec![ProviderEvent::ContentBlockDelta {
+                index: 1,
+                delta: crate::ContentBlockDelta::HostedToolSearchQuery("weather".to_string()),
+            }]
+        );
 
         let stopped = parse_frame(
             br#"data: {"type":"content_block_stop","index":1}"#,
             &mut state,
         )
-        .expect("ignored stop should parse");
-        assert!(stopped.is_empty());
+        .expect("hosted search stop should parse");
+        assert_eq!(stopped, vec![ProviderEvent::ContentBlockStopped { index: 1 }]);
     }
 }

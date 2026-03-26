@@ -98,6 +98,92 @@ impl ImageSource {
     }
 }
 
+/// Tool result payloads supported by provider streams and history replay.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ToolResultContent {
+    Text(String),
+    Structured(Value),
+}
+
+impl ToolResultContent {
+    pub fn text(value: impl Into<String>) -> Self {
+        Self::Text(value.into())
+    }
+
+    pub fn to_display_string(&self) -> String {
+        match self {
+            Self::Text(text) => text.clone(),
+            Self::Structured(value) => value.to_string(),
+        }
+    }
+}
+
+/// Provider-neutral hosted tool search action.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostedToolSearchCall {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+}
+
+/// Provider-neutral hosted web search actions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WebSearchAction {
+    Search {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        query: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        queries: Option<Vec<String>>,
+    },
+    OpenPage {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+    },
+    FindInPage {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pattern: Option<String>,
+    },
+}
+
+/// Provider-neutral hosted web search call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostedWebSearchCall {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<WebSearchAction>,
+}
+
+/// Provider-neutral image generation result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ImageGenerationResult {
+    Image {
+        source: ImageSource,
+    },
+    ArtifactRef {
+        artifact_id: String,
+    },
+}
+
+/// Provider-neutral image generation call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageGenerationCall {
+    pub id: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revised_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<ImageGenerationResult>,
+}
+
 /// A provider-neutral content block exchanged with models.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContentBlock {
@@ -114,8 +200,17 @@ pub enum ContentBlock {
     },
     ToolResult {
         tool_use_id: String,
-        content: String,
+        content: ToolResultContent,
         is_error: bool,
+    },
+    HostedToolSearch {
+        call: HostedToolSearchCall,
+    },
+    HostedWebSearch {
+        call: HostedWebSearchCall,
+    },
+    ImageGeneration {
+        call: ImageGenerationCall,
     },
 }
 

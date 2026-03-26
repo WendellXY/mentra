@@ -5,8 +5,9 @@ use serde::Deserialize;
 use tokio::sync::mpsc;
 
 use crate::{
-    ContentBlockDelta, ContentBlockStart, ProviderError, ProviderEvent, ProviderEventStream, Role,
-    TokenUsage,
+    ContentBlockDelta, ContentBlockStart, HostedToolSearchCall, HostedWebSearchCall,
+    ImageGenerationCall, ImageGenerationResult, ProviderError, ProviderEvent, ProviderEventStream,
+    Role, TokenUsage, WebSearchAction,
 };
 
 /// Spawns an event stream that decodes Responses SSE frames.
@@ -60,6 +61,7 @@ struct StreamState {
     ignored_output_indices: HashSet<usize>,
     text_delta_seen: HashSet<usize>,
     function_delta_seen: HashSet<usize>,
+    tool_search_delta_seen: HashSet<usize>,
 }
 
 fn parse_frame(frame: &[u8], state: &mut StreamState) -> Result<Vec<ProviderEvent>, ProviderError> {
@@ -139,6 +141,20 @@ fn parse_frame(frame: &[u8], state: &mut StreamState) -> Result<Vec<ProviderEven
                 delta: ContentBlockDelta::ToolUseInputJson(delta),
             }])
         }
+        ResponsesStreamEvent::ResponseToolSearchCallDelta {
+            output_index,
+            delta,
+        } => {
+            if state.ignored_output_indices.contains(&output_index) {
+                return Ok(Vec::new());
+            }
+
+            state.tool_search_delta_seen.insert(output_index);
+            Ok(vec![ProviderEvent::ContentBlockDelta {
+                index: output_index,
+                delta: ContentBlockDelta::HostedToolSearchQuery(delta),
+            }])
+        }
         ResponsesStreamEvent::ResponseOutputItemDone { output_index, item } => {
             if state.ignored_output_indices.remove(&output_index) {
                 return Ok(Vec::new());
@@ -165,6 +181,18 @@ fn parse_frame(frame: &[u8], state: &mut StreamState) -> Result<Vec<ProviderEven
                     delta: ContentBlockDelta::ToolUseInputJson(arguments),
                 });
             }
+
+            if !state.tool_search_delta_seen.remove(&output_index)
+                && let Some(query) = item.completed_tool_search_query()
+                && !query.is_empty()
+            {
+                events.push(ProviderEvent::ContentBlockDelta {
+                    index: output_index,
+                    delta: ContentBlockDelta::HostedToolSearchQuery(query),
+                });
+            }
+
+            events.extend(item.completion_deltas(output_index));
 
             if item.is_supported() {
                 events.push(ProviderEvent::ContentBlockStopped {
@@ -241,6 +269,8 @@ enum ResponsesStreamEvent {
         #[allow(dead_code)]
         item_id: Option<String>,
     },
+    #[serde(rename = "response.tool_search_call.delta")]
+    ResponseToolSearchCallDelta { output_index: usize, delta: String },
     #[serde(rename = "response.output_item.done")]
     ResponseOutputItemDone {
         output_index: usize,
@@ -376,6 +406,37 @@ enum ResponsesOutputItem {
         #[serde(default)]
         arguments: String,
     },
+    #[serde(rename = "tool_search_call")]
+    ToolSearchCall {
+        #[serde(default)]
+        id: Option<String>,
+        #[serde(default)]
+        call_id: Option<String>,
+        #[serde(default)]
+        status: Option<String>,
+        #[serde(default)]
+        _execution: Option<String>,
+        #[serde(default)]
+        arguments: Option<serde_json::Value>,
+    },
+    #[serde(rename = "web_search_call")]
+    WebSearchCall {
+        #[serde(default)]
+        id: Option<String>,
+        #[serde(default)]
+        status: Option<String>,
+        #[serde(default)]
+        action: Option<WebSearchAction>,
+    },
+    #[serde(rename = "image_generation_call")]
+    ImageGenerationCall {
+        id: String,
+        status: String,
+        #[serde(default)]
+        revised_prompt: Option<String>,
+        #[serde(default)]
+        result: Option<String>,
+    },
     #[serde(other)]
     Unsupported,
 }
@@ -387,6 +448,45 @@ impl ResponsesOutputItem {
             ResponsesOutputItem::FunctionCall { call_id, name, .. } => {
                 Some(ContentBlockStart::ToolUse { id: call_id, name })
             }
+            ResponsesOutputItem::ToolSearchCall {
+                id,
+                call_id,
+                status,
+                arguments,
+                ..
+            } => Some(ContentBlockStart::HostedToolSearch {
+                call: HostedToolSearchCall {
+                    id: call_id.or(id).unwrap_or_else(|| "tool_search_call".to_string()),
+                    status,
+                    query: arguments
+                        .as_ref()
+                        .and_then(extract_tool_search_query_from_value),
+                },
+            }),
+            ResponsesOutputItem::WebSearchCall { id, status, action } => Some(
+                ContentBlockStart::HostedWebSearch {
+                    call: HostedWebSearchCall {
+                        id: id.unwrap_or_else(|| "web_search_call".to_string()),
+                        status,
+                        action,
+                    },
+                },
+            ),
+            ResponsesOutputItem::ImageGenerationCall {
+                id,
+                status,
+                revised_prompt,
+                result,
+            } => Some(ContentBlockStart::ImageGeneration {
+                call: ImageGenerationCall {
+                    id,
+                    status,
+                    revised_prompt,
+                    result: result.map(|result| ImageGenerationResult::ArtifactRef {
+                        artifact_id: result,
+                    }),
+                },
+            }),
             ResponsesOutputItem::Unsupported => None,
         }
     }
@@ -412,9 +512,89 @@ impl ResponsesOutputItem {
         }
     }
 
+    fn completed_tool_search_query(&self) -> Option<String> {
+        match self {
+            ResponsesOutputItem::ToolSearchCall { arguments, .. } => arguments
+                .as_ref()
+                .and_then(extract_tool_search_query_from_value),
+            _ => None,
+        }
+    }
+
+    fn completion_deltas(&self, output_index: usize) -> Vec<ProviderEvent> {
+        match self {
+            ResponsesOutputItem::ToolSearchCall { status, .. } => status
+                .clone()
+                .filter(|status| !status.is_empty())
+                .map(|status| ProviderEvent::ContentBlockDelta {
+                    index: output_index,
+                    delta: ContentBlockDelta::HostedToolSearchStatus(status),
+                })
+                .into_iter()
+                .collect(),
+            ResponsesOutputItem::WebSearchCall { status, action, .. } => {
+                let mut events = Vec::new();
+                if let Some(action) = action.clone() {
+                    events.push(ProviderEvent::ContentBlockDelta {
+                        index: output_index,
+                        delta: ContentBlockDelta::HostedWebSearchAction(action),
+                    });
+                }
+                if let Some(status) = status.clone()
+                    && !status.is_empty()
+                {
+                    events.push(ProviderEvent::ContentBlockDelta {
+                        index: output_index,
+                        delta: ContentBlockDelta::HostedWebSearchStatus(status),
+                    });
+                }
+                events
+            }
+            ResponsesOutputItem::ImageGenerationCall {
+                status,
+                revised_prompt,
+                result,
+                ..
+            } => {
+                let mut events = Vec::new();
+                if let Some(revised_prompt) = revised_prompt.clone()
+                    && !revised_prompt.is_empty()
+                {
+                    events.push(ProviderEvent::ContentBlockDelta {
+                        index: output_index,
+                        delta: ContentBlockDelta::ImageGenerationRevisedPrompt(revised_prompt),
+                    });
+                }
+                if let Some(result) = result.clone() {
+                    events.push(ProviderEvent::ContentBlockDelta {
+                        index: output_index,
+                        delta: ContentBlockDelta::ImageGenerationResult(
+                            ImageGenerationResult::ArtifactRef { artifact_id: result },
+                        ),
+                    });
+                }
+                if !status.is_empty() {
+                    events.push(ProviderEvent::ContentBlockDelta {
+                        index: output_index,
+                        delta: ContentBlockDelta::ImageGenerationStatus(status.clone()),
+                    });
+                }
+                events
+            }
+            _ => Vec::new(),
+        }
+    }
+
     fn is_supported(&self) -> bool {
         !matches!(self, ResponsesOutputItem::Unsupported)
     }
+}
+
+fn extract_tool_search_query_from_value(value: &serde_json::Value) -> Option<String> {
+    value
+        .get("query")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
 }
 
 #[derive(Deserialize)]
@@ -574,7 +754,7 @@ mod tests {
     }
 
     #[test]
-    fn ignores_hosted_tool_search_output_items() {
+    fn parses_hosted_tool_search_output_items() {
         let mut state = StreamState::default();
 
         let added = parse_frame(
@@ -582,20 +762,144 @@ mod tests {
             &mut state,
         )
         .expect("hosted search start should parse");
-        assert!(added.is_empty());
+        assert_eq!(
+            added,
+            vec![ProviderEvent::ContentBlockStarted {
+                index: 3,
+                kind: ContentBlockStart::HostedToolSearch {
+                    call: crate::HostedToolSearchCall {
+                        id: "search_1".to_string(),
+                        status: Some("in_progress".to_string()),
+                        query: None,
+                    },
+                },
+            }]
+        );
 
         let delta = parse_frame(
-            br#"data: {"type":"response.tool_search_call.delta","output_index":3,"delta":"ignored"}"#,
+            br#"data: {"type":"response.tool_search_call.delta","output_index":3,"delta":"weather"}"#,
             &mut state,
         )
         .expect("hosted search delta should parse");
-        assert!(delta.is_empty());
+        assert_eq!(
+            delta,
+            vec![ProviderEvent::ContentBlockDelta {
+                index: 3,
+                delta: ContentBlockDelta::HostedToolSearchQuery("weather".to_string()),
+            }]
+        );
 
         let done = parse_frame(
-            br#"data: {"type":"response.output_item.done","output_index":3,"item":{"type":"tool_search_call","id":"search_1","status":"completed"}}"#,
+            br#"data: {"type":"response.output_item.done","output_index":3,"item":{"type":"tool_search_call","id":"search_1","status":"completed","arguments":{"query":"weather"}}}"#,
             &mut state,
         )
         .expect("hosted search completion should parse");
-        assert!(done.is_empty());
+        assert_eq!(
+            done,
+            vec![
+                ProviderEvent::ContentBlockDelta {
+                    index: 3,
+                    delta: ContentBlockDelta::HostedToolSearchStatus("completed".to_string()),
+                },
+                ProviderEvent::ContentBlockStopped { index: 3 },
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_web_search_and_image_generation_output_items() {
+        let mut state = StreamState::default();
+
+        let added = parse_frame(
+            br#"data: {"type":"response.output_item.added","output_index":4,"item":{"type":"web_search_call","id":"ws_1","status":"in_progress"}}"#,
+            &mut state,
+        )
+        .expect("web search start should parse");
+        assert_eq!(
+            added,
+            vec![ProviderEvent::ContentBlockStarted {
+                index: 4,
+                kind: ContentBlockStart::HostedWebSearch {
+                    call: crate::HostedWebSearchCall {
+                        id: "ws_1".to_string(),
+                        status: Some("in_progress".to_string()),
+                        action: None,
+                    },
+                },
+            }]
+        );
+
+        let done = parse_frame(
+            br#"data: {"type":"response.output_item.done","output_index":4,"item":{"type":"web_search_call","id":"ws_1","status":"completed","action":{"type":"search","query":"weather seattle"}}}"#,
+            &mut state,
+        )
+        .expect("web search done should parse");
+        assert_eq!(
+            done,
+            vec![
+                ProviderEvent::ContentBlockDelta {
+                    index: 4,
+                    delta: ContentBlockDelta::HostedWebSearchAction(crate::WebSearchAction::Search {
+                        query: Some("weather seattle".to_string()),
+                        queries: None,
+                    }),
+                },
+                ProviderEvent::ContentBlockDelta {
+                    index: 4,
+                    delta: ContentBlockDelta::HostedWebSearchStatus("completed".to_string()),
+                },
+                ProviderEvent::ContentBlockStopped { index: 4 },
+            ]
+        );
+
+        let image_added = parse_frame(
+            br#"data: {"type":"response.output_item.added","output_index":5,"item":{"type":"image_generation_call","id":"ig_1","status":"in_progress"}}"#,
+            &mut state,
+        )
+        .expect("image generation start should parse");
+        assert_eq!(
+            image_added,
+            vec![ProviderEvent::ContentBlockStarted {
+                index: 5,
+                kind: ContentBlockStart::ImageGeneration {
+                    call: crate::ImageGenerationCall {
+                        id: "ig_1".to_string(),
+                        status: "in_progress".to_string(),
+                        revised_prompt: None,
+                        result: None,
+                    },
+                },
+            }]
+        );
+
+        let image_done = parse_frame(
+            br#"data: {"type":"response.output_item.done","output_index":5,"item":{"type":"image_generation_call","id":"ig_1","status":"completed","revised_prompt":"A blue square","result":"artifact_1"}}"#,
+            &mut state,
+        )
+        .expect("image generation done should parse");
+        assert_eq!(
+            image_done,
+            vec![
+                ProviderEvent::ContentBlockDelta {
+                    index: 5,
+                    delta: ContentBlockDelta::ImageGenerationRevisedPrompt(
+                        "A blue square".to_string()
+                    ),
+                },
+                ProviderEvent::ContentBlockDelta {
+                    index: 5,
+                    delta: ContentBlockDelta::ImageGenerationResult(
+                        crate::ImageGenerationResult::ArtifactRef {
+                            artifact_id: "artifact_1".to_string(),
+                        }
+                    ),
+                },
+                ProviderEvent::ContentBlockDelta {
+                    index: 5,
+                    delta: ContentBlockDelta::ImageGenerationStatus("completed".to_string()),
+                },
+                ProviderEvent::ContentBlockStopped { index: 5 },
+            ]
+        );
     }
 }

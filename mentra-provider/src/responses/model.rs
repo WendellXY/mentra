@@ -7,8 +7,9 @@ use time::OffsetDateTime;
 
 use crate::ProviderId;
 use crate::{
-    ContentBlock, ImageSource, Message, ModelInfo, ProviderError, ReasoningEffort,
-    ReasoningOptions, Request, Role, ToolChoice, ToolSearchMode,
+    ContentBlock, HostedToolSearchCall, HostedWebSearchCall, ImageGenerationCall,
+    ImageGenerationResult, ImageSource, Message, ModelInfo, ProviderError, ReasoningEffort,
+    ReasoningOptions, Request, Role, ToolChoice, ToolSearchMode, WebSearchAction,
 };
 
 use crate::tool::{ToolLoadingPolicy, ToolSpec};
@@ -158,6 +159,9 @@ pub enum ResponsesInputItem {
     Message(ResponsesMessageInput),
     FunctionCall(ResponsesFunctionCallInput),
     FunctionCallOutput(ResponsesFunctionCallOutputInput),
+    ToolSearchCall(ResponsesToolSearchCallInput),
+    WebSearchCall(ResponsesWebSearchCallInput),
+    ImageGenerationCall(ResponsesImageGenerationCallInput),
 }
 
 impl ResponsesInputItem {
@@ -194,8 +198,26 @@ impl ResponsesInputItem {
                     items.push(Self::FunctionCallOutput(ResponsesFunctionCallOutputInput {
                         kind: "function_call_output",
                         call_id: tool_use_id.clone(),
-                        output: render_tool_output(tool_output, *is_error),
+                        output: render_tool_output(&tool_output.to_display_string(), *is_error),
                     }));
+                }
+                ContentBlock::HostedToolSearch { call } => {
+                    Self::flush_message(message, &mut text_buffer, &mut content, &mut items)?;
+                    items.push(Self::ToolSearchCall(ResponsesToolSearchCallInput::from(
+                        call.clone(),
+                    )));
+                }
+                ContentBlock::HostedWebSearch { call } => {
+                    Self::flush_message(message, &mut text_buffer, &mut content, &mut items)?;
+                    items.push(Self::WebSearchCall(ResponsesWebSearchCallInput::from(
+                        call.clone(),
+                    )));
+                }
+                ContentBlock::ImageGeneration { call } => {
+                    Self::flush_message(message, &mut text_buffer, &mut content, &mut items)?;
+                    items.push(Self::ImageGenerationCall(
+                        ResponsesImageGenerationCallInput::from(call.clone()),
+                    ));
                 }
             }
         }
@@ -313,6 +335,87 @@ pub struct ResponsesFunctionCallOutputInput {
 }
 
 #[derive(Debug, Serialize)]
+pub struct ResponsesToolSearchCallInput {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    call_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<String>,
+    execution: &'static str,
+    arguments: serde_json::Value,
+}
+
+impl From<HostedToolSearchCall> for ResponsesToolSearchCallInput {
+    fn from(value: HostedToolSearchCall) -> Self {
+        Self {
+            kind: "tool_search_call",
+            call_id: value.id,
+            status: value.status,
+            execution: "client",
+            arguments: serde_json::json!({
+                "query": value.query,
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ResponsesWebSearchCallInput {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    action: Option<WebSearchAction>,
+}
+
+impl From<HostedWebSearchCall> for ResponsesWebSearchCallInput {
+    fn from(value: HostedWebSearchCall) -> Self {
+        Self {
+            kind: "web_search_call",
+            id: value.id,
+            status: value.status,
+            action: value.action,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ResponsesImageGenerationCallInput {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    id: String,
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    revised_prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<String>,
+}
+
+impl From<ImageGenerationCall> for ResponsesImageGenerationCallInput {
+    fn from(value: ImageGenerationCall) -> Self {
+        Self {
+            kind: "image_generation_call",
+            id: value.id,
+            status: value.status,
+            revised_prompt: value.revised_prompt,
+            result: value.result.map(render_image_generation_result),
+        }
+    }
+}
+
+fn render_image_generation_result(result: ImageGenerationResult) -> String {
+    match result {
+        ImageGenerationResult::ArtifactRef { artifact_id } => artifact_id,
+        ImageGenerationResult::Image { source } => match source {
+            ImageSource::Bytes { data, .. } => STANDARD.encode(data),
+            ImageSource::Url { url } => url,
+        },
+    }
+}
+
+#[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponsesTool {
     Function {
@@ -419,9 +522,10 @@ mod tests {
     use time::OffsetDateTime;
 
     use crate::{
-        ContentBlock, Message, ProviderError, ProviderRequestOptions, ReasoningEffort,
+        ContentBlock, HostedToolSearchCall, HostedWebSearchCall, ImageGenerationCall,
+        ImageGenerationResult, Message, ProviderError, ProviderRequestOptions, ReasoningEffort,
         ReasoningOptions, Request, ResponsesRequestOptions, Role, ToolChoice, ToolLoadingPolicy,
-        ToolSearchMode, ToolSpec,
+        ToolResultContent, ToolSearchMode, ToolSpec, WebSearchAction,
     };
 
     use super::{ResponsesModel, ResponsesModelsPage, ResponsesRequest};
@@ -441,7 +545,7 @@ mod tests {
                 }),
                 Message::assistant(ContentBlock::ToolResult {
                     tool_use_id: "call_123".to_string(),
-                    content: "README contents".to_string(),
+                    content: ToolResultContent::text("README contents"),
                     is_error: false,
                 }),
             ]),
@@ -513,7 +617,7 @@ mod tests {
             system: None,
             messages: Cow::Owned(vec![Message::user(ContentBlock::ToolResult {
                 tool_use_id: "call_456".to_string(),
-                content: "No such file".to_string(),
+                content: ToolResultContent::text("No such file"),
                 is_error: true,
             })]),
             tools: Cow::Owned(vec![]),
@@ -529,6 +633,63 @@ mod tests {
 
         assert_eq!(payload["input"][0]["output"], "Tool error: No such file");
         assert_eq!(payload["tool_choice"], "auto");
+    }
+
+    #[test]
+    fn preserves_hosted_actions_in_responses_history_replay() {
+        let request = Request {
+            model: Cow::Borrowed("gpt-5"),
+            system: None,
+            messages: Cow::Owned(vec![Message {
+                role: Role::Assistant,
+                content: vec![
+                    ContentBlock::HostedToolSearch {
+                        call: HostedToolSearchCall {
+                            id: "search_1".to_string(),
+                            status: Some("completed".to_string()),
+                            query: Some("weather".to_string()),
+                        },
+                    },
+                    ContentBlock::HostedWebSearch {
+                        call: HostedWebSearchCall {
+                            id: "web_1".to_string(),
+                            status: Some("completed".to_string()),
+                            action: Some(WebSearchAction::Search {
+                                query: Some("weather".to_string()),
+                                queries: None,
+                            }),
+                        },
+                    },
+                    ContentBlock::ImageGeneration {
+                        call: ImageGenerationCall {
+                            id: "image_1".to_string(),
+                            status: "completed".to_string(),
+                            revised_prompt: Some("A blue square".to_string()),
+                            result: Some(ImageGenerationResult::ArtifactRef {
+                                artifact_id: "artifact_1".to_string(),
+                            }),
+                        },
+                    },
+                ],
+            }]),
+            tools: Cow::Owned(vec![]),
+            tool_choice: Some(ToolChoice::Auto),
+            temperature: None,
+            max_output_tokens: None,
+            metadata: Cow::Owned(BTreeMap::new()),
+            provider_request_options: ProviderRequestOptions::default(),
+        };
+
+        let payload = serde_json::to_value(ResponsesRequest::try_from(request).unwrap())
+            .expect("request should serialize");
+
+        assert_eq!(payload["input"][0]["type"], "tool_search_call");
+        assert_eq!(payload["input"][0]["call_id"], "search_1");
+        assert_eq!(payload["input"][1]["type"], "web_search_call");
+        assert_eq!(payload["input"][1]["id"], "web_1");
+        assert_eq!(payload["input"][2]["type"], "image_generation_call");
+        assert_eq!(payload["input"][2]["id"], "image_1");
+        assert_eq!(payload["input"][2]["result"], "artifact_1");
     }
 
     #[test]
@@ -658,6 +819,7 @@ mod tests {
                 },
                 anthropic: Default::default(),
                 gemini: Default::default(),
+                session: Default::default(),
             },
         };
 
