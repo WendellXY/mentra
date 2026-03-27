@@ -55,6 +55,15 @@ pub enum ResponsesVerbosity {
     High,
 }
 
+/// Transport-level request compression supported by Responses-family HTTP calls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ResponsesRequestCompression {
+    #[default]
+    None,
+    Zstd,
+}
+
 /// Responses-compatible format discriminator for structured text output.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -100,6 +109,8 @@ pub struct ResponsesRequestOptions {
     pub prompt_cache_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<ResponsesTextControls>,
+    #[serde(default)]
+    pub compression: ResponsesRequestCompression,
 }
 
 impl Default for ResponsesRequestOptions {
@@ -112,6 +123,7 @@ impl Default for ResponsesRequestOptions {
             service_tier: None,
             prompt_cache_key: None,
             text: None,
+            compression: ResponsesRequestCompression::None,
         }
     }
 }
@@ -138,9 +150,13 @@ pub struct SessionRequestOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_metadata: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefer_connection_reuse: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_affinity: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extra_headers: BTreeMap<String, String>,
 }
 
 /// Provider-specific request options that should be forwarded on the wire.
@@ -339,8 +355,10 @@ mod tests {
                 session: SessionRequestOptions {
                     sticky_turn_state: Some("sticky".to_string()),
                     turn_metadata: None,
+                    subagent: Some("compact".to_string()),
                     prefer_connection_reuse: Some(true),
                     session_affinity: None,
+                    extra_headers: BTreeMap::new(),
                 },
                 ..ProviderRequestOptions::default()
             },
@@ -363,6 +381,14 @@ mod tests {
                 .sticky_turn_state
                 .as_deref(),
             Some("sticky")
+        );
+        assert_eq!(
+            model_request
+                .provider_request_options
+                .session
+                .subagent
+                .as_deref(),
+            Some("compact")
         );
         assert_eq!(model_request.messages.len(), 1);
 
@@ -398,8 +424,10 @@ mod tests {
                 session: SessionRequestOptions {
                     sticky_turn_state: None,
                     turn_metadata: Some("{\"turn_id\":\"t1\"}".to_string()),
+                    subagent: None,
                     prefer_connection_reuse: Some(true),
                     session_affinity: Some("thread-1".to_string()),
+                    extra_headers: BTreeMap::new(),
                 },
                 ..ProviderRequestOptions::default()
             },

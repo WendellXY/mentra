@@ -573,9 +573,10 @@ mod tests {
     use crate::{
         ContentBlock, HostedToolSearchCall, HostedWebSearchCall, ImageGenerationCall,
         ImageGenerationResult, Message, ProviderError, ProviderRequestOptions, ReasoningEffort,
-        ReasoningOptions, ReasoningSummary, Request, ResponsesRequestOptions,
-        ResponsesTextControls, ResponsesTextFormat, ResponsesVerbosity, Role, ToolChoice,
-        ToolLoadingPolicy, ToolResultContent, ToolSearchMode, ToolSpec, WebSearchAction,
+        ReasoningOptions, ReasoningSummary, Request, ResponsesRequestCompression,
+        ResponsesRequestOptions, ResponsesTextControls, ResponsesTextFormat, ResponsesVerbosity,
+        Role, ToolChoice, ToolLoadingPolicy, ToolResultContent, ToolSearchMode, ToolSpec,
+        WebSearchAction,
     };
 
     use super::{ResponsesModel, ResponsesModelsPage, ResponsesRequest};
@@ -938,6 +939,7 @@ mod tests {
                             name: "codex_output_schema".to_string(),
                         }),
                     }),
+                    compression: ResponsesRequestCompression::None,
                 },
                 ..Default::default()
             },

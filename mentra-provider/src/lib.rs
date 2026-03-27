@@ -55,6 +55,7 @@ pub use request::ReasoningEffort;
 pub use request::ReasoningOptions;
 pub use request::ReasoningSummary;
 pub use request::Request;
+pub use request::ResponsesRequestCompression;
 pub use request::ResponsesRequestOptions;
 pub use request::ResponsesTextControls;
 pub use request::ResponsesTextFormat;

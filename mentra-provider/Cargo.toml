@@ -22,3 +22,4 @@ thiserror = "2.0.18"
 time = { version = "0.3", features = ["formatting", "parsing", "serde"] }
 tokio = { version = "1.50.0", features = ["macros", "sync"] }
 url = "2.5.8"
+zstd = "0.13"

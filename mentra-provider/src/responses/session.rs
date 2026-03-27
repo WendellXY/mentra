@@ -24,6 +24,7 @@ use crate::ProviderSession;
 use crate::Request;
 use crate::Response;
 use crate::SessionRequestOptions;
+use crate::request::ResponsesRequestCompression;
 
 use super::model::ResponsesModelsPage;
 use super::model::ResponsesRequest;
@@ -149,8 +150,10 @@ where
         let session = SessionRequestOptions {
             sticky_turn_state: self.state.turn_state.get().cloned(),
             turn_metadata: turn_metadata_header.map(str::to_string),
+            subagent: None,
             prefer_connection_reuse: Some(self.connection_reused()),
             session_affinity: None,
+            extra_headers: std::collections::BTreeMap::new(),
         };
         self.build_websocket_headers_for_session(credentials, Some(&session))
     }
@@ -214,20 +217,40 @@ where
             .as_deref()
             .unwrap_or(self.definition.descriptor.id.as_str());
         let session = request.provider_request_options.session.clone();
+        let compression = request.provider_request_options.responses.compression;
         let request = ResponsesRequest::try_from_request(request, provider_name)?;
         let credentials = self.credential_source.credentials().await?;
-        let response = self
+        let request_builder = self
             .client
             .post(
                 self.definition
                     .request_url_with_auth_for_path("v1/responses", &credentials)?,
             )
-            .headers(self.build_websocket_headers_for_session(&credentials, Some(&session))?)
-            .header(reqwest::header::ACCEPT, "text/event-stream")
-            .json(&request)
-            .send()
-            .await
-            .map_err(ProviderError::Transport)?;
+            .headers(self.build_http_headers_for_session(&credentials, Some(&session))?)
+            .header(reqwest::header::ACCEPT, "text/event-stream");
+        let response = match compression {
+            ResponsesRequestCompression::None => request_builder
+                .json(&request)
+                .send()
+                .await
+                .map_err(ProviderError::Transport)?,
+            ResponsesRequestCompression::Zstd => {
+                let body = serde_json::to_vec(&request).map_err(ProviderError::Serialize)?;
+                let compressed =
+                    zstd::stream::encode_all(std::io::Cursor::new(body), 3).map_err(|error| {
+                        ProviderError::InvalidRequest(format!(
+                            "failed to compress responses request: {error}"
+                        ))
+                    })?;
+                request_builder
+                    .header(reqwest::header::CONTENT_ENCODING, "zstd")
+                    .header(reqwest::header::CONTENT_TYPE, "application/json")
+                    .body(compressed)
+                    .send()
+                    .await
+                    .map_err(ProviderError::Transport)?
+            }
+        };
 
         if !response.status().is_success() {
             return Err(ProviderError::Http {
@@ -265,6 +288,26 @@ where
             .last_response_rx
             .as_mut()
             .is_some_and(|rx| matches!(rx.try_recv(), Ok(_) | Err(TryRecvError::Closed)))
+    }
+
+    fn build_http_headers_for_session(
+        &self,
+        credentials: &ProviderCredentials,
+        session: Option<&SessionRequestOptions>,
+    ) -> Result<HeaderMap, ProviderError> {
+        let mut headers = self.build_websocket_headers_for_session(credentials, session)?;
+        if let Some(session_id) = session.and_then(|session| session.session_affinity.as_deref())
+            && let Ok(value) = http::HeaderValue::from_str(session_id)
+        {
+            headers.insert("x-client-request-id", value.clone());
+            headers.insert("session_id", value);
+        }
+        if let Some(subagent) = session.and_then(|session| session.subagent.as_deref())
+            && let Ok(value) = http::HeaderValue::from_str(subagent)
+        {
+            headers.insert("x-openai-subagent", value);
+        }
+        Ok(headers)
     }
 }
 
@@ -474,8 +517,10 @@ mod tests {
                 session: SessionRequestOptions {
                     sticky_turn_state: None,
                     turn_metadata: Some("{\"turn_id\":\"turn-123\"}".to_string()),
+                    subagent: Some("memory_consolidation".to_string()),
                     prefer_connection_reuse: Some(true),
                     session_affinity: Some("session-affinity-123".to_string()),
+                    extra_headers: BTreeMap::new(),
                 },
                 ..ProviderRequestOptions::default()
             },
@@ -492,6 +537,9 @@ mod tests {
         assert!(captured.contains("x-mentra-turn-metadata: {\"turn_id\":\"turn-123\"}\r\n"));
         assert!(captured.contains("x-mentra-session-affinity: session-affinity-123\r\n"));
         assert!(captured.contains("x-mentra-connection-reuse: prefer-reuse\r\n"));
+        assert!(captured.contains("x-client-request-id: session-affinity-123\r\n"));
+        assert!(captured.contains("session_id: session-affinity-123\r\n"));
+        assert!(captured.contains("x-openai-subagent: memory_consolidation\r\n"));
     }
 
     #[tokio::test]
@@ -621,8 +669,10 @@ mod tests {
                 session: crate::SessionRequestOptions {
                     sticky_turn_state: None,
                     turn_metadata: Some("{\"turn_id\":\"turn-321\"}".to_string()),
+                    subagent: Some("compact".to_string()),
                     prefer_connection_reuse: Some(true),
                     session_affinity: Some("session-affinity-321".to_string()),
+                    extra_headers: BTreeMap::new(),
                 },
                 ..crate::ProviderRequestOptions::default()
             },
@@ -660,5 +710,12 @@ mod tests {
                 .0
                 .contains("x-mentra-session-affinity: session-affinity-321\r\n")
         );
+        assert!(
+            captured
+                .0
+                .contains("x-client-request-id: session-affinity-321\r\n")
+        );
+        assert!(captured.0.contains("session_id: session-affinity-321\r\n"));
+        assert!(captured.0.contains("x-openai-subagent: compact\r\n"));
     }
 }

@@ -326,6 +326,21 @@ impl ProviderDefinition {
                 }),
             );
         }
+        if let Some(value) = session.and_then(|session| session.subagent.as_deref())
+            && let Ok(value) = HeaderValue::from_str(value)
+        {
+            headers.insert("x-openai-subagent", value);
+        }
+        if let Some(extra_headers) = session.map(|session| &session.extra_headers) {
+            for (name, value) in extra_headers {
+                if let (Ok(name), Ok(value)) = (
+                    name.parse::<http::HeaderName>(),
+                    HeaderValue::from_str(value),
+                ) {
+                    headers.insert(name, value);
+                }
+            }
+        }
 
         Ok(headers)
     }
