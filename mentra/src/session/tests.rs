@@ -562,3 +562,267 @@ async fn resolve_permission_unknown_id_returns_error() {
     let result = session.resolve_permission("nonexistent", PermissionDecision::deny());
     assert!(result.is_err());
 }
+
+// ---- Task 8: Contract conformance integration tests ----
+
+use async_trait::async_trait;
+use serde_json::json;
+
+use crate::{
+    provider::ProviderError,
+    test::MockToolCall,
+    tool::{ParallelToolContext, ToolDefinition, ToolExecutor, ToolResult, ToolSpec},
+};
+
+struct EchoTool;
+
+#[async_trait]
+impl ToolDefinition for EchoTool {
+    fn descriptor(&self) -> ToolSpec {
+        ToolSpec::builder("echo_tool")
+            .description("Echo a canned result for testing")
+            .input_schema(json!({
+                "type": "object",
+                "properties": {}
+            }))
+            .build()
+    }
+}
+
+#[async_trait]
+impl ToolExecutor for EchoTool {
+    async fn execute(&self, _ctx: ParallelToolContext, _input: serde_json::Value) -> ToolResult {
+        Ok("echoed".to_string())
+    }
+}
+
+#[tokio::test]
+async fn full_session_lifecycle_produces_correct_event_stream() {
+    let mock = MockRuntime::builder()
+        .text("Hello, world!")
+        .build()
+        .unwrap();
+    let mut session = mock
+        .runtime()
+        .create_session("lifecycle-test", mock.model())
+        .unwrap();
+
+    let mut rx = session.subscribe();
+
+    let message = session
+        .append_turn(vec![ContentBlock::text("Hi there")])
+        .await
+        .unwrap();
+
+    assert_eq!(message.text(), "Hello, world!");
+
+    let mut events = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        events.push(event);
+    }
+
+    // Verify UserMessage appears before AssistantMessageCompleted.
+    let user_pos = events.iter().position(|e| {
+        matches!(e, SessionEvent::UserMessage { text } if text == "Hi there")
+    });
+    let assistant_pos = events.iter().position(|e| {
+        matches!(e, SessionEvent::AssistantMessageCompleted { text } if text == "Hello, world!")
+    });
+
+    assert!(
+        user_pos.is_some(),
+        "Expected UserMessage event, got: {events:?}"
+    );
+    assert!(
+        assistant_pos.is_some(),
+        "Expected AssistantMessageCompleted event, got: {events:?}"
+    );
+    assert!(
+        user_pos.unwrap() < assistant_pos.unwrap(),
+        "UserMessage must precede AssistantMessageCompleted, positions: user={}, assistant={}",
+        user_pos.unwrap(),
+        assistant_pos.unwrap()
+    );
+}
+
+#[tokio::test]
+async fn tool_call_session_produces_tool_lifecycle_events() {
+    let mock = MockRuntime::builder()
+        .tool_calls([MockToolCall::new("echo_tool", json!({}))])
+        .text("tool work done")
+        .build()
+        .unwrap();
+    mock.runtime().register_tool(EchoTool);
+
+    let mut session = mock
+        .runtime()
+        .create_session("tool-test", mock.model())
+        .unwrap();
+
+    let mut rx = session.subscribe();
+
+    let message = session
+        .append_turn(vec![ContentBlock::text("run the tool")])
+        .await
+        .unwrap();
+
+    assert_eq!(message.text(), "tool work done");
+
+    let mut events = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        events.push(event);
+    }
+
+    let has_tool_started = events.iter().any(|e| {
+        matches!(e, SessionEvent::ToolStarted { tool_name, .. } if tool_name == "echo_tool")
+    });
+    let has_tool_completed = events.iter().any(|e| {
+        matches!(e, SessionEvent::ToolCompleted { tool_call_id, .. } if tool_call_id == "tool-1")
+    });
+
+    assert!(
+        has_tool_started,
+        "Expected ToolStarted event for echo_tool, got: {events:?}"
+    );
+    assert!(
+        has_tool_completed,
+        "Expected ToolCompleted event for tool-1, got: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn resume_session_restores_state() {
+    use crate::runtime::SqliteRuntimeStore;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+    let unique = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let store_path = std::env::temp_dir().join(format!(
+        "mentra-session-resume-{timestamp}-{unique}.sqlite"
+    ));
+    let store = SqliteRuntimeStore::new(store_path);
+    let runtime_id = "resume-session-test";
+
+    let agent_id: String;
+
+    // Phase 1: build a runtime, create a session, send a turn, then drop everything.
+    {
+        let mock = MockRuntime::builder()
+            .runtime_identifier(runtime_id)
+            .with_store(store.clone())
+            .text("first response")
+            .build()
+            .unwrap();
+        let mut session = mock
+            .runtime()
+            .create_session("resume-test", mock.model())
+            .unwrap();
+
+        let _message = session
+            .append_turn(vec![ContentBlock::text("hello")])
+            .await
+            .unwrap();
+
+        agent_id = session.agent_id().to_owned();
+
+        assert!(
+            !session.history().is_empty(),
+            "Session should have history after a turn"
+        );
+        assert!(
+            !session.replay().items().is_empty(),
+            "Session transcript should be non-empty after a turn"
+        );
+        // mock (and its Runtime) dropped here, releasing the agent lease.
+    }
+
+    // Phase 2: build a fresh runtime with the same shared store, resume the agent.
+    let mock2 = MockRuntime::builder()
+        .runtime_identifier(runtime_id)
+        .with_store(store)
+        .build()
+        .unwrap();
+
+    let resumed_session = mock2.runtime().resume_session(&agent_id).unwrap();
+
+    assert!(
+        !resumed_session.replay().items().is_empty(),
+        "Resumed session should have a non-empty transcript"
+    );
+}
+
+#[tokio::test]
+async fn failed_turn_emits_error_event() {
+    let mock = MockRuntime::builder()
+        .failure(ProviderError::InvalidResponse("provider exploded".to_string()))
+        .build()
+        .unwrap();
+
+    let mut session = mock
+        .runtime()
+        .create_session("failure-test", mock.model())
+        .unwrap();
+
+    let mut rx = session.subscribe();
+
+    let result = session
+        .append_turn(vec![ContentBlock::text("trigger failure")])
+        .await;
+
+    assert!(result.is_err(), "Expected append_turn to fail");
+
+    let mut events = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        events.push(event);
+    }
+
+    let has_error = events.iter().any(|e| matches!(e, SessionEvent::Error { .. }));
+    assert!(
+        has_error,
+        "Expected Error event after failed turn, got: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn all_session_events_from_turn_are_serializable_to_json() {
+    let mock = MockRuntime::builder()
+        .text("serializable response")
+        .build()
+        .unwrap();
+
+    let mut session = mock
+        .runtime()
+        .create_session("serde-test", mock.model())
+        .unwrap();
+
+    let mut rx = session.subscribe();
+
+    let _message = session
+        .append_turn(vec![ContentBlock::text("check serde")])
+        .await
+        .unwrap();
+
+    let mut events = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        events.push(event);
+    }
+
+    assert!(
+        !events.is_empty(),
+        "Expected at least one event from a turn"
+    );
+
+    for event in &events {
+        let json = serde_json::to_value(event)
+            .unwrap_or_else(|err| panic!("Failed to serialize event {event:?}: {err}"));
+        assert!(
+            json.get("type").is_some(),
+            "Serialized event missing 'type' tag: {json}"
+        );
+    }
+}

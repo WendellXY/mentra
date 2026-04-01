@@ -77,6 +77,7 @@ pub struct MockRuntimeBuilder {
     model: ModelInfo,
     turns: Vec<MockTurn>,
     runtime_identifier: String,
+    store: Option<SqliteRuntimeStore>,
 }
 
 impl Default for MockRuntimeBuilder {
@@ -86,6 +87,7 @@ impl Default for MockRuntimeBuilder {
             model: ModelInfo::new("mock-model", BuiltinProvider::OpenAI),
             turns: Vec::new(),
             runtime_identifier,
+            store: None,
         }
     }
 }
@@ -98,6 +100,11 @@ impl MockRuntimeBuilder {
 
     pub fn runtime_identifier(mut self, runtime_identifier: impl Into<String>) -> Self {
         self.runtime_identifier = runtime_identifier.into();
+        self
+    }
+
+    pub fn with_store(mut self, store: SqliteRuntimeStore) -> Self {
+        self.store = Some(store);
         self
     }
 
@@ -135,12 +142,15 @@ impl MockRuntimeBuilder {
         let provider = ScriptedProvider::new(self.model.provider.clone(), vec![self.model.clone()]);
         provider.push_turns(self.turns);
 
-        let store_path =
-            std::env::temp_dir().join(format!("mentra-mock-runtime-{}.sqlite", now_nanos()));
+        let store = self.store.unwrap_or_else(|| {
+            let store_path =
+                std::env::temp_dir().join(format!("mentra-mock-runtime-{}.sqlite", now_nanos()));
+            SqliteRuntimeStore::new(store_path)
+        });
 
         let runtime = Runtime::builder()
             .with_runtime_identifier(self.runtime_identifier)
-            .with_store(SqliteRuntimeStore::new(store_path))
+            .with_store(store)
             .with_policy(RuntimePolicy::permissive())
             .with_provider_instance(provider.clone())
             .build()?;
