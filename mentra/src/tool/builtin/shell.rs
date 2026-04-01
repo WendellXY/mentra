@@ -152,6 +152,19 @@ fn shell_authorization_preview(
     })
 }
 
+fn emit_output_progress<C: RuntimeContext>(ctx: &C, output: &crate::runtime::CommandOutput) {
+    if !output.stdout.is_empty() {
+        for line in output.stdout.lines() {
+            ctx.emit_progress(format!("stdout: {line}"));
+        }
+    }
+    if !output.stderr.is_empty() {
+        for line in output.stderr.lines() {
+            ctx.emit_progress(format!("stderr: {line}"));
+        }
+    }
+}
+
 async fn execute_shell_command<C>(ctx: &C, input: Value) -> ToolResult
 where
     C: RuntimeContext + Sync,
@@ -166,6 +179,8 @@ where
     let output = ctx
         .execute_shell_command(command, justification, requested_timeout, working_directory)
         .await?;
+
+    emit_output_progress(ctx, &output);
 
     if output.success() {
         if !output.stdout.is_empty() {

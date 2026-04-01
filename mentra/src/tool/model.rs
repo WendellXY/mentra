@@ -83,11 +83,21 @@ pub struct ToolContext<'a> {
     pub(crate) working_directory: PathBuf,
     pub(crate) runtime: crate::runtime::RuntimeHandle,
     pub(crate) agent: &'a mut crate::agent::Agent,
+    pub(crate) event_tx: tokio::sync::broadcast::Sender<crate::agent::AgentEvent>,
 }
 
 impl ToolContext<'_> {
     pub fn working_directory(&self) -> &Path {
         self.working_directory.as_path()
+    }
+
+    /// Emit a progress event for the currently executing tool.
+    pub fn emit_progress(&self, progress: String) {
+        let _ = self.event_tx.send(crate::agent::AgentEvent::ToolExecutionProgress {
+            id: self.tool_call_id.clone(),
+            name: self.tool_name.clone(),
+            progress,
+        });
     }
 
     pub fn agent_name(&self) -> &str {
@@ -275,6 +285,7 @@ pub struct ParallelToolContext {
     pub(crate) model: String,
     pub(crate) history_len: usize,
     pub(crate) tasks: Vec<TaskItem>,
+    pub(crate) event_tx: tokio::sync::broadcast::Sender<crate::agent::AgentEvent>,
 }
 
 impl From<ToolContext<'_>> for ParallelToolContext {
@@ -290,6 +301,7 @@ impl From<ToolContext<'_>> for ParallelToolContext {
             model: ctx.agent.model().to_string(),
             history_len: ctx.agent.history().len(),
             tasks: ctx.agent.tasks().to_vec(),
+            event_tx: ctx.event_tx,
         }
     }
 }
@@ -297,6 +309,15 @@ impl From<ToolContext<'_>> for ParallelToolContext {
 impl ParallelToolContext {
     pub fn working_directory(&self) -> &Path {
         self.working_directory.as_path()
+    }
+
+    /// Emit a progress event for the currently executing tool.
+    pub fn emit_progress(&self, progress: String) {
+        let _ = self.event_tx.send(crate::agent::AgentEvent::ToolExecutionProgress {
+            id: self.tool_call_id.clone(),
+            name: self.tool_name.clone(),
+            progress,
+        });
     }
 
     pub fn agent_name(&self) -> &str {

@@ -22,6 +22,7 @@ pub(crate) trait RuntimeContext {
         requested_timeout: Option<std::time::Duration>,
         cwd: std::path::PathBuf,
     ) -> Result<crate::BackgroundTaskSummary, String>;
+    fn emit_progress(&self, progress: String);
 }
 
 #[async_trait]
@@ -53,6 +54,10 @@ impl RuntimeContext for ToolContext<'_> {
     ) -> Result<crate::BackgroundTaskSummary, String> {
         self.start_background_task(command, justification, requested_timeout, cwd)
     }
+
+    fn emit_progress(&self, progress: String) {
+        self.emit_progress(progress);
+    }
 }
 
 #[async_trait]
@@ -83,5 +88,9 @@ impl RuntimeContext for ParallelToolContext {
         cwd: std::path::PathBuf,
     ) -> Result<crate::BackgroundTaskSummary, String> {
         self.start_background_task(command, justification, requested_timeout, cwd)
+    }
+
+    fn emit_progress(&self, progress: String) {
+        self.emit_progress(progress);
     }
 }

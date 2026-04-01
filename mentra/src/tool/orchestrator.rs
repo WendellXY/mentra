@@ -306,6 +306,7 @@ impl ToolRuntime {
             model: agent.model().to_string(),
             history_len: agent.history().len(),
             tasks: agent.tasks().to_vec(),
+            event_tx: agent.event_sender(),
         }
     }
 
@@ -557,6 +558,7 @@ impl ToolRuntime {
 
         let working_directory = authorization_ctx.working_directory.clone();
         let runtime = authorization_ctx.runtime.clone();
+        let event_tx = agent.event_sender();
         let result = Self::tool_result_block(
             &call,
             execute_tool_future(
@@ -570,6 +572,7 @@ impl ToolRuntime {
                         working_directory,
                         runtime,
                         agent,
+                        event_tx,
                     },
                     call.input.clone(),
                 ),

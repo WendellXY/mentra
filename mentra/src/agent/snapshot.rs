@@ -7,6 +7,10 @@ impl Agent {
         let _ = self.event_tx.send(event);
     }
 
+    pub(crate) fn event_sender(&self) -> tokio::sync::broadcast::Sender<AgentEvent> {
+        self.event_tx.clone()
+    }
+
     pub(crate) fn set_status(&mut self, status: AgentStatus) {
         self.mutate_snapshot(|snapshot| {
             snapshot.status = status;

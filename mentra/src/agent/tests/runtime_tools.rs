@@ -4236,6 +4236,124 @@ async fn teammate_identity_is_reinjected_after_compaction() {
     );
 }
 
+#[tokio::test]
+async fn shell_tool_emits_progress_events_with_output_lines() {
+    let echo_command = if cfg!(windows) {
+        "echo hello-progress"
+    } else {
+        "echo hello-progress"
+    };
+    let input = command_input_json(echo_command);
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(&model.id, "tc-shell-progress", "shell", &input),
+            text_stream(&model.id, "done"),
+        ],
+    );
+
+    let runtime = Runtime::builder()
+        .with_policy(RuntimePolicy::permissive())
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime.spawn("agent", model).unwrap();
+    let mut events = agent.subscribe_events();
+
+    agent
+        .send(vec![ContentBlock::text("run echo")])
+        .await
+        .unwrap();
+
+    let all_events = collect_events(&mut events);
+    let progress_events: Vec<_> = all_events
+        .iter()
+        .filter(|event| matches!(event, AgentEvent::ToolExecutionProgress { .. }))
+        .collect();
+
+    assert!(
+        !progress_events.is_empty(),
+        "expected at least one ToolExecutionProgress event, got events: {all_events:?}"
+    );
+
+    let has_stdout = progress_events.iter().any(|event| {
+        if let AgentEvent::ToolExecutionProgress { progress, .. } = event {
+            progress.contains("hello-progress")
+        } else {
+            false
+        }
+    });
+    assert!(
+        has_stdout,
+        "expected progress event containing 'hello-progress', got: {progress_events:?}"
+    );
+
+    // Verify the progress events reference the correct tool call
+    for event in &progress_events {
+        if let AgentEvent::ToolExecutionProgress { id, name, .. } = event {
+            assert_eq!(id, "tc-shell-progress");
+            assert_eq!(name, "shell");
+        }
+    }
+}
+
+#[tokio::test]
+async fn shell_tool_emits_stderr_progress_on_failure() {
+    let fail_command = if cfg!(windows) {
+        "echo error-output 1>&2 & exit /b 1"
+    } else {
+        "echo error-output >&2 && exit 1"
+    };
+    let input = command_input_json(fail_command);
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![
+            tool_use_stream(&model.id, "tc-stderr", "shell", &input),
+            text_stream(&model.id, "done"),
+        ],
+    );
+
+    let runtime = Runtime::builder()
+        .with_policy(RuntimePolicy::permissive())
+        .with_provider_instance(provider)
+        .build()
+        .expect("build runtime");
+    let mut agent = runtime.spawn("agent", model).unwrap();
+    let mut events = agent.subscribe_events();
+
+    agent
+        .send(vec![ContentBlock::text("run failing command")])
+        .await
+        .unwrap();
+
+    let all_events = collect_events(&mut events);
+    let progress_events: Vec<_> = all_events
+        .iter()
+        .filter(|event| matches!(event, AgentEvent::ToolExecutionProgress { .. }))
+        .collect();
+
+    assert!(
+        !progress_events.is_empty(),
+        "expected at least one ToolExecutionProgress event for stderr, got events: {all_events:?}"
+    );
+
+    let has_stderr = progress_events.iter().any(|event| {
+        if let AgentEvent::ToolExecutionProgress { progress, .. } = event {
+            progress.contains("error-output")
+        } else {
+            false
+        }
+    });
+    assert!(
+        has_stderr,
+        "expected progress event containing 'error-output', got: {progress_events:?}"
+    );
+}
+
 fn collect_events(receiver: &mut tokio::sync::broadcast::Receiver<AgentEvent>) -> Vec<AgentEvent> {
     let mut events = Vec::new();
     while let Ok(event) = receiver.try_recv() {
