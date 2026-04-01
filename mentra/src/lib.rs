@@ -19,6 +19,8 @@ pub mod memory;
 pub mod provider;
 /// Runtime orchestration, persistence, policies, and agent APIs.
 pub mod runtime;
+/// Session types, metadata, and event stream primitives.
+pub mod session;
 /// Team coordination types and collaboration services.
 pub mod team;
 /// Optional test helpers for deterministic scripted runtimes.
@@ -48,6 +50,7 @@ pub use runtime::{
     AgentStore, AuditStore, HybridRuntimeStore, LeaseStore, RunStore, Runtime, RuntimePolicy,
     TaskStore,
 };
+pub use session::{SessionEvent, SessionId, SessionMetadata, SessionStatus};
 pub use team::{
     TeamDispatch, TeamMemberStatus, TeamMemberSummary, TeamMessage, TeamMessageKind,
     TeamProtocolRequestSummary, TeamProtocolStatus,
