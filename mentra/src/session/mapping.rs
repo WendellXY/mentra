@@ -1,0 +1,315 @@
+use crate::{
+    ContentBlock,
+    agent::{AgentEvent, CompactionDetails, SpawnedAgentStatus, SpawnedAgentSummary},
+    background::{BackgroundTaskStatus, BackgroundTaskSummary},
+    session::event::{EventSeq, SessionEvent, TaskKind, TaskLifecycleStatus, ToolMutability},
+    team::{TeamMemberStatus, TeamMemberSummary},
+};
+
+/// Maps an `AgentEvent` to zero or more `SessionEvent` values.
+///
+/// Some agent events map one-to-one, others produce multiple session events
+/// (e.g. compaction), and some are intentionally silenced at the session layer.
+pub(crate) fn map_agent_event(
+    event: &AgentEvent,
+    seq: &mut EventSeq,
+) -> Vec<(EventSeq, SessionEvent)> {
+    let mut out = Vec::new();
+
+    let mapped = map_event_inner(event);
+    for session_event in mapped {
+        let current_seq = *seq;
+        *seq += 1;
+        out.push((current_seq, session_event));
+    }
+
+    out
+}
+
+fn map_event_inner(event: &AgentEvent) -> Vec<SessionEvent> {
+    match event {
+        AgentEvent::TextDelta { delta, full_text } => {
+            vec![SessionEvent::AssistantTokenDelta {
+                delta: delta.clone(),
+                full_text: full_text.clone(),
+            }]
+        }
+
+        AgentEvent::ToolUseReady { call, .. } => {
+            let summary = truncate_input_summary(&call.input.to_string(), 200);
+            vec![SessionEvent::ToolQueued {
+                tool_call_id: call.id.clone(),
+                tool_name: call.name.clone(),
+                summary,
+                mutability: ToolMutability::Unknown,
+                input_json: call.input.to_string(),
+            }]
+        }
+
+        AgentEvent::ToolExecutionStarted { call } => {
+            vec![SessionEvent::ToolStarted {
+                tool_call_id: call.id.clone(),
+                tool_name: call.name.clone(),
+            }]
+        }
+
+        AgentEvent::ToolExecutionFinished { result } => map_tool_result(result),
+
+        AgentEvent::ContextCompacted { details } => map_compaction(details),
+
+        AgentEvent::SubagentSpawned { agent } => map_subagent(agent, TaskLifecycleStatus::Spawned),
+        AgentEvent::SubagentFinished { agent } => map_subagent_finished(agent),
+
+        AgentEvent::BackgroundTaskStarted { task } => {
+            map_background_task(task, TaskLifecycleStatus::Running)
+        }
+        AgentEvent::BackgroundTaskFinished { task } => map_background_task_finished(task),
+
+        AgentEvent::TeammateSpawned { teammate } => {
+            map_teammate(teammate, TaskLifecycleStatus::Spawned)
+        }
+        AgentEvent::TeammateUpdated { teammate } => map_teammate_updated(teammate),
+
+        // Events handled at Session level or intentionally silent at session layer.
+        AgentEvent::AssistantMessageCommitted { .. }
+        | AgentEvent::RunStarted
+        | AgentEvent::RunFinished
+        | AgentEvent::RunFailed { .. }
+        | AgentEvent::ToolUseUpdated { .. }
+        | AgentEvent::TeamProtocolRequested { .. }
+        | AgentEvent::TeamProtocolResolved { .. }
+        | AgentEvent::TeamInboxUpdated { .. } => Vec::new(),
+    }
+}
+
+fn map_tool_result(block: &ContentBlock) -> Vec<SessionEvent> {
+    if let ContentBlock::ToolResult {
+        tool_use_id,
+        content,
+        is_error,
+    } = block
+    {
+        let summary = truncate_input_summary(&content.to_display_string(), 200);
+        vec![SessionEvent::ToolCompleted {
+            tool_call_id: tool_use_id.clone(),
+            tool_name: String::new(), // tool name not available on ToolResult
+            summary,
+            is_error: *is_error,
+        }]
+    } else {
+        Vec::new()
+    }
+}
+
+fn map_compaction(details: &CompactionDetails) -> Vec<SessionEvent> {
+    vec![
+        SessionEvent::CompactionStarted {
+            agent_id: details.agent_id.clone(),
+        },
+        SessionEvent::CompactionCompleted {
+            agent_id: details.agent_id.clone(),
+            replaced_items: details.replaced_items,
+            preserved_items: details.preserved_items,
+            resulting_transcript_len: details.resulting_transcript_len,
+        },
+    ]
+}
+
+fn map_subagent(agent: &SpawnedAgentSummary, status: TaskLifecycleStatus) -> Vec<SessionEvent> {
+    vec![SessionEvent::TaskUpdated {
+        task_id: agent.id.clone(),
+        kind: TaskKind::Subagent,
+        status,
+        title: agent.name.clone(),
+        detail: None,
+    }]
+}
+
+fn map_subagent_finished(agent: &SpawnedAgentSummary) -> Vec<SessionEvent> {
+    let status = match &agent.status {
+        SpawnedAgentStatus::Finished => TaskLifecycleStatus::Finished,
+        SpawnedAgentStatus::Failed(_) => TaskLifecycleStatus::Failed,
+        SpawnedAgentStatus::Running => TaskLifecycleStatus::Running,
+    };
+    let detail = match &agent.status {
+        SpawnedAgentStatus::Failed(msg) => Some(msg.clone()),
+        _ => None,
+    };
+    vec![SessionEvent::TaskUpdated {
+        task_id: agent.id.clone(),
+        kind: TaskKind::Subagent,
+        status,
+        title: agent.name.clone(),
+        detail,
+    }]
+}
+
+fn map_background_task(
+    task: &BackgroundTaskSummary,
+    status: TaskLifecycleStatus,
+) -> Vec<SessionEvent> {
+    vec![SessionEvent::TaskUpdated {
+        task_id: task.id.clone(),
+        kind: TaskKind::BackgroundTask,
+        status,
+        title: task.command.clone(),
+        detail: task.output_preview.clone(),
+    }]
+}
+
+fn map_background_task_finished(task: &BackgroundTaskSummary) -> Vec<SessionEvent> {
+    let status = match task.status {
+        BackgroundTaskStatus::Finished => TaskLifecycleStatus::Finished,
+        BackgroundTaskStatus::Failed | BackgroundTaskStatus::Interrupted => {
+            TaskLifecycleStatus::Failed
+        }
+        BackgroundTaskStatus::Running => TaskLifecycleStatus::Running,
+    };
+    vec![SessionEvent::TaskUpdated {
+        task_id: task.id.clone(),
+        kind: TaskKind::BackgroundTask,
+        status,
+        title: task.command.clone(),
+        detail: task.output_preview.clone(),
+    }]
+}
+
+fn map_teammate(teammate: &TeamMemberSummary, status: TaskLifecycleStatus) -> Vec<SessionEvent> {
+    vec![SessionEvent::TaskUpdated {
+        task_id: teammate.id.clone(),
+        kind: TaskKind::Teammate,
+        status,
+        title: teammate.name.clone(),
+        detail: Some(teammate.role.clone()),
+    }]
+}
+
+fn map_teammate_updated(teammate: &TeamMemberSummary) -> Vec<SessionEvent> {
+    let status = match &teammate.status {
+        TeamMemberStatus::Idle | TeamMemberStatus::Working => TaskLifecycleStatus::Running,
+        TeamMemberStatus::Shutdown => TaskLifecycleStatus::Finished,
+        TeamMemberStatus::Failed(_) => TaskLifecycleStatus::Failed,
+    };
+    let detail = match &teammate.status {
+        TeamMemberStatus::Failed(msg) => Some(msg.clone()),
+        _ => Some(teammate.role.clone()),
+    };
+    vec![SessionEvent::TaskUpdated {
+        task_id: teammate.id.clone(),
+        kind: TaskKind::Teammate,
+        status,
+        title: teammate.name.clone(),
+        detail,
+    }]
+}
+
+fn truncate_input_summary(input: &str, max_len: usize) -> String {
+    if input.len() <= max_len {
+        input.to_string()
+    } else {
+        let mut truncated = input[..max_len].to_string();
+        truncated.push_str("...");
+        truncated
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::tool::ToolCall;
+
+    #[test]
+    fn text_delta_maps_to_assistant_token_delta() {
+        let event = AgentEvent::TextDelta {
+            delta: "hi".to_string(),
+            full_text: "hi".to_string(),
+        };
+        let mut seq = 0;
+        let mapped = map_agent_event(&event, &mut seq);
+        assert_eq!(mapped.len(), 1);
+        assert!(matches!(
+            &mapped[0].1,
+            SessionEvent::AssistantTokenDelta { delta, .. } if delta == "hi"
+        ));
+        assert_eq!(seq, 1);
+    }
+
+    #[test]
+    fn tool_use_ready_maps_to_tool_queued() {
+        let event = AgentEvent::ToolUseReady {
+            index: 0,
+            call: ToolCall {
+                id: "tc-1".to_string(),
+                name: "read".to_string(),
+                input: json!({"path": "/foo"}),
+            },
+        };
+        let mut seq = 10;
+        let mapped = map_agent_event(&event, &mut seq);
+        assert_eq!(mapped.len(), 1);
+        assert!(matches!(
+            &mapped[0].1,
+            SessionEvent::ToolQueued { tool_call_id, tool_name, .. }
+            if tool_call_id == "tc-1" && tool_name == "read"
+        ));
+        assert_eq!(mapped[0].0, 10);
+        assert_eq!(seq, 11);
+    }
+
+    #[test]
+    fn tool_execution_finished_maps_to_tool_completed() {
+        let event = AgentEvent::ToolExecutionFinished {
+            result: ContentBlock::ToolResult {
+                tool_use_id: "tc-2".to_string(),
+                content: mentra_provider::ToolResultContent::text("ok"),
+                is_error: false,
+            },
+        };
+        let mut seq = 0;
+        let mapped = map_agent_event(&event, &mut seq);
+        assert_eq!(mapped.len(), 1);
+        assert!(matches!(
+            &mapped[0].1,
+            SessionEvent::ToolCompleted { tool_call_id, is_error, .. }
+            if tool_call_id == "tc-2" && !is_error
+        ));
+    }
+
+    #[test]
+    fn compaction_maps_to_started_and_completed() {
+        let event = AgentEvent::ContextCompacted {
+            details: CompactionDetails {
+                trigger: crate::agent::CompactionTrigger::Auto,
+                mode: crate::compaction::CompactionExecutionMode::Local,
+                agent_id: "a1".to_string(),
+                transcript_path: std::path::PathBuf::from("/tmp"),
+                replaced_items: 10,
+                preserved_items: 5,
+                preserved_user_turns: 2,
+                preserved_delegation_results: 1,
+                resulting_transcript_len: 7,
+            },
+        };
+        let mut seq = 0;
+        let mapped = map_agent_event(&event, &mut seq);
+        assert_eq!(mapped.len(), 2);
+        assert!(matches!(&mapped[0].1, SessionEvent::CompactionStarted { .. }));
+        assert!(matches!(
+            &mapped[1].1,
+            SessionEvent::CompactionCompleted { .. }
+        ));
+        assert_eq!(seq, 2);
+    }
+
+    #[test]
+    fn run_started_maps_to_empty() {
+        let event = AgentEvent::RunStarted;
+        let mut seq = 0;
+        let mapped = map_agent_event(&event, &mut seq);
+        assert!(mapped.is_empty());
+        assert_eq!(seq, 0);
+    }
+}

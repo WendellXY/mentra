@@ -14,6 +14,7 @@ use crate::{
     agent::{Agent, AgentConfig, AgentSpawnOptions, AgentStatus},
     provider::{Provider, ProviderRegistry},
     runtime::{builder::RuntimeBuilder, skill::SkillLoadError},
+    session::{Session, SessionEvent, SessionId, SessionMetadata},
     tool::ExecutableTool,
 };
 use mentra_provider::{BuiltinProvider, ModelInfo, ModelSelector, ProviderDescriptor, ProviderId};
@@ -316,5 +317,52 @@ impl Runtime {
                     .ok_or(RuntimeError::NoModelsAvailable(provider))
             }
         }
+    }
+}
+
+// -- Session lifecycle methods --
+
+impl Runtime {
+    /// Creates a new session wrapping a freshly spawned agent with default config.
+    pub fn create_session(
+        &self,
+        name: impl Into<String>,
+        model: ModelInfo,
+    ) -> Result<Session, RuntimeError> {
+        self.create_session_with_config(name, model, AgentConfig::default())
+    }
+
+    /// Creates a new session wrapping a freshly spawned agent with explicit config.
+    pub fn create_session_with_config(
+        &self,
+        name: impl Into<String>,
+        model: ModelInfo,
+        config: AgentConfig,
+    ) -> Result<Session, RuntimeError> {
+        let name = name.into();
+        let agent = self.spawn_with_config(&name, model.clone(), config)?;
+        let session_id = SessionId::new();
+        let metadata = SessionMetadata::new(session_id.clone(), &name, &model.id);
+        let mut session = Session::new(session_id.clone(), metadata, agent);
+
+        // Emit the initial SessionStarted event.
+        let started = SessionEvent::SessionStarted {
+            session_id,
+        };
+        // Subscribe briefly just to ensure the event is broadcast.
+        let _rx = session.subscribe();
+        // Use the internal emit path via a helper on Session.
+        session.emit_started(started);
+
+        Ok(session)
+    }
+
+    /// Resumes a previously persisted agent and wraps it in a session.
+    pub fn resume_session(&self, agent_id: &str) -> Result<Session, RuntimeError> {
+        let agent = self.resume_agent(agent_id)?;
+        let session_id = SessionId::new();
+        let metadata = SessionMetadata::new(session_id.clone(), agent.name(), agent.model());
+        let session = Session::new(session_id, metadata, agent);
+        Ok(session)
     }
 }

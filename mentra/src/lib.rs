@@ -50,7 +50,7 @@ pub use runtime::{
     AgentStore, AuditStore, HybridRuntimeStore, LeaseStore, RunStore, Runtime, RuntimePolicy,
     TaskStore,
 };
-pub use session::{SessionEvent, SessionId, SessionMetadata, SessionStatus};
+pub use session::{Session, SessionEvent, SessionEventReceiver, SessionId, SessionMetadata, SessionStatus};
 pub use team::{
     TeamDispatch, TeamMemberStatus, TeamMemberSummary, TeamMessage, TeamMessageKind,
     TeamProtocolRequestSummary, TeamProtocolStatus,
