@@ -8,13 +8,15 @@ pub struct SessionId(String);
 
 impl SessionId {
     pub fn new() -> Self {
+        use rand::Rng;
+        let nonce: u64 = rand::rng().random();
         Self(format!(
             "session-{:x}-{:x}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_nanos(),
-            rand_u64()
+            nonce
         ))
     }
 
@@ -89,13 +91,4 @@ fn unix_now() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
-}
-
-fn rand_u64() -> u64 {
-    let ptr = &() as *const () as u64;
-    let time = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64;
-    ptr.wrapping_mul(6364136223846793005).wrapping_add(time)
 }

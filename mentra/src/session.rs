@@ -5,6 +5,6 @@ mod types;
 
 pub use event::{
     EventSeq, NoticeSeverity, PermissionOutcome, PermissionRuleScope, SessionEvent, TaskKind,
-    TaskLifecycleStatus, ToolLifecycleStatus, ToolMutability,
+    TaskLifecycleStatus, ToolMutability,
 };
 pub use types::{SessionId, SessionMetadata, SessionStatus};
