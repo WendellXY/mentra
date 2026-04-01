@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use tokio::sync::broadcast;
 
 use crate::{
@@ -6,8 +8,11 @@ use crate::{
     error::RuntimeError,
     runtime::is_transient_runtime_error,
     session::{
-        event::{EventSeq, SessionEvent},
+        event::{EventSeq, PermissionOutcome, SessionEvent},
         mapping::map_agent_event,
+        permission::{
+            PendingPermissionEntry, PermissionDecision, RememberedRule, RuleKey, RuleStore,
+        },
         types::{SessionId, SessionMetadata, SessionStatus},
     },
 };
@@ -23,6 +28,8 @@ pub struct Session {
     agent: Agent,
     event_tx: broadcast::Sender<SessionEvent>,
     next_seq: EventSeq,
+    rule_store: RuleStore,
+    pub(crate) pending_permissions: HashMap<String, PendingPermissionEntry>,
 }
 
 impl Session {
@@ -39,6 +46,8 @@ impl Session {
             agent,
             event_tx,
             next_seq: 0,
+            rule_store: RuleStore::new(),
+            pending_permissions: HashMap::new(),
         }
     }
 
@@ -154,6 +163,67 @@ impl Session {
     /// Emits the initial `SessionStarted` event. Used by `Runtime::create_session`.
     pub(crate) fn emit_started(&mut self, event: SessionEvent) {
         self.emit(event);
+    }
+
+    /// Resolves a pending permission request with the given decision.
+    ///
+    /// If `remember_as` is set on the decision, the rule is stored in the
+    /// session's [`RuleStore`]. A [`SessionEvent::PermissionResolved`] event is
+    /// emitted and the decision is sent back to the waiting caller via oneshot.
+    pub fn resolve_permission(
+        &mut self,
+        request_id: &str,
+        decision: PermissionDecision,
+    ) -> Result<(), RuntimeError> {
+        let entry = self
+            .pending_permissions
+            .remove(request_id)
+            .ok_or_else(|| {
+                RuntimeError::OperationDenied(format!(
+                    "no pending permission with request_id '{request_id}'"
+                ))
+            })?;
+
+        let outcome = if decision.allow {
+            PermissionOutcome::Allowed
+        } else {
+            PermissionOutcome::Denied
+        };
+
+        if let Some(scope) = decision.remember_as {
+            self.rule_store.add_rule(RememberedRule {
+                key: RuleKey {
+                    tool_name: entry.tool_name.clone(),
+                    pattern: None,
+                },
+                allow: decision.allow,
+                scope,
+            });
+        }
+
+        self.emit(SessionEvent::PermissionResolved {
+            request_id: request_id.to_owned(),
+            tool_call_id: entry.tool_call_id,
+            tool_name: entry.tool_name,
+            outcome,
+            rule_scope: decision.remember_as,
+        });
+
+        // Send the decision to the waiting caller. If the receiver was dropped
+        // we silently ignore the error — the tool call was likely cancelled.
+        let _ = entry.sender.send(decision);
+
+        Ok(())
+    }
+
+    /// Returns all remembered permission rules for this session.
+    pub fn remembered_rules(&self) -> Vec<RememberedRule> {
+        self.rule_store.rules()
+    }
+
+    /// Returns a reference to the session's rule store.
+    pub fn rule_store(&self) -> &RuleStore {
+        &self.rule_store
     }
 
     // -- internal helpers --

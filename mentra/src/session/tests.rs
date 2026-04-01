@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used)]
 
 use crate::session::event::*;
+use crate::session::permission::*;
 use crate::session::types::*;
 
 // ---- Task 1 type-level tests (preserved) ----
@@ -346,4 +347,218 @@ async fn create_session_emits_session_started() {
     // The SessionStarted event was emitted during creation.
     // Verify session id follows the expected format.
     assert!(session.id().as_str().starts_with("session-"));
+}
+
+// ---- Task 4 permission tests ----
+
+// -- PermissionDecision constructors --
+
+#[test]
+fn permission_decision_allow_constructor() {
+    let decision = PermissionDecision::allow();
+    assert!(decision.allow);
+    assert!(decision.remember_as.is_none());
+}
+
+#[test]
+fn permission_decision_deny_constructor() {
+    let decision = PermissionDecision::deny();
+    assert!(!decision.allow);
+    assert!(decision.remember_as.is_none());
+}
+
+#[test]
+fn permission_decision_allow_and_remember_constructor() {
+    let decision = PermissionDecision::allow_and_remember(PermissionRuleScope::Session);
+    assert!(decision.allow);
+    assert_eq!(decision.remember_as, Some(PermissionRuleScope::Session));
+}
+
+#[test]
+fn permission_decision_deny_and_remember_constructor() {
+    let decision = PermissionDecision::deny_and_remember(PermissionRuleScope::Global);
+    assert!(!decision.allow);
+    assert_eq!(decision.remember_as, Some(PermissionRuleScope::Global));
+}
+
+// -- RuleStore --
+
+#[test]
+fn rule_store_empty_check_returns_none() {
+    let store = RuleStore::new();
+    assert!(store.check("shell").is_none());
+}
+
+#[test]
+fn rule_store_add_and_check_allow() {
+    let store = RuleStore::new();
+    store.add_rule(RememberedRule {
+        key: RuleKey {
+            tool_name: "shell".to_owned(),
+            pattern: None,
+        },
+        allow: true,
+        scope: PermissionRuleScope::Session,
+    });
+    assert_eq!(store.check("shell"), Some(true));
+}
+
+#[test]
+fn rule_store_add_and_check_deny() {
+    let store = RuleStore::new();
+    store.add_rule(RememberedRule {
+        key: RuleKey {
+            tool_name: "shell".to_owned(),
+            pattern: None,
+        },
+        allow: false,
+        scope: PermissionRuleScope::Project,
+    });
+    assert_eq!(store.check("shell"), Some(false));
+}
+
+#[test]
+fn rule_store_overwrite_replaces_rule() {
+    let store = RuleStore::new();
+    store.add_rule(RememberedRule {
+        key: RuleKey {
+            tool_name: "shell".to_owned(),
+            pattern: None,
+        },
+        allow: true,
+        scope: PermissionRuleScope::Session,
+    });
+    assert_eq!(store.check("shell"), Some(true));
+
+    store.add_rule(RememberedRule {
+        key: RuleKey {
+            tool_name: "shell".to_owned(),
+            pattern: None,
+        },
+        allow: false,
+        scope: PermissionRuleScope::Session,
+    });
+    assert_eq!(store.check("shell"), Some(false));
+}
+
+#[test]
+fn rule_store_clear_scope_removes_matching_rules() {
+    let store = RuleStore::new();
+    store.add_rule(RememberedRule {
+        key: RuleKey {
+            tool_name: "shell".to_owned(),
+            pattern: None,
+        },
+        allow: true,
+        scope: PermissionRuleScope::Session,
+    });
+    store.add_rule(RememberedRule {
+        key: RuleKey {
+            tool_name: "read".to_owned(),
+            pattern: None,
+        },
+        allow: true,
+        scope: PermissionRuleScope::Global,
+    });
+
+    store.clear_scope(PermissionRuleScope::Session);
+
+    assert!(store.check("shell").is_none());
+    assert_eq!(store.check("read"), Some(true));
+}
+
+#[test]
+fn rule_store_rules_returns_all_entries() {
+    let store = RuleStore::new();
+    assert!(store.rules().is_empty());
+
+    store.add_rule(RememberedRule {
+        key: RuleKey {
+            tool_name: "shell".to_owned(),
+            pattern: None,
+        },
+        allow: true,
+        scope: PermissionRuleScope::Session,
+    });
+    store.add_rule(RememberedRule {
+        key: RuleKey {
+            tool_name: "read".to_owned(),
+            pattern: None,
+        },
+        allow: false,
+        scope: PermissionRuleScope::Project,
+    });
+
+    assert_eq!(store.rules().len(), 2);
+}
+
+// -- Session.resolve_permission --
+
+#[tokio::test]
+async fn resolve_permission_emits_event_and_sends_decision() {
+    let mock = MockRuntime::builder().text("hi").build().unwrap();
+    let mut session = mock
+        .runtime()
+        .create_session("perm-test", mock.model())
+        .unwrap();
+
+    let mut rx = session.subscribe();
+
+    // Simulate a pending permission by inserting directly.
+    let (tx, oneshot_rx) = tokio::sync::oneshot::channel();
+    session.pending_permissions.insert(
+        "perm-1".to_owned(),
+        crate::session::permission::PendingPermissionEntry {
+            tool_call_id: "tc-1".to_owned(),
+            tool_name: "shell".to_owned(),
+            sender: tx,
+        },
+    );
+
+    let decision = PermissionDecision::allow_and_remember(PermissionRuleScope::Session);
+    session
+        .resolve_permission("perm-1", decision)
+        .unwrap();
+
+    // The oneshot should deliver the decision.
+    let received = oneshot_rx.await.unwrap();
+    assert!(received.allow);
+    assert_eq!(received.remember_as, Some(PermissionRuleScope::Session));
+
+    // A PermissionResolved event should have been emitted.
+    let mut events = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        events.push(event);
+    }
+    let resolved = events.iter().find(|e| {
+        matches!(
+            e,
+            SessionEvent::PermissionResolved {
+                request_id,
+                outcome: PermissionOutcome::Allowed,
+                ..
+            } if request_id == "perm-1"
+        )
+    });
+    assert!(
+        resolved.is_some(),
+        "Expected PermissionResolved event, got: {events:?}"
+    );
+
+    // The rule should have been remembered.
+    let rules = session.remembered_rules();
+    assert_eq!(rules.len(), 1);
+    assert!(rules[0].allow);
+}
+
+#[tokio::test]
+async fn resolve_permission_unknown_id_returns_error() {
+    let mock = MockRuntime::builder().text("hi").build().unwrap();
+    let mut session = mock
+        .runtime()
+        .create_session("perm-test", mock.model())
+        .unwrap();
+
+    let result = session.resolve_permission("nonexistent", PermissionDecision::deny());
+    assert!(result.is_err());
 }
