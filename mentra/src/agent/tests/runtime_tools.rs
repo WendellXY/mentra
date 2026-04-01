@@ -4238,11 +4238,7 @@ async fn teammate_identity_is_reinjected_after_compaction() {
 
 #[tokio::test]
 async fn shell_tool_emits_progress_events_with_output_lines() {
-    let echo_command = if cfg!(windows) {
-        "echo hello-progress"
-    } else {
-        "echo hello-progress"
-    };
+    let echo_command = "echo hello-progress";
     let input = command_input_json(echo_command);
     let model = model_info("model", BuiltinProvider::Anthropic);
     let provider = ScriptedProvider::new(

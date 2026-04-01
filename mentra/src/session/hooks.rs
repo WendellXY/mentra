@@ -11,10 +11,12 @@ use crate::{
 ///
 /// This hook is the bridge between the low-level runtime hook system and the
 /// session-level event stream consumed by UI layers.
+#[allow(dead_code)] // Session-level memory hook wiring is staged separately from the hook itself.
 pub(crate) struct SessionHookBridge {
     tx: broadcast::Sender<SessionEvent>,
 }
 
+#[allow(dead_code)] // Constructor is kept alongside the bridge until runtime/session wiring lands.
 impl SessionHookBridge {
     /// Creates a new bridge that sends session events into the given sender.
     pub(crate) fn new(tx: broadcast::Sender<SessionEvent>) -> Self {
