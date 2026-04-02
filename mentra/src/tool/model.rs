@@ -83,7 +83,7 @@ pub struct ToolContext<'a> {
     pub(crate) working_directory: PathBuf,
     pub(crate) runtime: crate::runtime::RuntimeHandle,
     pub(crate) agent: &'a mut crate::agent::Agent,
-    pub(crate) event_tx: tokio::sync::broadcast::Sender<crate::agent::AgentEvent>,
+    pub(crate) event_tx: crate::agent::AgentEventBus,
 }
 
 impl ToolContext<'_> {
@@ -93,8 +93,7 @@ impl ToolContext<'_> {
 
     /// Emit a progress event for the currently executing tool.
     pub fn emit_progress(&self, progress: String) {
-        let _ = self
-            .event_tx
+        self.event_tx
             .send(crate::agent::AgentEvent::ToolExecutionProgress {
                 id: self.tool_call_id.clone(),
                 name: self.tool_name.clone(),
@@ -287,7 +286,7 @@ pub struct ParallelToolContext {
     pub(crate) model: String,
     pub(crate) history_len: usize,
     pub(crate) tasks: Vec<TaskItem>,
-    pub(crate) event_tx: tokio::sync::broadcast::Sender<crate::agent::AgentEvent>,
+    pub(crate) event_tx: crate::agent::AgentEventBus,
 }
 
 impl From<ToolContext<'_>> for ParallelToolContext {
@@ -315,8 +314,7 @@ impl ParallelToolContext {
 
     /// Emit a progress event for the currently executing tool.
     pub fn emit_progress(&self, progress: String) {
-        let _ = self
-            .event_tx
+        self.event_tx
             .send(crate::agent::AgentEvent::ToolExecutionProgress {
                 id: self.tool_call_id.clone(),
                 name: self.tool_name.clone(),

@@ -1,7 +1,10 @@
 use serde_json::Value;
-use tokio::sync::broadcast;
 
-use crate::{agent::AgentEvent, runtime::RuntimeHandle, tool::ToolResult};
+use crate::{
+    agent::{AgentEvent, AgentEventBus},
+    runtime::RuntimeHandle,
+    tool::ToolResult,
+};
 
 use super::{
     input::{ensure_files_have_operations, parse_files_input},
@@ -14,7 +17,7 @@ pub(crate) async fn execute_files_tool(
     tool_name: String,
     runtime: RuntimeHandle,
     default_working_directory: std::path::PathBuf,
-    event_tx: broadcast::Sender<AgentEvent>,
+    event_tx: AgentEventBus,
     input: Value,
 ) -> ToolResult {
     let input = parse_files_input(&input)?;
@@ -34,7 +37,7 @@ pub(crate) async fn execute_files_tool(
         for operation in input.operations {
             let section = editor.apply_operation(operation)?;
             if let Some(progress) = file_op_progress(&section) {
-                let _ = event_tx.send(AgentEvent::ToolExecutionProgress {
+                event_tx.send(AgentEvent::ToolExecutionProgress {
                     id: tool_call_id.clone(),
                     name: tool_name.clone(),
                     progress,

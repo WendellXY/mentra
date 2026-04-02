@@ -11,10 +11,10 @@ use std::{
     time::Duration,
 };
 
-use tokio::sync::{broadcast, watch};
+use tokio::sync::watch;
 
 use crate::{
-    agent::{AgentEvent, AgentSnapshot},
+    agent::{AgentEventBus, AgentSnapshot},
     background::{BackgroundNotification, BackgroundTaskManager, BackgroundTaskSummary},
     compaction::CompactionEngine,
     memory::MemoryEngine,
@@ -80,7 +80,7 @@ pub(crate) struct ToolingServices {
 
 #[derive(Clone)]
 pub(crate) struct AgentObserver {
-    pub(crate) events: broadcast::Sender<AgentEvent>,
+    pub(crate) events: AgentEventBus,
     pub(crate) snapshot_tx: watch::Sender<AgentSnapshot>,
     pub(crate) snapshot: Arc<Mutex<AgentSnapshot>>,
 }

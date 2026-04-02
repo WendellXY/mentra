@@ -5,7 +5,7 @@ use tokio::sync::broadcast;
 
 use crate::{
     AgentTranscript, ContentBlock, Message,
-    agent::{Agent, AgentEvent},
+    agent::{Agent, AgentEventTapGuard},
     error::RuntimeError,
     runtime::{PermissionRuleStore, is_transient_runtime_error},
     session::{
@@ -242,12 +242,10 @@ impl Session {
         self.emit(SessionEvent::UserMessage { text: user_text });
         self.update_status(SessionStatus::Active);
 
-        let mut agent_rx = self.agent.subscribe_events();
-
+        let (event_tap, forwarded_seq) = self.install_agent_event_forwarder();
         let result = self.agent.send(content).await;
-
-        // Drain agent events and map to session events.
-        self.drain_agent_events(&mut agent_rx);
+        drop(event_tap);
+        self.sync_forwarded_seq(&forwarded_seq);
 
         match result {
             Ok(message) => {
@@ -282,11 +280,10 @@ impl Session {
     pub async fn resume_turn(&mut self) -> Result<Message, RuntimeError> {
         self.update_status(SessionStatus::Active);
 
-        let mut agent_rx = self.agent.subscribe_events();
-
+        let (event_tap, forwarded_seq) = self.install_agent_event_forwarder();
         let result = self.agent.resume().await;
-
-        self.drain_agent_events(&mut agent_rx);
+        drop(event_tap);
+        self.sync_forwarded_seq(&forwarded_seq);
 
         match result {
             Ok(message) => {
@@ -353,13 +350,24 @@ impl Session {
         self.next_seq += 1;
     }
 
-    fn drain_agent_events(&mut self, rx: &mut broadcast::Receiver<AgentEvent>) {
-        while let Ok(agent_event) = rx.try_recv() {
-            let mapped = map_agent_event(&agent_event, &mut self.next_seq);
+    fn install_agent_event_forwarder(&mut self) -> (AgentEventTapGuard, Arc<StdMutex<EventSeq>>) {
+        let event_tx = self.event_tx.clone();
+        let next_seq = Arc::new(StdMutex::new(self.next_seq));
+        let next_seq_for_tap = Arc::clone(&next_seq);
+        let event_tap = self.agent.register_event_tap(move |agent_event| {
+            let mut seq = next_seq_for_tap
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let mapped = map_agent_event(agent_event, &mut seq);
             for (_seq, session_event) in mapped {
-                let _ = self.event_tx.send(session_event);
+                let _ = event_tx.send(session_event);
             }
-        }
+        });
+        (event_tap, next_seq)
+    }
+
+    fn sync_forwarded_seq(&mut self, next_seq: &Arc<StdMutex<EventSeq>>) {
+        self.next_seq = *next_seq.lock().unwrap_or_else(|error| error.into_inner());
     }
 
     fn update_status(&mut self, status: SessionStatus) {

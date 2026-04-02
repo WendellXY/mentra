@@ -852,6 +852,158 @@ async fn tool_call_session_produces_tool_lifecycle_events() {
     );
 }
 
+#[derive(Clone)]
+struct OverflowingToolProvider {
+    model: crate::ModelInfo,
+    turn: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[async_trait]
+impl crate::Provider for OverflowingToolProvider {
+    fn descriptor(&self) -> crate::ProviderDescriptor {
+        crate::ProviderDescriptor::new(self.model.provider.clone())
+    }
+
+    async fn list_models(&self) -> Result<Vec<crate::ModelInfo>, crate::ProviderError> {
+        Ok(vec![self.model.clone()])
+    }
+
+    async fn stream(
+        &self,
+        _request: crate::Request<'_>,
+    ) -> Result<crate::ProviderEventStream, crate::ProviderError> {
+        let turn = self
+            .turn
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        match turn {
+            0 => Ok(buffered_provider_events(verbose_tool_turn_events(
+                &self.model.id,
+                300,
+            ))),
+            _ => Ok(crate::provider_event_stream_from_response(
+                crate::provider::Response {
+                    id: unique_turn_id(),
+                    model: self.model.id.clone(),
+                    role: crate::Role::Assistant,
+                    content: vec![crate::provider::ContentBlock::text("tool run finished")],
+                    stop_reason: None,
+                    usage: None,
+                },
+            )),
+        }
+    }
+}
+
+fn buffered_provider_events(
+    events: Vec<crate::provider::ProviderEvent>,
+) -> crate::ProviderEventStream {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    for event in events {
+        tx.send(Ok(event))
+            .expect("session test provider receiver dropped unexpectedly");
+    }
+    rx
+}
+
+fn verbose_tool_turn_events(
+    model_id: &str,
+    delta_count: usize,
+) -> Vec<crate::provider::ProviderEvent> {
+    let mut events = vec![
+        crate::provider::ProviderEvent::MessageStarted {
+            id: unique_turn_id(),
+            model: model_id.to_string(),
+            role: crate::Role::Assistant,
+        },
+        crate::provider::ProviderEvent::ContentBlockStarted {
+            index: 0,
+            kind: crate::provider::ContentBlockStart::Text,
+        },
+    ];
+
+    for index in 0..delta_count {
+        events.push(crate::provider::ProviderEvent::ContentBlockDelta {
+            index: 0,
+            delta: crate::provider::ContentBlockDelta::Text(format!("chunk-{index}")),
+        });
+    }
+
+    events.extend([
+        crate::provider::ProviderEvent::ContentBlockStopped { index: 0 },
+        crate::provider::ProviderEvent::ContentBlockStarted {
+            index: 1,
+            kind: crate::provider::ContentBlockStart::ToolUse {
+                id: "tool-1".to_string(),
+                name: "echo_tool".to_string(),
+            },
+        },
+        crate::provider::ProviderEvent::ContentBlockDelta {
+            index: 1,
+            delta: crate::provider::ContentBlockDelta::ToolUseInputJson("{}".to_string()),
+        },
+        crate::provider::ProviderEvent::ContentBlockStopped { index: 1 },
+        crate::provider::ProviderEvent::MessageDelta {
+            stop_reason: Some("tool_use".to_string()),
+            usage: None,
+        },
+        crate::provider::ProviderEvent::MessageStopped,
+    ]);
+
+    events
+}
+
+#[tokio::test]
+async fn session_preserves_tool_events_after_many_token_deltas() {
+    let model = crate::ModelInfo::new("mock-model", crate::BuiltinProvider::OpenAI);
+    let runtime = crate::Runtime::builder()
+        .with_provider_instance(OverflowingToolProvider {
+            model: model.clone(),
+            turn: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        })
+        .with_policy(crate::RuntimePolicy::permissive())
+        .build()
+        .unwrap();
+    runtime.register_tool(EchoTool);
+
+    let mut session = runtime
+        .create_session("overflow-tool-events", model.clone())
+        .unwrap();
+    let mut rx = session.subscribe();
+
+    let message = session
+        .append_turn(vec![ContentBlock::text("run the verbose tool turn")])
+        .await
+        .unwrap();
+
+    assert_eq!(message.text(), "tool run finished");
+
+    let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+
+    let token_delta_count = events
+        .iter()
+        .filter(|event| matches!(event, SessionEvent::AssistantTokenDelta { .. }))
+        .count();
+    let has_tool_started = events.iter().any(
+        |event| matches!(event, SessionEvent::ToolStarted { tool_name, .. } if tool_name == "echo_tool"),
+    );
+    let has_tool_completed = events.iter().any(|event| {
+        matches!(event, SessionEvent::ToolCompleted { tool_call_id, .. } if tool_call_id == "tool-1")
+    });
+
+    assert!(
+        token_delta_count >= 300,
+        "Expected all token deltas to survive session mapping, got {token_delta_count} from {events:?}"
+    );
+    assert!(
+        has_tool_started,
+        "Expected ToolStarted event after many token deltas, got: {events:?}"
+    );
+    assert!(
+        has_tool_completed,
+        "Expected ToolCompleted event after many token deltas, got: {events:?}"
+    );
+}
+
 #[tokio::test]
 async fn resume_session_restores_state() {
     use crate::runtime::SqliteRuntimeStore;

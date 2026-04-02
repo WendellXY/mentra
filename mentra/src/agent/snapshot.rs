@@ -1,14 +1,21 @@
 use crate::{agent::AgentEvent, runtime::PersistedAgentRecord};
 
-use super::{Agent, AgentStatus};
+use super::{Agent, AgentEventTapGuard, AgentStatus};
 
 impl Agent {
     pub(crate) fn emit_event(&self, event: AgentEvent) {
-        let _ = self.event_tx.send(event);
+        self.event_bus.send(event);
     }
 
-    pub(crate) fn event_sender(&self) -> tokio::sync::broadcast::Sender<AgentEvent> {
-        self.event_tx.clone()
+    pub(crate) fn event_sender(&self) -> super::AgentEventBus {
+        self.event_bus.clone()
+    }
+
+    pub(crate) fn register_event_tap(
+        &self,
+        tap: impl Fn(&AgentEvent) + Send + Sync + 'static,
+    ) -> AgentEventTapGuard {
+        self.event_bus.register_tap(tap)
     }
 
     pub(crate) fn set_status(&mut self, status: AgentStatus) {

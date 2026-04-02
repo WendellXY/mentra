@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    agent::{AgentEvent, AgentSnapshot},
+    agent::{AgentEvent, AgentEventBus, AgentSnapshot},
     background::{BackgroundObserverSink, BackgroundRegistration},
     team::{TeamObserverSink, TeamRegistration},
 };
@@ -8,7 +8,7 @@ use crate::{
 struct AgentTeamObserver {
     store: Arc<dyn crate::runtime::TaskStore>,
     tasks_dir: PathBuf,
-    events: broadcast::Sender<AgentEvent>,
+    events: AgentEventBus,
     snapshot_tx: watch::Sender<AgentSnapshot>,
     snapshot: Arc<Mutex<AgentSnapshot>>,
 }
@@ -49,7 +49,7 @@ impl TeamObserverSink for AgentTeamObserver {
     }
 
     fn publish_event(&self, event: AgentEvent) {
-        let _ = self.events.send(event);
+        self.events.send(event);
     }
 }
 
@@ -62,7 +62,7 @@ struct AgentBackgroundObserver {
     is_teammate: bool,
     snapshot_tx: watch::Sender<AgentSnapshot>,
     snapshot: Arc<Mutex<AgentSnapshot>>,
-    events: broadcast::Sender<AgentEvent>,
+    events: AgentEventBus,
 }
 
 impl AgentBackgroundObserver {
@@ -108,7 +108,7 @@ impl BackgroundObserverSink for AgentBackgroundObserver {
     fn publish_event(&self, event: AgentEvent) {
         let should_wake_teammate =
             self.is_teammate && matches!(event, AgentEvent::BackgroundTaskFinished { .. });
-        let _ = self.events.send(event);
+        self.events.send(event);
         if should_wake_teammate {
             let _ = self
                 .team

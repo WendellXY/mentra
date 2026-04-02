@@ -65,7 +65,7 @@ pub struct Agent {
     memory: AgentMemory,
     tasks: Vec<TaskItem>,
     rounds_since_task: usize,
-    event_tx: broadcast::Sender<AgentEvent>,
+    event_bus: AgentEventBus,
     snapshot: Arc<Mutex<AgentSnapshot>>,
     snapshot_tx: watch::Sender<AgentSnapshot>,
     provider: Arc<dyn Provider>,
@@ -89,6 +89,75 @@ pub(crate) struct AgentSpawnOptions {
     pub(crate) hidden_tools: HashSet<String>,
     pub(crate) max_rounds: Option<usize>,
     pub(crate) teammate_identity: Option<TeammateIdentity>,
+}
+
+type AgentEventTap = Arc<dyn Fn(&AgentEvent) + Send + Sync>;
+
+#[derive(Default)]
+struct AgentEventTapRegistry {
+    next_id: u64,
+    taps: Vec<(u64, AgentEventTap)>,
+}
+
+pub(crate) struct AgentEventTapGuard {
+    registry: Arc<Mutex<AgentEventTapRegistry>>,
+    id: u64,
+}
+
+#[derive(Clone)]
+pub(crate) struct AgentEventBus {
+    tx: broadcast::Sender<AgentEvent>,
+    taps: Arc<Mutex<AgentEventTapRegistry>>,
+}
+
+impl AgentEventBus {
+    fn new(capacity: usize) -> Self {
+        let (tx, _) = broadcast::channel(capacity);
+        Self {
+            tx,
+            taps: Arc::new(Mutex::new(AgentEventTapRegistry::default())),
+        }
+    }
+
+    pub(crate) fn send(&self, event: AgentEvent) {
+        let taps = {
+            let registry = self.taps.lock().expect("agent event tap registry poisoned");
+            registry
+                .taps
+                .iter()
+                .map(|(_, tap)| Arc::clone(tap))
+                .collect::<Vec<_>>()
+        };
+        for tap in taps {
+            tap(&event);
+        }
+        let _ = self.tx.send(event);
+    }
+
+    pub(crate) fn subscribe(&self) -> broadcast::Receiver<AgentEvent> {
+        self.tx.subscribe()
+    }
+
+    pub(crate) fn register_tap(
+        &self,
+        tap: impl Fn(&AgentEvent) + Send + Sync + 'static,
+    ) -> AgentEventTapGuard {
+        let mut registry = self.taps.lock().expect("agent event tap registry poisoned");
+        let id = registry.next_id;
+        registry.next_id += 1;
+        registry.taps.push((id, Arc::new(tap)));
+        AgentEventTapGuard {
+            registry: Arc::clone(&self.taps),
+            id,
+        }
+    }
+}
+
+impl Drop for AgentEventTapGuard {
+    fn drop(&mut self) {
+        let mut registry = self.registry.lock().expect("agent event tap registry poisoned");
+        registry.taps.retain(|(tap_id, _)| *tap_id != self.id);
+    }
 }
 
 impl Agent {
@@ -115,7 +184,7 @@ impl Agent {
             NEXT_AGENT_ID.fetch_add(1, Ordering::Relaxed)
         );
         let memory = AgentMemory::new(agent_id.clone(), store.clone(), MemoryState::default());
-        let (event_tx, _) = broadcast::channel(256);
+        let event_bus = AgentEventBus::new(256);
         let memory_view = memory.snapshot_view();
         let snapshot = AgentSnapshot {
             history_len: memory_view.history_len,
@@ -136,7 +205,7 @@ impl Agent {
             memory,
             tasks: Vec::new(),
             rounds_since_task: 0,
-            event_tx,
+            event_bus,
             snapshot,
             snapshot_tx,
             provider,
@@ -162,7 +231,7 @@ impl Agent {
             is_teammate: agent.teammate_identity.is_some(),
         };
         let observer = AgentObserver {
-            events: agent.event_tx.clone(),
+            events: agent.event_bus.clone(),
             snapshot_tx: agent.snapshot_tx.clone(),
             snapshot: Arc::clone(&agent.snapshot),
         };
@@ -205,7 +274,7 @@ impl Agent {
         let snapshot = Arc::new(Mutex::new(snapshot));
         let (snapshot_tx, _) =
             watch::channel(snapshot.lock().expect("agent snapshot poisoned").clone());
-        let (event_tx, _) = broadcast::channel(256);
+        let event_bus = AgentEventBus::new(256);
         let mut agent = Self {
             id: state.record.id.clone(),
             runtime,
@@ -216,7 +285,7 @@ impl Agent {
             memory,
             tasks: Vec::new(),
             rounds_since_task: state.record.rounds_since_task,
-            event_tx,
+            event_bus,
             snapshot,
             snapshot_tx,
             provider,
@@ -238,7 +307,7 @@ impl Agent {
             is_teammate: agent.teammate_identity.is_some(),
         };
         let observer = AgentObserver {
-            events: agent.event_tx.clone(),
+            events: agent.event_bus.clone(),
             snapshot_tx: agent.snapshot_tx.clone(),
             snapshot: Arc::clone(&agent.snapshot),
         };
@@ -342,7 +411,7 @@ impl Agent {
 
     /// Subscribes to the agent's transient event stream.
     pub fn subscribe_events(&self) -> broadcast::Receiver<AgentEvent> {
-        self.event_tx.subscribe()
+        self.event_bus.subscribe()
     }
 
     /// Watches the current agent snapshot for state updates.
