@@ -1156,7 +1156,7 @@ fn unique_test_base_dir(label: &str) -> std::path::PathBuf {
         .as_nanos();
     let base_dir = std::env::temp_dir().join(format!("mentra-{label}-{unique}"));
     std::fs::create_dir_all(&base_dir).unwrap();
-    base_dir
+    std::fs::canonicalize(&base_dir).unwrap_or(base_dir)
 }
 
 #[tokio::test]

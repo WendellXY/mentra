@@ -227,17 +227,20 @@ impl RuntimePolicy {
 }
 
 fn path_is_allowed(path: &Path, default_root: &Path, extra_roots: &[PathBuf]) -> bool {
-    let candidate_path = canonicalize_policy_root(path);
-    let default_root = canonicalize_policy_root(default_root);
+    let candidate_path = normalize_policy_root(path);
+    let default_root = normalize_policy_root(default_root);
     candidate_path.starts_with(&default_root)
         || extra_roots
             .iter()
-            .map(|root| canonicalize_policy_root(root))
+            .map(|root| normalize_policy_root(root))
             .any(|root| candidate_path.starts_with(root))
 }
 
-fn canonicalize_policy_root(path: &Path) -> PathBuf {
-    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+fn normalize_policy_root(path: &Path) -> PathBuf {
+    normalize_absolute_path(path)
+        .ok()
+        .and_then(|normalized| resolve_existing_components(&normalized).ok())
+        .unwrap_or_else(|| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
 }
 
 fn resolve_authorized_path(base_dir: &Path, path: &Path) -> Result<PathBuf, String> {

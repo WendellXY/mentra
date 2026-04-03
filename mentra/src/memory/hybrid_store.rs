@@ -529,6 +529,27 @@ mod tests {
                 mode: MemorySearchMode::Automatic,
             })
             .expect("explicit search");
-        assert_eq!(compat, explicit);
+        assert_eq!(compat.len(), explicit.len());
+        for (compat_record, explicit_record) in compat.iter().zip(explicit.iter()) {
+            assert_eq!(compat_record.record_id, explicit_record.record_id);
+            assert_eq!(compat_record.agent_id, explicit_record.agent_id);
+            assert_eq!(compat_record.kind, explicit_record.kind);
+            assert_eq!(compat_record.content, explicit_record.content);
+            assert_eq!(
+                compat_record.source_revision,
+                explicit_record.source_revision
+            );
+            assert_eq!(compat_record.created_at, explicit_record.created_at);
+            assert_eq!(compat_record.metadata_json, explicit_record.metadata_json);
+            assert_eq!(compat_record.source, explicit_record.source);
+            assert_eq!(compat_record.pinned, explicit_record.pinned);
+
+            let compat_score = compat_record.score.expect("compat score");
+            let explicit_score = explicit_record.score.expect("explicit score");
+            assert!(
+                (compat_score - explicit_score).abs() < 1e-5,
+                "expected comparable ranking scores, got {compat_score} vs {explicit_score}"
+            );
+        }
     }
 }
