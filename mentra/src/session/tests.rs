@@ -596,9 +596,7 @@ impl crate::Provider for InFlightProvider {
         &self,
         _request: crate::Request<'_>,
     ) -> Result<crate::ProviderEventStream, crate::ProviderError> {
-        let turn = self
-            .turn
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let turn = self.turn.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let response = match turn {
             0 => crate::provider::Response {
                 id: unique_turn_id(),
@@ -872,9 +870,7 @@ impl crate::Provider for OverflowingToolProvider {
         &self,
         _request: crate::Request<'_>,
     ) -> Result<crate::ProviderEventStream, crate::ProviderError> {
-        let turn = self
-            .turn
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let turn = self.turn.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         match turn {
             0 => Ok(buffered_provider_events(verbose_tool_turn_events(
                 &self.model.id,

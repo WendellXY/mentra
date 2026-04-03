@@ -155,7 +155,10 @@ impl AgentEventBus {
 
 impl Drop for AgentEventTapGuard {
     fn drop(&mut self) {
-        let mut registry = self.registry.lock().expect("agent event tap registry poisoned");
+        let mut registry = self
+            .registry
+            .lock()
+            .expect("agent event tap registry poisoned");
         registry.taps.retain(|(tap_id, _)| *tap_id != self.id);
     }
 }
