@@ -271,12 +271,9 @@ pub fn is_transient_provider_error(error: &ProviderError) -> bool {
 }
 
 /// Returns whether a runtime error is backed by a transient provider failure.
+///
+/// Delegates to [`RuntimeError::category()`] so there is a single source of
+/// truth for error classification.
 pub fn is_transient_runtime_error(error: &RuntimeError) -> bool {
-    match error {
-        RuntimeError::FailedToSendRequest(source)
-        | RuntimeError::FailedToListModels(source)
-        | RuntimeError::FailedToStreamResponse(source)
-        | RuntimeError::FailedToCompactHistory(source) => is_transient_provider_error(source),
-        _ => false,
-    }
+    error.category() == crate::error::ErrorCategory::Retryable
 }
