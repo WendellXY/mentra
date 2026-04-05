@@ -31,14 +31,25 @@ pub struct ExtractedContext {
 
 /// Scan transcript items to extract file paths, verification outcomes, and permission decisions.
 pub fn extract_context(items: &[TranscriptItem]) -> ExtractedContext {
-    let file_re = Regex::new(r#"(?:^|[\s"'`(,])([a-zA-Z0-9_.][a-zA-Z0-9_./\-]*\.[a-zA-Z]{1,10})"#)
-        .unwrap_or_else(|_| Regex::new("a]").expect("infallible fallback regex")); // safe: pattern is a literal
-    let verification_re = Regex::new(
-        r"(?i)(cargo\s+test|pytest|npm\s+test|jest|mocha|go\s+test|make\s+test|rspec|yarn\s+test).*?(pass|fail|error|ok|success|FAILED|PASSED)",
-    )
-    .unwrap_or_else(|_| Regex::new("a]").expect("infallible fallback regex"));
-    let permission_re = Regex::new(r"(?i)(permission|allowed|denied|approved|rejected|authorized)")
-        .unwrap_or_else(|_| Regex::new("a]").expect("infallible fallback regex"));
+    use std::sync::LazyLock;
+
+    static FILE_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?:^|[\s"'`(,])([a-zA-Z0-9_.][a-zA-Z0-9_./\-]*\.[a-zA-Z]{1,10})"#)
+            .expect("valid regex literal")
+    });
+    static VERIFICATION_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r"(?i)(cargo\s+test|pytest|npm\s+test|jest|mocha|go\s+test|make\s+test|rspec|yarn\s+test).*?(pass|fail|error|ok|success|FAILED|PASSED)",
+        )
+        .expect("valid regex literal")
+    });
+    static PERMISSION_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)(permission|allowed|denied|approved|rejected|authorized)")
+            .expect("valid regex literal")
+    });
+    let file_re = &*FILE_RE;
+    let verification_re = &*VERIFICATION_RE;
+    let permission_re = &*PERMISSION_RE;
 
     let mut files_seen = HashSet::new();
     let mut files = Vec::new();
