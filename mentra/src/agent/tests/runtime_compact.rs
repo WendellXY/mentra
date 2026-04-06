@@ -12,7 +12,9 @@ use crate::{
     runtime::Runtime,
 };
 
-use super::support::{ScriptedProvider, StaticTool, StreamScript, model_info, ok_stream};
+use crate::provider::ProviderError;
+
+use super::support::{ScriptedProvider, StaticTool, StreamScript, erroring_stream, model_info, ok_stream};
 
 #[tokio::test]
 async fn micro_compaction_only_rewrites_old_tool_results_in_requests() {
@@ -250,6 +252,94 @@ async fn compact_tool_compacts_history_and_continues() {
     assert_eq!(compaction.preserved_user_turns, 1);
     assert_eq!(compaction.preserved_delegation_results, 0);
     assert_eq!(compaction.resulting_transcript_len, 3);
+}
+
+#[tokio::test]
+async fn auto_compaction_degrades_gracefully_on_failure() {
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    // Queue: first send response, then 3 retryable errors for compaction attempts,
+    // then the second send response. The compaction will fail all 3 attempts and
+    // degrade gracefully, allowing the second send to succeed.
+    let retryable_error = || {
+        erroring_stream(
+            vec![],
+            ProviderError::Retryable {
+                message: "rate limited".into(),
+                delay: None,
+            },
+        )
+    };
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![
+            text_stream(&model.id, "first done"),
+            retryable_error(),
+            retryable_error(),
+            retryable_error(),
+            text_stream(&model.id, "second done"),
+        ],
+    );
+    let events_receiver = {
+        let runtime = Runtime::empty_builder()
+            .with_provider_instance(provider)
+            .build()
+            .expect("build runtime");
+        let mut agent = runtime
+            .spawn_with_config(
+                "agent",
+                model,
+                AgentConfig {
+                    compaction: CompactionConfig {
+                        auto_compact_threshold_tokens: Some(1),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let mut events = agent.subscribe_events();
+
+        agent
+            .send(vec![ContentBlock::Text {
+                text: "first".to_string(),
+            }])
+            .await
+            .unwrap();
+
+        // Second send triggers auto_compact_if_needed which fails all 3 attempts,
+        // then degrades gracefully, and the actual send succeeds.
+        agent
+            .send(vec![ContentBlock::Text {
+                text: "second".to_string(),
+            }])
+            .await
+            .expect("second send must succeed despite compaction failures");
+
+        // History should have all 4 turns (no compaction was applied).
+        assert_eq!(agent.history().len(), 4, "history should have 4 items");
+
+        collect_events(&mut events)
+    };
+
+    // Should have seen 2 RetryAttempt events (attempts 1 and 2; attempt 3 exhausts
+    // without emitting because there is no further retry after the last attempt).
+    let retry_events: Vec<_> = events_receiver
+        .iter()
+        .filter(|e| matches!(e, AgentEvent::RetryAttempt { .. }))
+        .collect();
+    assert_eq!(
+        retry_events.len(),
+        2,
+        "expected 2 retry attempt events, got {}",
+        retry_events.len()
+    );
+
+    // No ContextCompacted event should have been emitted.
+    let compacted = events_receiver
+        .iter()
+        .any(|e| matches!(e, AgentEvent::ContextCompacted { .. }));
+    assert!(!compacted, "expected no ContextCompacted event");
 }
 
 fn text_stream(model: &str, text: &str) -> StreamScript {

@@ -3,13 +3,16 @@ use crate::{
     ContentBlock, Message,
     agent::AgentEvent,
     compaction::compaction_request_from_agent,
-    error::RuntimeError,
+    error::{ErrorCategory, RuntimeError},
     memory::{
         estimated_request_tokens, micro_compact_history, required_tail_start_for_continuation,
     },
 };
 
 use super::{Agent, CompactionDetails, CompactionTrigger};
+
+const AUTO_COMPACT_MAX_ATTEMPTS: u32 = 3;
+const AUTO_COMPACT_RETRY_DELAY_MS: u64 = 500;
 
 impl Agent {
     pub(crate) fn micro_compacted_history(&self) -> Vec<Message> {
@@ -34,9 +37,36 @@ impl Agent {
         }
 
         let preserve_from = required_tail_start_for_continuation(self.history());
-        let _ = self
-            .compact_history(preserve_from, CompactionTrigger::Auto)
-            .await?;
+
+        for attempt in 1..=AUTO_COMPACT_MAX_ATTEMPTS {
+            match self
+                .compact_history(preserve_from, CompactionTrigger::Auto)
+                .await
+            {
+                Ok(_) => return Ok(()),
+                Err(err) if err.category() == ErrorCategory::Retryable
+                    && attempt < AUTO_COMPACT_MAX_ATTEMPTS =>
+                {
+                    self.emit_event(AgentEvent::RetryAttempt {
+                        agent_id: self.id().to_string(),
+                        error_message: err.to_string(),
+                        attempt,
+                        max_attempts: AUTO_COMPACT_MAX_ATTEMPTS,
+                        next_delay_ms: AUTO_COMPACT_RETRY_DELAY_MS,
+                    });
+                    tokio::time::sleep(tokio::time::Duration::from_millis(
+                        AUTO_COMPACT_RETRY_DELAY_MS,
+                    ))
+                    .await;
+                }
+                Err(_) => {
+                    // Non-retryable error or all attempts exhausted: degrade gracefully.
+                    // The session continues with micro-compaction only.
+                    return Ok(());
+                }
+            }
+        }
+
         Ok(())
     }
 
