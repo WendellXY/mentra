@@ -24,6 +24,7 @@ pub type SessionEventReceiver = broadcast::Receiver<SessionEvent>;
 #[derive(Clone)]
 pub struct SessionPermissionHandle {
     session_id: SessionId,
+    project_id: Option<String>,
     event_tx: broadcast::Sender<SessionEvent>,
     rule_store: RuleStore,
     permission_store: Arc<StdMutex<Option<Arc<dyn PermissionRuleStore>>>>,
@@ -33,6 +34,7 @@ pub struct SessionPermissionHandle {
 impl SessionPermissionHandle {
     fn new(
         session_id: SessionId,
+        project_id: Option<String>,
         event_tx: broadcast::Sender<SessionEvent>,
         rule_store: RuleStore,
         permission_store: Arc<StdMutex<Option<Arc<dyn PermissionRuleStore>>>>,
@@ -40,6 +42,7 @@ impl SessionPermissionHandle {
     ) -> Self {
         Self {
             session_id,
+            project_id,
             event_tx,
             rule_store,
             permission_store,
@@ -64,7 +67,7 @@ impl SessionPermissionHandle {
         let Some(store) = store else {
             return Ok(0);
         };
-        let rules = store.load_rules(session_id.as_str(), None)?;
+        let rules = store.load_rules(session_id.as_str(), self.project_id.as_deref())?;
         let count = rules.len();
         for rule in rules {
             self.rule_store.add_rule(rule);
@@ -106,7 +109,7 @@ impl SessionPermissionHandle {
                 .clone();
             if let Some(store) = store {
                 let all_rules = self.rule_store.rules();
-                store.save_rules(self.session_id.as_str(), None, &all_rules)?;
+                store.save_rules(self.session_id.as_str(), self.project_id.as_deref(), &all_rules)?;
             }
         }
 
@@ -156,6 +159,7 @@ impl Session {
             event_tx,
             RuleStore::new(),
             PendingPermissionStore::new(),
+            None,
         )
     }
 
@@ -166,10 +170,12 @@ impl Session {
         event_tx: broadcast::Sender<SessionEvent>,
         rule_store: RuleStore,
         pending_permissions: PendingPermissionStore,
+        project_id: Option<String>,
     ) -> Self {
         let permission_store = Arc::new(StdMutex::new(None));
         let permission_handle = SessionPermissionHandle::new(
             id.clone(),
+            project_id,
             event_tx.clone(),
             rule_store.clone(),
             permission_store.clone(),

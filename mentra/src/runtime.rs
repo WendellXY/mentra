@@ -360,11 +360,30 @@ impl Runtime {
     }
 
     /// Creates a new session wrapping a freshly spawned agent with explicit config.
+    ///
+    /// Convenience wrapper around [`create_session_full`](Self::create_session_full) that
+    /// passes `None` for `project_id`.
     pub fn create_session_with_config(
         &self,
         name: impl Into<String>,
         model: ModelInfo,
         config: AgentConfig,
+    ) -> Result<Session, RuntimeError> {
+        self.create_session_full(name, model, config, None)
+    }
+
+    /// Creates a new session wrapping a freshly spawned agent with explicit config and
+    /// an optional project identifier.
+    ///
+    /// The `project_id` is threaded into the [`SessionPermissionHandle`] so that
+    /// permission rules are scoped to the project when a [`PermissionRuleStore`] is
+    /// attached.
+    pub fn create_session_full(
+        &self,
+        name: impl Into<String>,
+        model: ModelInfo,
+        config: AgentConfig,
+        project_id: Option<String>,
     ) -> Result<Session, RuntimeError> {
         let name = name.into();
         let session_id = SessionId::new();
@@ -399,6 +418,7 @@ impl Runtime {
             event_tx,
             rule_store,
             pending_permissions,
+            project_id,
         );
 
         // Emit the initial SessionStarted event.
@@ -412,7 +432,24 @@ impl Runtime {
     }
 
     /// Resumes a previously persisted agent and wraps it in a session.
+    ///
+    /// Convenience wrapper around [`resume_session_with_project`](Self::resume_session_with_project)
+    /// that passes `None` for `project_id`.
     pub fn resume_session(&self, agent_id: &str) -> Result<Session, RuntimeError> {
+        self.resume_session_with_project(agent_id, None)
+    }
+
+    /// Resumes a previously persisted agent, wraps it in a session, and associates
+    /// the session with an optional project identifier.
+    ///
+    /// The `project_id` is threaded into the [`SessionPermissionHandle`] so that
+    /// permission rules are scoped to the project when a [`PermissionRuleStore`] is
+    /// attached.
+    pub fn resume_session_with_project(
+        &self,
+        agent_id: &str,
+        project_id: Option<String>,
+    ) -> Result<Session, RuntimeError> {
         let session_id = SessionId::new();
         let (event_tx, _) = broadcast::channel(512);
         let rule_store = crate::session::RuleStore::new();
@@ -445,6 +482,7 @@ impl Runtime {
             event_tx,
             rule_store,
             pending_permissions,
+            project_id,
         );
         Ok(session)
     }
