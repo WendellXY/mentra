@@ -8,8 +8,9 @@ pub use command::{
     read_limited_file,
 };
 pub use hooks::{
-    AuditHook, AuditLogHook, RuntimeHook, RuntimeHookEvent, RuntimeHooks,
-    is_transient_provider_error, is_transient_runtime_error,
+    AuditHook, AuditLogHook, HookDecision, PreExecutionContext, PreExecutionHook,
+    PreExecutionHooks, RuntimeHook, RuntimeHookEvent, RuntimeHooks, is_transient_provider_error,
+    is_transient_runtime_error,
 };
 pub use policy::RuntimePolicy;
 pub use run::{CancellationFlag, CancellationToken, RunOptions};

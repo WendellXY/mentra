@@ -5,6 +5,7 @@ use crate::{
     provider::{Provider, ProviderRegistry},
     runtime::{
         RuntimeExecutor, RuntimeHandle, RuntimeHook, RuntimeHooks, RuntimePolicy, RuntimeStore,
+        control::{PreExecutionHook, PreExecutionHooks},
         error::RuntimeError, skill::SkillLoadError,
     },
     tool::{ExecutableTool, ToolAuthorizer},
@@ -116,6 +117,19 @@ impl RuntimeBuilder {
     {
         Self {
             handle: self.handle.with_hooks(RuntimeHooks::new().with_hook(hook)),
+            provider_registry: self.provider_registry,
+        }
+    }
+
+    /// Appends a single pre-execution hook.
+    pub fn with_pre_hook<H>(self, hook: H) -> Self
+    where
+        H: PreExecutionHook + 'static,
+    {
+        Self {
+            handle: self
+                .handle
+                .with_pre_hooks(PreExecutionHooks::new().with_hook(hook)),
             provider_registry: self.provider_registry,
         }
     }
