@@ -26,6 +26,7 @@ use crate::{
     runtime::{
         CancellationToken, HybridRuntimeStore, RunOptions, Runtime, RuntimeError, RuntimePolicy,
         SqliteRuntimeStore, TaskIntrinsicTool,
+        control::{HookDecision, PreExecutionContext, PreExecutionHook},
         task::{self, TaskAccess},
     },
     team::{TeamMemberStatus, TeamMessageKind, TeamProtocolStatus},
@@ -4767,4 +4768,67 @@ async fn wait_for_snapshot_task_owner(agent: &Agent, task_id: u64, owner: &str) 
     }
 
     panic!("timed out waiting for snapshot task {task_id} owner {owner}");
+}
+
+#[tokio::test]
+async fn pre_execution_hook_blocks_tool_call() {
+    // Define a hook that blocks "echo_tool"
+    struct BlockEchoHook;
+    impl PreExecutionHook for BlockEchoHook {
+        fn pre_tool_execution(
+            &self,
+            context: &PreExecutionContext,
+        ) -> Result<HookDecision, RuntimeError> {
+            if context.tool_name == "echo_tool" {
+                Ok(HookDecision::Deny("echo_tool is blocked by policy".to_string()))
+            } else {
+                Ok(HookDecision::Allow)
+            }
+        }
+    }
+
+    // Build runtime with the hook
+    let model = model_info("model", BuiltinProvider::Anthropic);
+    let provider = ScriptedProvider::new(
+        BuiltinProvider::Anthropic,
+        vec![model.clone()],
+        vec![
+            // Agent tries to call echo_tool, gets blocked error result, model responds
+            tool_use_stream(&model.id, "call-1", "echo_tool", r#"{"value":"hello"}"#),
+            text_stream(&model.id, "tool was blocked"),
+        ],
+    );
+
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(provider)
+        .with_tool(StaticTool::success("echo_tool", "should not run"))
+        .with_pre_hook(BlockEchoHook)
+        .build()
+        .expect("build runtime");
+
+    let mut agent = runtime.spawn("agent", model).expect("spawn agent");
+
+    agent
+        .send(vec![ContentBlock::Text {
+            text: "call the tool".to_string(),
+        }])
+        .await
+        .expect("send should succeed despite blocked tool");
+
+    // The agent should have received the blocked error and continued with text
+    let history = agent.history();
+    // Find the tool result in history that contains the block message
+    let has_blocked_result = history.iter().any(|msg| {
+        msg.content.iter().any(|block| {
+            matches!(
+                block,
+                ContentBlock::ToolResult {
+                    content,
+                    is_error: true,
+                    ..
+                } if content.to_display_string().contains("blocked by policy")
+            )
+        })
+    });
+    assert!(has_blocked_result, "expected blocked tool result in history");
 }
