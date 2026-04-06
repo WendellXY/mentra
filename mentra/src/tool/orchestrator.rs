@@ -9,6 +9,7 @@ use crate::{
     agent::{Agent, AgentEvent, AgentStatus},
     error::RuntimeError,
     runtime::{RunOptions, RuntimeHookEvent},
+    runtime::control::{PreExecutionContext, HookDecision},
     tool::{
         ExecutableTool, ParallelToolContext, RuntimeToolDescriptor, ToolAuthorizationOutcome,
         ToolAuthorizationRequest, ToolCall, ToolCapability, ToolContext, ToolExecutionCategory,
@@ -195,6 +196,25 @@ impl ToolRuntime {
                 outcome,
                 reason,
             })
+    }
+
+    fn run_pre_hooks(&self, call: &ToolCall) -> Result<HookDecision, RuntimeError> {
+        let context = PreExecutionContext {
+            agent_id: self.agent_id.clone(),
+            tool_name: call.name.clone(),
+            tool_call_id: call.id.clone(),
+            input_json: serde_json::to_string(&call.input).unwrap_or_default(),
+        };
+        self.runtime.pre_hooks().run(&context)
+    }
+
+    fn emit_tool_execution_blocked(&self, call: &ToolCall, reason: &str) {
+        let _ = self.runtime.emit_hook(RuntimeHookEvent::ToolExecutionBlocked {
+            agent_id: self.agent_id.clone(),
+            tool_name: call.name.clone(),
+            tool_call_id: call.id.clone(),
+            reason: reason.to_string(),
+        });
     }
 
     fn unavailable_tool_result(&self, call: ToolCall) -> ContentBlock {
@@ -460,6 +480,23 @@ impl ToolRuntime {
                 continue;
             }
 
+            // Pre-execution hook check
+            match self.run_pre_hooks(&call)? {
+                HookDecision::Allow => {}
+                HookDecision::Deny(reason) => {
+                    self.emit_tool_execution_blocked(&call, &reason);
+                    let result = ContentBlock::ToolResult {
+                        tool_use_id: call.id.clone(),
+                        content: format!("Blocked by pre-execution hook: {reason}").into(),
+                        is_error: true,
+                    };
+                    let execution =
+                        self.completed_execution(agent, &call, &descriptor, result, false);
+                    results[index] = Some(execution);
+                    continue;
+                }
+            }
+
             if let Err(error) = self.emit_tool_runtime_started(&call) {
                 let result = self.blocked_tool_result(&call, error);
                 let execution = self.completed_execution(agent, &call, &descriptor, result, false);
@@ -545,6 +582,24 @@ impl ToolRuntime {
                 return self.completed_execution(agent, &call, &descriptor, result, false);
             }
             Ok(None) => {}
+            Err(error) => {
+                let result = self.blocked_tool_result(&call, error);
+                return self.completed_execution(agent, &call, &descriptor, result, false);
+            }
+        }
+
+        // Pre-execution hook check
+        match self.run_pre_hooks(&call) {
+            Ok(HookDecision::Allow) => {}
+            Ok(HookDecision::Deny(reason)) => {
+                self.emit_tool_execution_blocked(&call, &reason);
+                let result = ContentBlock::ToolResult {
+                    tool_use_id: call.id.clone(),
+                    content: format!("Blocked by pre-execution hook: {reason}").into(),
+                    is_error: true,
+                };
+                return self.completed_execution(agent, &call, &descriptor, result, false);
+            }
             Err(error) => {
                 let result = self.blocked_tool_result(&call, error);
                 return self.completed_execution(agent, &call, &descriptor, result, false);
