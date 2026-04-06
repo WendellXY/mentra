@@ -7,3 +7,6 @@ edition = "2024"
 license = "MIT"
 repository = "https://github.com/WendellXY/mentra"
 homepage = "https://github.com/WendellXY/mentra"
+
+[workspace.dependencies]
+glob-match = "0.2"

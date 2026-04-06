@@ -397,7 +397,7 @@ fn permission_decision_deny_and_remember_constructor() {
 #[test]
 fn rule_store_empty_check_returns_none() {
     let store = RuleStore::new();
-    assert!(store.check("shell").is_none());
+    assert!(store.check("shell", None).is_none());
 }
 
 #[test]
@@ -411,7 +411,7 @@ fn rule_store_add_and_check_allow() {
         allow: true,
         scope: PermissionRuleScope::Session,
     });
-    assert_eq!(store.check("shell"), Some(true));
+    assert_eq!(store.check("shell", None), Some(true));
 }
 
 #[test]
@@ -425,7 +425,7 @@ fn rule_store_add_and_check_deny() {
         allow: false,
         scope: PermissionRuleScope::Project,
     });
-    assert_eq!(store.check("shell"), Some(false));
+    assert_eq!(store.check("shell", None), Some(false));
 }
 
 #[test]
@@ -439,7 +439,7 @@ fn rule_store_overwrite_replaces_rule() {
         allow: true,
         scope: PermissionRuleScope::Session,
     });
-    assert_eq!(store.check("shell"), Some(true));
+    assert_eq!(store.check("shell", None), Some(true));
 
     store.add_rule(RememberedRule {
         key: RuleKey {
@@ -449,7 +449,7 @@ fn rule_store_overwrite_replaces_rule() {
         allow: false,
         scope: PermissionRuleScope::Session,
     });
-    assert_eq!(store.check("shell"), Some(false));
+    assert_eq!(store.check("shell", None), Some(false));
 }
 
 #[test]
@@ -474,8 +474,8 @@ fn rule_store_clear_scope_removes_matching_rules() {
 
     store.clear_scope(PermissionRuleScope::Session);
 
-    assert!(store.check("shell").is_none());
-    assert_eq!(store.check("read"), Some(true));
+    assert!(store.check("shell", None).is_none());
+    assert_eq!(store.check("read", None), Some(true));
 }
 
 #[test]

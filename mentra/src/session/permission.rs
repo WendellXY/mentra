@@ -111,15 +111,34 @@ impl RuleStore {
 
     /// Checks whether a tool is allowed by a remembered rule.
     ///
-    /// Returns `Some(true)` if allowed, `Some(false)` if denied, or `None` if
-    /// no matching rule exists.
-    pub fn check(&self, tool_name: &str) -> Option<bool> {
+    /// Pattern rules are matched against `input_json` using glob syntax and
+    /// take precedence over bare (no-pattern) rules. Returns `Some(true)` if
+    /// allowed, `Some(false)` if denied, or `None` if no matching rule exists.
+    pub fn check(&self, tool_name: &str, input_json: Option<&str>) -> Option<bool> {
         let rules = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let key = RuleKey {
-            tool_name: tool_name.to_owned(),
-            pattern: None,
-        };
-        rules.get(&key).map(|rule| rule.allow)
+
+        let mut pattern_match: Option<bool> = None;
+        let mut bare_match: Option<bool> = None;
+
+        for rule in rules.values() {
+            if rule.key.tool_name != tool_name {
+                continue;
+            }
+            match &rule.key.pattern {
+                Some(glob) => {
+                    if let Some(json) = input_json {
+                        if glob_match::glob_match(glob, json) {
+                            pattern_match = Some(rule.allow);
+                        }
+                    }
+                }
+                None => {
+                    bare_match = Some(rule.allow);
+                }
+            }
+        }
+
+        pattern_match.or(bare_match)
     }
 
     /// Returns all remembered rules as a vector.
@@ -206,7 +225,8 @@ impl ToolAuthorizer for SessionToolAuthorizer {
         &self,
         request: &ToolAuthorizationRequest,
     ) -> Result<ToolAuthorizationDecision, RuntimeError> {
-        if let Some(allow) = self.rule_store.check(&request.tool_name) {
+        let input_json = serde_json::to_string(&request.preview.structured_input).ok();
+        if let Some(allow) = self.rule_store.check(&request.tool_name, input_json.as_deref()) {
             return Ok(if allow {
                 ToolAuthorizationDecision::allow()
             } else {
@@ -361,5 +381,99 @@ mod tests {
             .expect("authorization should resume")
             .expect("task should succeed");
         assert_eq!(decision.outcome, ToolAuthorizationOutcome::Allow);
+    }
+
+    #[test]
+    fn check_matches_tool_name_without_pattern() {
+        let store = RuleStore::new();
+        store.add_rule(RememberedRule {
+            key: RuleKey {
+                tool_name: "shell".to_owned(),
+                pattern: None,
+            },
+            allow: true,
+            scope: PermissionRuleScope::Session,
+        });
+        // Bare rule (no pattern) matches regardless of input_json content.
+        assert_eq!(store.check("shell", Some(r#"{"command":"ls"}"#)), Some(true));
+        assert_eq!(store.check("shell", None), Some(true));
+    }
+
+    #[test]
+    fn check_matches_pattern_against_input_json() {
+        let store = RuleStore::new();
+        store.add_rule(RememberedRule {
+            key: RuleKey {
+                tool_name: "shell".to_owned(),
+                pattern: Some("*cargo test*".to_owned()),
+            },
+            allow: true,
+            scope: PermissionRuleScope::Session,
+        });
+        assert_eq!(
+            store.check("shell", Some(r#"{"command":"cargo test"}"#)),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn check_pattern_rule_does_not_match_without_input() {
+        let store = RuleStore::new();
+        store.add_rule(RememberedRule {
+            key: RuleKey {
+                tool_name: "shell".to_owned(),
+                pattern: Some("*cargo test*".to_owned()),
+            },
+            allow: true,
+            scope: PermissionRuleScope::Session,
+        });
+        // Pattern rule is ignored when input is None — no bare rule either,
+        // so result must be None.
+        assert_eq!(store.check("shell", None), None);
+    }
+
+    #[test]
+    fn check_pattern_rule_takes_precedence_over_no_pattern() {
+        let store = RuleStore::new();
+        // Bare rule: allow.
+        store.add_rule(RememberedRule {
+            key: RuleKey {
+                tool_name: "shell".to_owned(),
+                pattern: None,
+            },
+            allow: true,
+            scope: PermissionRuleScope::Session,
+        });
+        // Pattern rule: deny when input matches.
+        // Use ** so path separators inside the JSON string are matched.
+        store.add_rule(RememberedRule {
+            key: RuleKey {
+                tool_name: "shell".to_owned(),
+                pattern: Some("**rm -rf**".to_owned()),
+            },
+            allow: false,
+            scope: PermissionRuleScope::Session,
+        });
+        // Pattern match should win over the bare allow.
+        assert_eq!(
+            store.check("shell", Some(r#"{"command":"rm -rf /tmp"}"#)),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn check_non_matching_pattern_falls_through() {
+        let store = RuleStore::new();
+        // Only a pattern rule is present; input does not match it.
+        store.add_rule(RememberedRule {
+            key: RuleKey {
+                tool_name: "shell".to_owned(),
+                pattern: Some("*cargo test*".to_owned()),
+            },
+            allow: true,
+            scope: PermissionRuleScope::Session,
+        });
+        // Non-matching input yields None (no bare fallback).
+        assert_eq!(store.check("shell", Some(r#"{"command":"ls"}"#)), None);
     }
 }
