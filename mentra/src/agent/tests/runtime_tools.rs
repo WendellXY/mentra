@@ -4780,7 +4780,9 @@ async fn pre_execution_hook_blocks_tool_call() {
             context: &PreExecutionContext,
         ) -> Result<HookDecision, RuntimeError> {
             if context.tool_name == "echo_tool" {
-                Ok(HookDecision::Deny("echo_tool is blocked by policy".to_string()))
+                Ok(HookDecision::Deny(
+                    "echo_tool is blocked by policy".to_string(),
+                ))
             } else {
                 Ok(HookDecision::Allow)
             }
@@ -4830,5 +4832,8 @@ async fn pre_execution_hook_blocks_tool_call() {
             )
         })
     });
-    assert!(has_blocked_result, "expected blocked tool result in history");
+    assert!(
+        has_blocked_result,
+        "expected blocked tool result in history"
+    );
 }

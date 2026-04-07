@@ -8,8 +8,8 @@ use crate::{
     ContentBlock,
     agent::{Agent, AgentEvent, AgentStatus},
     error::RuntimeError,
+    runtime::control::{HookDecision, PreExecutionContext},
     runtime::{RunOptions, RuntimeHookEvent},
-    runtime::control::{PreExecutionContext, HookDecision},
     tool::{
         ExecutableTool, ParallelToolContext, RuntimeToolDescriptor, ToolAuthorizationOutcome,
         ToolAuthorizationRequest, ToolCall, ToolCapability, ToolContext, ToolExecutionCategory,
@@ -209,12 +209,14 @@ impl ToolRuntime {
     }
 
     fn emit_tool_execution_blocked(&self, call: &ToolCall, reason: &str) {
-        let _ = self.runtime.emit_hook(RuntimeHookEvent::ToolExecutionBlocked {
-            agent_id: self.agent_id.clone(),
-            tool_name: call.name.clone(),
-            tool_call_id: call.id.clone(),
-            reason: reason.to_string(),
-        });
+        let _ = self
+            .runtime
+            .emit_hook(RuntimeHookEvent::ToolExecutionBlocked {
+                agent_id: self.agent_id.clone(),
+                tool_name: call.name.clone(),
+                tool_call_id: call.id.clone(),
+                reason: reason.to_string(),
+            });
     }
 
     fn unavailable_tool_result(&self, call: ToolCall) -> ContentBlock {

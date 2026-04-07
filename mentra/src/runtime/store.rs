@@ -748,10 +748,8 @@ impl SqliteRuntimeStore {
         };
 
         if !schema_sql.contains("project_id") {
-            conn.execute_batch(
-                "ALTER TABLE permission_rules ADD COLUMN project_id TEXT;",
-            )
-            .map_err(sqlite_error)?;
+            conn.execute_batch("ALTER TABLE permission_rules ADD COLUMN project_id TEXT;")
+                .map_err(sqlite_error)?;
         }
 
         // Ensure indexes exist (safe to run every time).
@@ -2046,9 +2044,7 @@ mod tests {
             .expect("save rules b");
 
         // Load session-a without project_id: only its own session-scoped rules.
-        let loaded_a = store
-            .load_rules("session-a", None)
-            .expect("load rules a");
+        let loaded_a = store.load_rules("session-a", None).expect("load rules a");
         // Load session-b with its project_id: project-scoped rules come back.
         let loaded_b = store
             .load_rules("session-b", Some("proj-b"))

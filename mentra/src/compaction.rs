@@ -610,10 +610,7 @@ pub(crate) async fn cleanup_old_transcripts(dir: &Path, keep: usize) -> Result<(
     }
 
     // Sort ascending by filename — nanosecond timestamps put oldest first.
-    files.sort_by(|a, b| {
-        a.file_name()
-            .cmp(&b.file_name())
-    });
+    files.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
 
     let to_delete = files.len() - keep;
     for path in files.iter().take(to_delete) {

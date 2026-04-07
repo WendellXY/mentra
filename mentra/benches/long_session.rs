@@ -1,7 +1,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use mentra::{
     ContentBlock,
-    memory::{MemoryRecord, MemoryRecordKind, MemorySearchRequest, MemorySearchMode, MemoryStore},
+    memory::{MemoryRecord, MemoryRecordKind, MemorySearchMode, MemorySearchRequest, MemoryStore},
     runtime::SqliteRuntimeStore,
     test::{MockRuntimeBuilder, MockTurn},
 };

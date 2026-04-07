@@ -226,7 +226,10 @@ impl ToolAuthorizer for SessionToolAuthorizer {
         request: &ToolAuthorizationRequest,
     ) -> Result<ToolAuthorizationDecision, RuntimeError> {
         let input_json = serde_json::to_string(&request.preview.structured_input).ok();
-        if let Some(allow) = self.rule_store.check(&request.tool_name, input_json.as_deref()) {
+        if let Some(allow) = self
+            .rule_store
+            .check(&request.tool_name, input_json.as_deref())
+        {
             return Ok(if allow {
                 ToolAuthorizationDecision::allow()
             } else {
@@ -395,7 +398,10 @@ mod tests {
             scope: PermissionRuleScope::Session,
         });
         // Bare rule (no pattern) matches regardless of input_json content.
-        assert_eq!(store.check("shell", Some(r#"{"command":"ls"}"#)), Some(true));
+        assert_eq!(
+            store.check("shell", Some(r#"{"command":"ls"}"#)),
+            Some(true)
+        );
         assert_eq!(store.check("shell", None), Some(true));
     }
 

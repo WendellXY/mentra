@@ -9,9 +9,7 @@ use crate::{
     BuiltinProvider, ContentBlock, Message, Role,
     agent::{AgentConfig, AgentEvent, CompactionConfig, CompactionTrigger},
     compaction::{CompactionExecutionMode, CompactionMode},
-    provider::{
-        CompactionInputItem, CompactionResponse, ProviderCapabilities, Request,
-    },
+    provider::{CompactionInputItem, CompactionResponse, ProviderCapabilities, Request},
     runtime::{Runtime, SqliteRuntimeStore},
 };
 
@@ -712,7 +710,11 @@ async fn resumed_session_continues_after_compaction() {
             .expect("rebuild runtime");
 
         let resumed_agents = new_runtime.resume_all().expect("resume_all");
-        assert_eq!(resumed_agents.len(), 1, "expected exactly one resumed agent");
+        assert_eq!(
+            resumed_agents.len(),
+            1,
+            "expected exactly one resumed agent"
+        );
         let mut agent = resumed_agents.into_iter().next().unwrap();
 
         for i in 0..5u32 {

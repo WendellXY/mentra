@@ -118,7 +118,11 @@ impl SessionPermissionHandle {
                 .clone();
             if let Some(store) = store {
                 let all_rules = self.rule_store.rules();
-                store.save_rules(self.session_id.as_str(), self.project_id.as_deref(), &all_rules)?;
+                store.save_rules(
+                    self.session_id.as_str(),
+                    self.project_id.as_deref(),
+                    &all_rules,
+                )?;
             }
         }
 
@@ -396,9 +400,7 @@ impl Session {
 
         tokio::spawn(async move {
             let result = subagent
-                .send(vec![ContentBlock::Text {
-                    text: prompt_text,
-                }])
+                .send(vec![ContentBlock::Text { text: prompt_text }])
                 .await;
 
             let (status, detail) = match &result {

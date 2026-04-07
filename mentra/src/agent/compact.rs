@@ -44,8 +44,9 @@ impl Agent {
                 .await
             {
                 Ok(_) => return Ok(()),
-                Err(err) if err.category() == ErrorCategory::Retryable
-                    && attempt < AUTO_COMPACT_MAX_ATTEMPTS =>
+                Err(err)
+                    if err.category() == ErrorCategory::Retryable
+                        && attempt < AUTO_COMPACT_MAX_ATTEMPTS =>
                 {
                     self.emit_event(AgentEvent::RetryAttempt {
                         agent_id: self.id().to_string(),

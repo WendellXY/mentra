@@ -1889,8 +1889,8 @@ async fn full_scenario_prompt_shell_file_events_end_to_end() {
 #[tokio::test]
 async fn load_rules_with_project_id_returns_all_applicable_scopes() {
     use crate::runtime::{PermissionRuleStore, SqliteRuntimeStore};
-    use crate::session::permission::{RememberedRule, RuleKey};
     use crate::session::event::PermissionRuleScope;
+    use crate::session::permission::{RememberedRule, RuleKey};
 
     // Create an isolated temp store.
     let store_path = std::env::temp_dir().join(format!(
@@ -2013,8 +2013,8 @@ async fn load_rules_with_project_id_returns_all_applicable_scopes() {
 #[tokio::test]
 async fn project_scoped_rules_are_visible_across_sessions() {
     use crate::runtime::{PermissionRuleStore, SqliteRuntimeStore};
-    use crate::session::permission::{RememberedRule, RuleKey};
     use crate::session::event::PermissionRuleScope;
+    use crate::session::permission::{RememberedRule, RuleKey};
 
     let store_path = std::env::temp_dir().join(format!(
         "mentra-cross-session-project-{}.sqlite",
@@ -2063,8 +2063,8 @@ async fn project_scoped_rules_are_visible_across_sessions() {
 #[tokio::test]
 async fn global_scoped_rules_are_visible_to_all_sessions() {
     use crate::runtime::{PermissionRuleStore, SqliteRuntimeStore};
-    use crate::session::permission::{RememberedRule, RuleKey};
     use crate::session::event::PermissionRuleScope;
+    use crate::session::permission::{RememberedRule, RuleKey};
 
     let store_path = std::env::temp_dir().join(format!(
         "mentra-cross-session-global-{}.sqlite",
@@ -2112,8 +2112,8 @@ async fn global_scoped_rules_are_visible_to_all_sessions() {
 #[tokio::test]
 async fn session_scoped_rules_are_not_visible_to_other_sessions() {
     use crate::runtime::{PermissionRuleStore, SqliteRuntimeStore};
-    use crate::session::permission::{RememberedRule, RuleKey};
     use crate::session::event::PermissionRuleScope;
+    use crate::session::permission::{RememberedRule, RuleKey};
 
     let store_path = std::env::temp_dir().join(format!(
         "mentra-cross-session-isolation-{}.sqlite",
