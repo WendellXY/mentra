@@ -5,11 +5,11 @@ use tokio::sync::broadcast;
 
 use crate::{
     AgentTranscript, ContentBlock, Message,
-    agent::{Agent, AgentEventTapGuard},
+    agent::{Agent, AgentEvent, AgentEventTapGuard},
     error::RuntimeError,
     runtime::{PermissionRuleStore, is_transient_runtime_error},
     session::{
-        event::{EventSeq, PermissionOutcome, SessionEvent},
+        event::{EventSeq, PermissionOutcome, SessionEvent, TaskKind, TaskLifecycleStatus},
         mapping::map_agent_event,
         permission::{
             PendingPermissionStore, PermissionDecision, RememberedRule, RuleKey, RuleStore,
@@ -365,6 +365,57 @@ impl Session {
     /// Returns summaries of all active or recently completed subagents.
     pub fn active_subagents(&self) -> Vec<crate::agent::SpawnedAgentSummary> {
         self.agent.watch_snapshot().borrow().subagents.clone()
+    }
+
+    /// Spawns a disposable subagent in the background and returns a handle for tracking it.
+    ///
+    /// The subagent is registered with the parent agent, a `SubagentSpawned` event is emitted,
+    /// and the subagent runs its prompt in a detached `tokio::spawn`. When it completes, a
+    /// `SessionEvent::TaskUpdated` event is broadcast with the final status.
+    pub async fn spawn_subagent(
+        &mut self,
+        name: &str,
+        prompt: &str,
+    ) -> Result<SubagentHandle, RuntimeError> {
+        let mut subagent = self.agent.spawn_subagent()?;
+        let agent_id = subagent.id().to_string();
+        let summary = self.agent.register_subagent(&subagent);
+
+        self.agent.emit_event(AgentEvent::SubagentSpawned {
+            agent: summary.clone(),
+        });
+
+        let handle = SubagentHandle {
+            task_id: agent_id.clone(),
+            agent_id: agent_id.clone(),
+        };
+
+        let event_tx = self.event_tx.clone();
+        let task_name = name.to_string();
+        let prompt_text = prompt.to_string();
+
+        tokio::spawn(async move {
+            let result = subagent
+                .send(vec![ContentBlock::Text {
+                    text: prompt_text,
+                }])
+                .await;
+
+            let (status, detail) = match &result {
+                Ok(msg) => (TaskLifecycleStatus::Finished, Some(msg.text())),
+                Err(e) => (TaskLifecycleStatus::Failed, Some(e.to_string())),
+            };
+
+            let _ = event_tx.send(SessionEvent::TaskUpdated {
+                task_id: agent_id,
+                kind: TaskKind::Subagent,
+                status,
+                title: task_name,
+                detail,
+            });
+        });
+
+        Ok(handle)
     }
 
     // -- internal helpers --
