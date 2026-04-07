@@ -435,6 +435,7 @@ impl SessionGenerator {
         self
     }
 
+    #[allow(dead_code)]
     pub(super) fn add_tool_turns(mut self, n: usize, tool_name: &str) -> Self {
         for i in 0..n {
             self.scripts.push(tool_use_stream(

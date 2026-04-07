@@ -311,6 +311,7 @@ impl PreExecutionHooks {
         Ok(HookDecision::Allow)
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.hooks.is_empty()
     }
