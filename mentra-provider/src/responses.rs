@@ -21,6 +21,10 @@ use crate::RegisteredProvider;
 use crate::RetryPolicy;
 use crate::StaticCredentialSource;
 use crate::WireApi;
+use crate::embedding::EmbeddingModelInfo;
+use crate::embedding::EmbeddingProvider;
+use crate::embedding::EmbeddingRequest;
+use crate::embedding::EmbeddingResponse;
 
 use self::session::ResponsesSession;
 use self::session::ResponsesSessionState;
@@ -162,6 +166,7 @@ fn build_definition(
         reports_reasoning_tokens: true,
         reports_thoughts_tokens: false,
         supports_structured_tool_results: true,
+        supports_embeddings: true,
     };
     definition.base_url = Some(base_url.to_string());
     definition.headers = Some(HashMap::new());
@@ -219,6 +224,53 @@ where
 {
     fn definition(&self) -> ProviderDefinition {
         self.definition.clone()
+    }
+}
+
+#[async_trait]
+impl<C> EmbeddingProvider for ResponsesProvider<C>
+where
+    C: CredentialSource + 'static,
+{
+    async fn embed_batch(
+        &self,
+        model: &str,
+        texts: &[&str],
+    ) -> Result<EmbeddingResponse, ProviderError> {
+        let credentials = self.credential_source.credentials().await?;
+        let url = self
+            .definition
+            .request_url_with_auth_for_path("v1/embeddings", &credentials)?;
+        let headers = self.definition.build_headers(&credentials)?;
+        let body = EmbeddingRequest::batch(model, texts);
+
+        let response = self
+            .client
+            .post(url)
+            .headers(headers)
+            .json(&body)
+            .send()
+            .await
+            .map_err(ProviderError::Transport)?;
+
+        if !response.status().is_success() {
+            return Err(ProviderError::Http {
+                status: response.status(),
+                body: response.text().await.unwrap_or_default(),
+            });
+        }
+
+        response
+            .json::<EmbeddingResponse>()
+            .await
+            .map_err(ProviderError::Decode)
+    }
+
+    fn embedding_models(&self) -> Vec<EmbeddingModelInfo> {
+        vec![
+            EmbeddingModelInfo::new("text-embedding-3-small", 1536, 8191),
+            EmbeddingModelInfo::new("text-embedding-3-large", 3072, 8191),
+        ]
     }
 }
 

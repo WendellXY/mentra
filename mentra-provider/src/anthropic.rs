@@ -108,6 +108,7 @@ where
             reports_reasoning_tokens: false,
             reports_thoughts_tokens: false,
             supports_structured_tool_results: false,
+            supports_embeddings: false,
         };
         definition.base_url = Some(DEFAULT_BASE_URL.to_string());
         definition.headers = Some(HashMap::from([(

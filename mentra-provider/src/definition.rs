@@ -106,6 +106,7 @@ pub struct ProviderCapabilities {
     pub reports_reasoning_tokens: bool,
     pub reports_thoughts_tokens: bool,
     pub supports_structured_tool_results: bool,
+    pub supports_embeddings: bool,
 }
 
 /// Wire protocol supported by a provider.
@@ -204,6 +205,7 @@ impl ProviderDefinition {
                 reports_reasoning_tokens: false,
                 reports_thoughts_tokens: false,
                 supports_structured_tool_results: false,
+                supports_embeddings: false,
             },
             base_url: None,
             query_params: None,
