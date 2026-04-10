@@ -129,6 +129,7 @@ pub trait Provider: Send + Sync {
 #[derive(Default)]
 pub struct ProviderRegistry {
     default_provider: Option<ProviderId>,
+    default_embedding_provider: Option<ProviderId>,
     providers: HashMap<ProviderId, Arc<dyn Provider>>,
     embedding_providers: HashMap<ProviderId, Arc<dyn EmbeddingProvider>>,
 }
@@ -156,30 +157,26 @@ impl ProviderRegistry {
         }
 
         // Register embedding provider for providers that support it.
-        match id {
-            BuiltinProvider::OpenAI => {
-                let ep: Arc<dyn EmbeddingProvider> =
-                    Arc::new(mentra_provider::responses::openai(api_key));
-                self.embedding_providers.insert(provider_id.clone(), ep);
-            }
+        let ep: Option<Arc<dyn EmbeddingProvider>> = match id {
+            BuiltinProvider::OpenAI => Some(Arc::new(mentra_provider::responses::openai(api_key))),
             BuiltinProvider::OpenRouter => {
-                let ep: Arc<dyn EmbeddingProvider> =
-                    Arc::new(mentra_provider::responses::openrouter(api_key));
-                self.embedding_providers.insert(provider_id.clone(), ep);
+                Some(Arc::new(mentra_provider::responses::openrouter(api_key)))
             }
-            BuiltinProvider::Ollama => {
-                let ep: Arc<dyn EmbeddingProvider> = Arc::new(
-                    openai_compatible_embedding_provider(id, "http://127.0.0.1:11434/"),
-                );
-                self.embedding_providers.insert(provider_id.clone(), ep);
+            BuiltinProvider::Ollama => Some(Arc::new(openai_compatible_embedding_provider(
+                id,
+                "http://127.0.0.1:11434/",
+            ))),
+            BuiltinProvider::LmStudio => Some(Arc::new(openai_compatible_embedding_provider(
+                id,
+                "http://127.0.0.1:1234/",
+            ))),
+            _ => None,
+        };
+        if let Some(ep) = ep {
+            if self.default_embedding_provider.is_none() {
+                self.default_embedding_provider = Some(provider_id.clone());
             }
-            BuiltinProvider::LmStudio => {
-                let ep: Arc<dyn EmbeddingProvider> = Arc::new(
-                    openai_compatible_embedding_provider(id, "http://127.0.0.1:1234/"),
-                );
-                self.embedding_providers.insert(provider_id.clone(), ep);
-            }
-            _ => {}
+            self.embedding_providers.insert(provider_id.clone(), ep);
         }
 
         self.providers.insert(provider_id, provider);
@@ -218,12 +215,17 @@ impl ProviderRegistry {
         }
     }
 
-    /// Returns the first registered provider that supports embeddings, or `None`.
+    /// Returns the default embedding provider, or `None` if no embedding-capable provider
+    /// has been registered.
     ///
-    /// Providers are registered in the embedding map when `supports_embeddings` is
-    /// true for their builtin definition (OpenAI, OpenRouter, Ollama, LmStudio).
+    /// The default is the first embedding-capable provider registered. To look up a
+    /// specific provider use [`embedding_provider_for`].
     pub fn embedding_provider(&self) -> Option<Arc<dyn EmbeddingProvider>> {
-        self.embedding_providers.values().next().map(Arc::clone)
+        self.default_embedding_provider
+            .as_ref()
+            .and_then(|id| self.embedding_providers.get(id))
+            .map(Arc::clone)
+            .or_else(|| self.embedding_providers.values().next().map(Arc::clone))
     }
 
     /// Returns the embedding provider for a specific provider ID, or `None`.
@@ -415,8 +417,10 @@ pub mod openai {
             definition.headers = Some(HashMap::new());
             definition.retry = RetryPolicy::default();
 
-            let provider =
-                mentra_provider::responses::ResponsesProvider::new(definition, NoCredentialsSource);
+            let provider = mentra_provider::responses::ResponsesProvider::new(
+                definition,
+                super::NoCredentialsSource,
+            );
             Self {
                 inner: shared_provider(provider),
             }
@@ -471,18 +475,6 @@ pub mod openai {
     #[derive(Clone)]
     struct OpenAICredentialAdapter {
         source: Arc<dyn OpenAICredentialSource>,
-    }
-
-    #[derive(Clone)]
-    struct NoCredentialsSource;
-
-    #[async_trait]
-    impl mentra_provider::CredentialSource for NoCredentialsSource {
-        async fn credentials(
-            &self,
-        ) -> Result<mentra_provider::ProviderCredentials, mentra_provider::ProviderError> {
-            Ok(mentra_provider::ProviderCredentials::default())
-        }
     }
 
     #[async_trait]

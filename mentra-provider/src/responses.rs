@@ -267,10 +267,10 @@ where
     }
 
     fn embedding_models(&self) -> Vec<EmbeddingModelInfo> {
-        vec![
-            EmbeddingModelInfo::new("text-embedding-3-small", 1536, 8191),
-            EmbeddingModelInfo::new("text-embedding-3-large", 3072, 8191),
-        ]
+        // Available embedding models depend on the specific provider instance and its
+        // configuration. Callers should use the /v1/models endpoint for discovery
+        // rather than relying on a static list that would only be accurate for OpenAI.
+        vec![]
     }
 }
 
