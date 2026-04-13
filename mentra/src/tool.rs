@@ -1,4 +1,6 @@
 mod authorization;
+/// Bash command validation — safety checks before shell execution.
+pub mod bash_validation;
 mod builtin;
 mod context;
 mod descriptor;
