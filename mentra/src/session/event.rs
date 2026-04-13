@@ -132,6 +132,14 @@ pub enum SessionEvent {
         agent_id: String,
         stored_records: usize,
     },
+    /// Token usage report after a model response completes.
+    UsageReport {
+        agent_id: String,
+        input_tokens: u64,
+        output_tokens: u64,
+        cache_read_tokens: u64,
+        cache_creation_tokens: u64,
+    },
     Notice {
         severity: NoticeSeverity,
         message: String,

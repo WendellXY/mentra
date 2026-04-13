@@ -215,7 +215,11 @@ fn all_session_event_variants_serialize_with_type_tag() {
 
 // ---- Task 2 lifecycle tests ----
 
-use crate::{ContentBlock, test::MockRuntime};
+use crate::{
+    ContentBlock,
+    runtime::{AgentStore, SqliteRuntimeStore},
+    test::MockRuntime,
+};
 
 #[tokio::test]
 async fn create_session_produces_valid_metadata() {
@@ -1583,6 +1587,38 @@ async fn resume_session_with_permission_rules_restores_rules() {
     let _ = std::fs::remove_dir_all(&unique);
 }
 
+#[tokio::test]
+async fn session_set_model_updates_active_and_persisted_model() {
+    let unique = unique_test_base_dir("set-model");
+    let store_path = unique.join("runtime.sqlite");
+    let store = SqliteRuntimeStore::new(&store_path);
+    let mock = MockRuntime::builder()
+        .with_store(store.clone())
+        .text("hello")
+        .build()
+        .unwrap();
+
+    let mut session = mock
+        .runtime()
+        .create_session("switch-model", mock.model())
+        .unwrap();
+    let agent_id = session.agent_id().to_owned();
+    let updated_model = crate::ModelInfo::new("switched-model", crate::BuiltinProvider::OpenAI);
+
+    session.set_model(updated_model.clone()).unwrap();
+
+    assert_eq!(session.metadata().model, "switched-model");
+
+    let loaded = store
+        .load_agent(&agent_id)
+        .unwrap()
+        .expect("persisted agent should exist");
+    assert_eq!(loaded.record.model, "switched-model");
+    assert_eq!(loaded.record.provider_id, updated_model.provider);
+
+    let _ = std::fs::remove_dir_all(&unique);
+}
+
 // ---- Task 2A.7: Error handling and recovery ----
 
 #[tokio::test]
@@ -1810,6 +1846,7 @@ async fn full_scenario_prompt_shell_file_events_end_to_end() {
             SessionEvent::Notice { .. } => "notice",
             SessionEvent::RetryAttempt { .. } => "retry_attempt",
             SessionEvent::Error { .. } => "error",
+            SessionEvent::UsageReport { .. } => "usage_report",
             SessionEvent::SessionStarted { .. } => "session_started",
         })
         .collect();

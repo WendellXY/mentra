@@ -139,6 +139,13 @@ pub enum AgentEvent {
     AssistantMessageCommitted {
         message: Message,
     },
+    /// Token usage from a completed model response.
+    UsageReport {
+        input_tokens: u64,
+        output_tokens: u64,
+        cache_read_tokens: u64,
+        cache_creation_tokens: u64,
+    },
     RunFinished,
     ToolExecutionProgress {
         id: String,

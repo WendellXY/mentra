@@ -67,13 +67,24 @@ impl<'a> TurnRunner<'a> {
                 )?;
                 return Err(error);
             }
+            let usage = streamed.pending.usage().cloned();
             self.emit_model_response_finished(
                 streamed.attempt,
                 true,
                 None,
                 streamed.pending.stop_reason().map(str::to_string),
-                streamed.pending.usage().cloned(),
+                usage.clone(),
             )?;
+
+            // Emit token usage report if available.
+            if let Some(ref u) = usage {
+                self.agent.emit_event(AgentEvent::UsageReport {
+                    input_tokens: u.input_tokens.unwrap_or(0),
+                    output_tokens: u.output_tokens.unwrap_or(0),
+                    cache_read_tokens: u.cache_read_input_tokens.unwrap_or(0),
+                    cache_creation_tokens: u.cache_creation_input_tokens.unwrap_or(0),
+                });
+            }
 
             if !invalid_tool_uses.is_empty() {
                 self.append_invalid_tool_input_feedback(&invalid_tool_uses)?;

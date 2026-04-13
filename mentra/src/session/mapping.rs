@@ -94,6 +94,19 @@ fn map_event_inner(event: &AgentEvent) -> Vec<SessionEvent> {
             next_delay_ms: *next_delay_ms,
         }],
 
+        AgentEvent::UsageReport {
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            cache_creation_tokens,
+        } => vec![SessionEvent::UsageReport {
+            agent_id: String::new(),
+            input_tokens: *input_tokens,
+            output_tokens: *output_tokens,
+            cache_read_tokens: *cache_read_tokens,
+            cache_creation_tokens: *cache_creation_tokens,
+        }],
+
         // Events handled at Session level or intentionally silent at session layer.
         AgentEvent::AssistantMessageCommitted { .. }
         | AgentEvent::RunStarted
