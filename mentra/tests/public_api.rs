@@ -1,6 +1,9 @@
 use std::{
     collections::VecDeque,
+    io::{Read, Write},
+    net::TcpListener,
     sync::{Arc, Mutex},
+    thread,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -551,6 +554,40 @@ async fn resolve_model_reports_missing_provider() {
     ));
 }
 
+#[tokio::test]
+async fn runtime_accepts_provider_core_openai_compatible_instances() {
+    let provider_id = ProviderId::new("custom-openai-compatible");
+    let (base_url, handle) = spawn_models_server(
+        r#"{"data":[{"id":"compat-model","name":"Compat Model","created":1}]}"#,
+    );
+
+    let mut definition = mentra::provider_core::responses::openai_definition();
+    definition.descriptor.id = provider_id.clone();
+    definition.descriptor.display_name = Some("Custom OpenAI-Compatible".to_string());
+    definition.base_url = Some(base_url);
+
+    let runtime = Runtime::empty_builder()
+        .with_provider_instance(mentra::provider_core::responses::ResponsesProvider::new(
+            definition,
+            mentra::provider_core::StaticCredentialSource::new("test-key"),
+        ))
+        .build()
+        .expect("build runtime");
+
+    let model = runtime
+        .resolve_model(provider_id.clone(), ModelSelector::NewestAvailable)
+        .await
+        .expect("resolve model from provider-core instance");
+
+    assert_eq!(model.provider, provider_id);
+    assert_eq!(model.id, "compat-model");
+
+    let captured = handle.join().expect("capture request");
+    let captured_lower = captured.to_ascii_lowercase();
+    assert!(captured.starts_with("GET /v1/models HTTP/1.1\r\n"));
+    assert!(captured_lower.contains("authorization: bearer test-key\r\n"));
+}
+
 #[derive(Clone)]
 struct FailingListModelsProvider {
     kind: ProviderId,
@@ -601,6 +638,47 @@ fn now_nanos() -> u128 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos()
+}
+
+fn spawn_models_server(response_body: &str) -> (String, thread::JoinHandle<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+    let addr = listener.local_addr().expect("read listener addr");
+    let response_body = response_body.to_string();
+
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept request");
+        let mut request = Vec::new();
+        let mut temp = [0_u8; 1024];
+
+        loop {
+            let read = stream.read(&mut temp).expect("read request");
+            if read == 0 {
+                break;
+            }
+            request.extend_from_slice(&temp[..read]);
+            if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                break;
+            }
+        }
+
+        let response = format!(
+            concat!(
+                "HTTP/1.1 200 OK\r\n",
+                "content-type: application/json\r\n",
+                "content-length: {}\r\n\r\n",
+                "{}"
+            ),
+            response_body.len(),
+            response_body
+        );
+        stream
+            .write_all(response.as_bytes())
+            .expect("write response");
+
+        String::from_utf8(request).expect("request should be valid utf8")
+    });
+
+    (format!("http://{addr}/"), handle)
 }
 
 fn model_with_created_at(id: &str, provider: BuiltinProvider, unix_timestamp: i64) -> ModelInfo {

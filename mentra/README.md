@@ -64,6 +64,68 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 `with_ollama()` targets `http://127.0.0.1:11434/` and `with_lmstudio()` targets
 `http://127.0.0.1:1234/`, using each server's OpenAI-compatible API surface.
 
+## Custom Compatible Providers
+
+If you need a non-default OpenAI-compatible or Anthropic-compatible endpoint,
+register a provider-core instance with a customized `ProviderDefinition`.
+Using a distinct provider ID lets you keep the builtin provider alongside your
+custom endpoint.
+
+```rust,no_run
+use mentra::{ModelSelector, ProviderId, Runtime};
+
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+let mut definition = mentra::provider_core::responses::openai_definition();
+definition.descriptor.id = ProviderId::new("custom-openai-compatible");
+definition.descriptor.display_name = Some("Custom OpenAI-Compatible".to_string());
+definition.base_url = Some("https://llm.example.com/".to_string());
+
+let runtime = Runtime::builder()
+    .with_provider_instance(mentra::provider_core::responses::ResponsesProvider::new(
+        definition,
+        mentra::provider_core::StaticCredentialSource::new(std::env::var("CUSTOM_API_KEY")?),
+    ))
+    .build()?;
+
+let model = runtime
+    .resolve_model(
+        ProviderId::new("custom-openai-compatible"),
+        ModelSelector::NewestAvailable,
+    )
+    .await?;
+# let _ = model;
+# Ok(())
+# }
+```
+
+Anthropic-compatible endpoints follow the same pattern:
+
+```rust,no_run
+use mentra::{ProviderId, Runtime};
+
+# fn demo() -> Result<(), Box<dyn std::error::Error>> {
+let mut definition = mentra::provider_core::anthropic::definition();
+definition.descriptor.id = ProviderId::new("custom-anthropic-compatible");
+definition.descriptor.display_name = Some("Custom Anthropic-Compatible".to_string());
+definition.base_url = Some("https://claude.example.com/".to_string());
+
+let runtime = Runtime::builder()
+    .with_provider_instance(
+        mentra::provider_core::anthropic::AnthropicProvider::with_definition_and_credential_source(
+            definition,
+            mentra::provider_core::StaticCredentialSource::new(std::env::var("CUSTOM_API_KEY")?),
+        ),
+    )
+    .build()?;
+# let _ = runtime;
+# Ok(())
+# }
+```
+
+If your compatible endpoint needs different auth or extra headers, mutate the
+definition's `auth_scheme`, `headers`, `query_params`, or `retry` fields before
+registering it.
+
 ## Architecture
 
 Mentra is organized around four runtime subsystems:

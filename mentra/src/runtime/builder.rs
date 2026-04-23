@@ -213,8 +213,9 @@ impl RuntimeBuilder {
 
     /// Registers a custom provider implementation.
     ///
-    /// This is the supported seam for test-time provider injection when you
-    /// want to script model responses without live API calls.
+    /// This is the supported seam for test-time provider injection, custom
+    /// transports, and provider-core adapters such as
+    /// `mentra::provider_core::responses::ResponsesProvider`.
     ///
     /// ```rust,no_run
     /// use async_trait::async_trait;

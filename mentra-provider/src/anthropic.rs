@@ -28,6 +28,41 @@ use crate::WireApi;
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
+/// Returns the default Anthropic-compatible provider definition.
+pub fn definition() -> ProviderDefinition {
+    let mut definition = ProviderDefinition::new(BuiltinProvider::Anthropic);
+    definition.descriptor.display_name = Some("Anthropic".to_string());
+    definition.descriptor.description = Some("Anthropic Messages API provider".to_string());
+    definition.wire_api = WireApi::AnthropicMessages;
+    definition.auth_scheme = AuthScheme::Header {
+        name: "x-api-key".to_string(),
+    };
+    definition.capabilities = ProviderCapabilities {
+        supports_model_listing: true,
+        supports_streaming: true,
+        supports_websockets: false,
+        supports_tool_calls: true,
+        supports_images: true,
+        supports_history_compaction: true,
+        supports_memory_summarization: true,
+        supports_deferred_tools: true,
+        supports_hosted_tool_search: true,
+        supports_hosted_web_search: false,
+        supports_image_generation: false,
+        supports_reasoning_effort: true,
+        reports_reasoning_tokens: false,
+        reports_thoughts_tokens: false,
+        supports_structured_tool_results: false,
+        supports_embeddings: false,
+    };
+    definition.base_url = Some(DEFAULT_BASE_URL.to_string());
+    definition.headers = Some(HashMap::from([(
+        "anthropic-version".to_string(),
+        ANTHROPIC_VERSION.to_string(),
+    )]));
+    definition
+}
+
 pub struct AnthropicProvider<C = StaticCredentialSource> {
     client: reqwest::Client,
     credential_source: Arc<C>,
@@ -59,7 +94,7 @@ where
     }
 
     pub fn with_shared_credential_source(credential_source: Arc<C>) -> Self {
-        Self::with_definition_and_shared_credential_source(Self::definition(), credential_source)
+        Self::with_definition_and_shared_credential_source(definition(), credential_source)
     }
 
     pub fn with_definition_and_credential_source(
@@ -82,40 +117,6 @@ where
             credential_source,
             definition,
         }
-    }
-
-    fn definition() -> ProviderDefinition {
-        let mut definition = ProviderDefinition::new(BuiltinProvider::Anthropic);
-        definition.descriptor.display_name = Some("Anthropic".to_string());
-        definition.descriptor.description = Some("Anthropic Messages API provider".to_string());
-        definition.wire_api = WireApi::AnthropicMessages;
-        definition.auth_scheme = AuthScheme::Header {
-            name: "x-api-key".to_string(),
-        };
-        definition.capabilities = ProviderCapabilities {
-            supports_model_listing: true,
-            supports_streaming: true,
-            supports_websockets: false,
-            supports_tool_calls: true,
-            supports_images: true,
-            supports_history_compaction: true,
-            supports_memory_summarization: true,
-            supports_deferred_tools: true,
-            supports_hosted_tool_search: true,
-            supports_hosted_web_search: false,
-            supports_image_generation: false,
-            supports_reasoning_effort: true,
-            reports_reasoning_tokens: false,
-            reports_thoughts_tokens: false,
-            supports_structured_tool_results: false,
-            supports_embeddings: false,
-        };
-        definition.base_url = Some(DEFAULT_BASE_URL.to_string());
-        definition.headers = Some(HashMap::from([(
-            "anthropic-version".to_string(),
-            ANTHROPIC_VERSION.to_string(),
-        )]));
-        definition
     }
 }
 
@@ -263,17 +264,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::RegisteredProvider;
 
     #[test]
     fn definition_advertises_history_compaction_support() {
-        let provider = AnthropicProvider::new("test-key");
-
-        assert!(
-            provider
-                .definition()
-                .capabilities
-                .supports_history_compaction
-        );
+        assert!(definition().capabilities.supports_history_compaction);
     }
 }

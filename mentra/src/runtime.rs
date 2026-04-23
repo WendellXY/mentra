@@ -276,8 +276,9 @@ impl Runtime {
 
     /// Registers a custom provider implementation.
     ///
-    /// This is the supported seam for injecting a scripted provider in tests or
-    /// embedding Mentra on top of a custom transport.
+    /// This is the supported seam for injecting a scripted provider in tests,
+    /// embedding Mentra on top of a custom transport, or registering a
+    /// `mentra::provider_core` provider with a customized definition.
     ///
     /// ```rust,no_run
     /// use async_trait::async_trait;
